@@ -32,7 +32,10 @@ import { requestIdMiddleware } from './middleware/requestId.js';
 import { pauseGuard } from './middleware/pauseGuard.js';
 import { asyncHandler } from './utils/asyncHandler.js';
 import { AppError } from './errors/AppError.js';
+import { setupConnectionLeakDetection, shutdownConnectionLeakDetection, dbConnectionLeakDetector } from './middleware/dbConnectionLeakDetector.js';
 const app = express();
+
+setupConnectionLeakDetection();
 
 const isProduction = process.env.NODE_ENV === 'production';
 const configuredFrontendUrl = process.env.FRONTEND_URL?.trim();
@@ -118,6 +121,7 @@ app.use(globalRateLimiter);
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(metricsMiddleware);
+app.use(dbConnectionLeakDetector);
 
 // Pause guard: reject state-mutating requests when contracts are paused
 // Issue #1381: Cross-layer emergency pause coordination
@@ -361,3 +365,11 @@ Sentry.setupExpressErrorHandler(app);
 app.use(errorHandler);
 
 export default app;
+
+process.on('SIGTERM', () => {
+  shutdownConnectionLeakDetection();
+});
+
+process.on('SIGINT', () => {
+  shutdownConnectionLeakDetection();
+});
