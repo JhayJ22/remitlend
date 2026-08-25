@@ -6,6 +6,7 @@ import {
   challengeRateLimiter,
   loginRateLimiter,
   ipLoginRateLimiter,
+  verifyRateLimiter,
 } from '../middleware/rateLimiter.js';
 import { requireJwtAuth } from '../middleware/jwtAuth.js';
 import { validateBody } from '../middleware/validation.js';
@@ -105,7 +106,7 @@ router.post('/login', ipLoginRateLimiter, loginRateLimiter, validateBody(loginSc
  *       401:
  *         description: Missing or invalid Bearer token
  */
-router.get('/verify', requireJwtAuth, verify);
+router.get('/verify', verifyRateLimiter, requireJwtAuth, verify);
 
 /**
  * @swagger

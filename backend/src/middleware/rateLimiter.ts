@@ -1,5 +1,19 @@
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
+/**
+ * Rate limiter → endpoint mapping (see issue #44).
+ *
+ * All limiters are keyed per-IP by default; login also keys on the wallet
+ * public key so a single IP cannot brute-force many distinct wallets.
+ *
+ *   challengeRateLimiter   → POST   /api/auth/challenge
+ *   loginRateLimiter       → POST   /api/auth/login        (keyed by IP + pubkey)
+ *   ipLoginRateLimiter     → POST   /api/auth/login        (keyed by IP)
+ *   verifyRateLimiter      → GET    /api/auth/verify
+ *   strictRateLimiter      → admin routes (disputes, indexer, webhooks)
+ *   globalRateLimiter      → (reserved) general API guard
+ *   simulationRateLimiter  → simulation routes (skipped in test env)
+ */
 export const createRateLimiter = (max: number, windowMinutes: number = 15) =>
   rateLimit({
     windowMs: windowMinutes * 60 * 1000,
