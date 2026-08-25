@@ -72,6 +72,8 @@ export function LendPageClient() {
       }
     },
     onFallbackPoll: () => invalidatePoolStats(),
+    showToasts: true,
+    toastPrefix: "Pool updates",
   });
 
   const depositPrecisionError = getPrecisionError(depositAmount, "USDC");

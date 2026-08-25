@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { TokenBalance, WalletNetwork, WalletStatus } from "../../stores/useWalletStore";
 import { useWalletStore } from "../../stores/useWalletStore";
+import { useWalletToasts } from "../../hooks/useWalletToasts";
 
 type FreighterApi = typeof import("@stellar/freighter-api");
 
@@ -270,6 +271,9 @@ export function WalletProvider({ children }: WalletProviderProps) {
     if (!shouldAutoReconnect && !address) return;
     await syncWallet(false);
   }
+
+  // Toast notifications for wallet state changes
+  useWalletToasts();
 
   // Initial check and Auto-reconnect
   useEffect(() => {
