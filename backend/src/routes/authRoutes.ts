@@ -9,6 +9,7 @@ import {
 } from '../middleware/rateLimiter.js';
 import { requireJwtAuth } from '../middleware/jwtAuth.js';
 import { validateBody } from '../middleware/validation.js';
+import { authSecurityMiddleware } from '../middleware/authSecurity.js';
 
 const router = Router();
 
@@ -53,7 +54,7 @@ const loginSchema = z.object({
  *             schema:
  *               $ref: '#/components/schemas/AuthChallengeResponse'
  */
-router.post('/challenge', challengeRateLimiter, validateBody(challengeSchema), requestChallenge);
+router.post('/challenge', challengeRateLimiter, validateBody(challengeSchema), authSecurityMiddleware, requestChallenge);
 
 /**
  * @swagger
@@ -85,7 +86,7 @@ router.post('/challenge', challengeRateLimiter, validateBody(challengeSchema), r
  *             schema:
  *               $ref: '#/components/schemas/AuthLoginResponse'
  */
-router.post('/login', ipLoginRateLimiter, loginRateLimiter, validateBody(loginSchema), login);
+router.post('/login', ipLoginRateLimiter, loginRateLimiter, validateBody(loginSchema), authSecurityMiddleware, login);
 
 /**
  * @swagger
@@ -105,7 +106,7 @@ router.post('/login', ipLoginRateLimiter, loginRateLimiter, validateBody(loginSc
  *       401:
  *         description: Missing or invalid Bearer token
  */
-router.get('/verify', requireJwtAuth, verify);
+router.get('/verify', requireJwtAuth, verifyRateLimiter, verify);
 
 /**
  * @swagger
