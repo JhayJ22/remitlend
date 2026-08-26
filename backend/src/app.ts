@@ -32,6 +32,8 @@ import { requestIdMiddleware } from './middleware/requestId.js';
 import { pauseGuard } from './middleware/pauseGuard.js';
 import { asyncHandler } from './utils/asyncHandler.js';
 import { AppError } from './errors/AppError.js';
+import { idempotencyMiddleware } from './middleware/idempotency.js';
+import { shutdownCoordinator } from './middleware/shutdownHandler.js';
 const app = express();
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -118,6 +120,13 @@ app.use(globalRateLimiter);
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(metricsMiddleware);
+
+// Shutdown coordinator: track in-flight requests and reject new ones during shutdown
+app.use(shutdownCoordinator.middleware());
+
+// Idempotency middleware: handle Idempotency-Key headers for all requests
+// Ensures duplicate requests with the same key return cached responses
+app.use(idempotencyMiddleware);
 
 // Pause guard: reject state-mutating requests when contracts are paused
 // Issue #1381: Cross-layer emergency pause coordination
