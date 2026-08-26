@@ -23,6 +23,7 @@ import eventRoutes from './routes/eventRoutes.js';
 import remittanceRoutes from './routes/remittanceRoutes.js';
 import transactionRoutes from './routes/transactionRoutes.js';
 import { registerStatusRoutes } from './routes/statusRoutes.js';
+import internalRoutes from './routes/internalRoutes.js';
 import { requireApiKey } from './middleware/auth.js';
 import { globalRateLimiter } from './middleware/rateLimiter.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -330,6 +331,9 @@ app.use('/api/v1/pool', poolRoutes);
 app.use('/api/v1/notifications', notificationsRoutes);
 app.use('/api/v1/events', eventRoutes);
 app.use('/user', userRoutes);
+
+// Internal service-to-service routes (HMAC-signed only)
+app.use('/api/internal', internalRoutes);
 
 mountSwaggerDocs(app);
 
