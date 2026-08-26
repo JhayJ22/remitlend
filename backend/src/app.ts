@@ -32,6 +32,7 @@ import { requestIdMiddleware } from './middleware/requestId.js';
 import { pauseGuard } from './middleware/pauseGuard.js';
 import { asyncHandler } from './utils/asyncHandler.js';
 import { AppError } from './errors/AppError.js';
+import { createGraphQLMiddleware } from './graphql/server.js';
 const app = express();
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -314,6 +315,9 @@ app.use('/api/v1/pool', poolRoutes);
 app.use('/api/v1/notifications', notificationsRoutes);
 app.use('/api/v1/events', eventRoutes);
 app.use('/user', userRoutes);
+
+// GraphQL API endpoint (alpha)
+app.use('/graphql', createGraphQLMiddleware());
 
 mountSwaggerDocs(app);
 
