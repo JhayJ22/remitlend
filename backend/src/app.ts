@@ -187,6 +187,22 @@ app.get(
   }),
 );
 
+/**
+ * GET /metrics
+ *
+ * Prometheus metrics endpoint exposing operational and business metrics.
+ * Requires admin:indexer API key.
+ *
+ * Metrics exposed:
+ * - Request metrics: http_request_duration_seconds (request latency by method, route, status)
+ * - Database metrics: db_query_duration_seconds (query latency by operation, table)
+ * - Cache metrics: cache_hits_total, cache_misses_total (by key pattern)
+ * - Loan metrics: loan_approvals_total, loan_rejections_total, active_loans_total
+ * - Pool metrics: pool_utilization_ratio (utilization % by pool_id)
+ * - Transaction metrics: transaction_processing_time_seconds (on-chain latency by type)
+ * - Indexer metrics: indexer_last_ledger, indexer_chain_tip, indexer_lag_ledgers
+ * - System metrics: process_*, nodejs_* (default prom-client metrics)
+ */
 app.get('/metrics', requireApiKey('admin:indexer'), asyncHandler(metricsHandler));
 
 /**
