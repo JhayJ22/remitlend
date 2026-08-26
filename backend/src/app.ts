@@ -31,6 +31,8 @@ import { metricsHandler, metricsMiddleware } from './middleware/metrics.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
 import { pauseGuard } from './middleware/pauseGuard.js';
+import { cspNonceMiddleware, cspHeadersMiddleware } from './middleware/cspNonce.js';
+import { reportCSPViolation } from './controllers/cspReportController.js';
 import { asyncHandler } from './utils/asyncHandler.js';
 import { AppError } from './errors/AppError.js';
 const app = express();
@@ -68,18 +70,10 @@ const devOrigins = new Set([
   'http://127.0.0.1:3001',
 ]);
 
+app.use(cspNonceMiddleware);
 app.use(
   helmet({
-    contentSecurityPolicy: {
-      directives: {
-        'default-src': ["'self'"],
-        'script-src': ["'self'"],
-        'style-src': ["'self'", 'https:', "'unsafe-inline'"],
-        'img-src': ["'self'", 'data:', 'https:'],
-        'font-src': ["'self'", 'https:', 'data:'],
-        'frame-ancestors': ["'self'"],
-      },
-    },
+    contentSecurityPolicy: false,
     strictTransportSecurity: isProduction
       ? {
           maxAge: 31536000,
@@ -89,6 +83,7 @@ app.use(
       : false,
   }),
 );
+app.use(cspHeadersMiddleware);
 
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
@@ -123,6 +118,11 @@ app.use(metricsMiddleware);
 // Pause guard: reject state-mutating requests when contracts are paused
 // Issue #1381: Cross-layer emergency pause coordination
 app.use(pauseGuard);
+
+app.post(
+  '/api/v1/csp-report',
+  asyncHandler(async (req: Request, res: Response) => reportCSPViolation(req, res)),
+);
 
 app.get('/', (_req: Request, res: Response) => {
   res.send('RemitLend Backend is running');
