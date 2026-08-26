@@ -2,10 +2,13 @@
 
 #[cfg(test)]
 mod test;
+mod emergency_pause;
+
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
     IntoVal, Map, Symbol, Vec,
 };
+use emergency_pause::{PauseStatus, PendingPause};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -650,6 +653,63 @@ impl GovernanceContract {
             .get(&KEY_PENDING)
             .ok_or(GovernanceError::NoPendingTransfer)?;
         Ok(pending.approvals.get(signer).unwrap_or(false))
+    }
+
+    // ── Emergency Pause (Multi-Sig Governance) ─────────────────────────────────
+
+    /// Propose an emergency pause with multi-signature governance.
+    /// Empty target_functions = global pause; otherwise function-level circuit breaker.
+    /// Includes 24-hour timelock before execution.
+    pub fn propose_emergency_pause(
+        env: Env,
+        pause_action: bool,
+        target_functions: Vec<Symbol>,
+        signers: Vec<Address>,
+        threshold: u32,
+    ) -> Result<u32, GovernanceError> {
+        emergency_pause::propose_pause(
+            &env,
+            pause_action,
+            target_functions,
+            signers,
+            threshold,
+        )
+    }
+
+    /// Approve a pending pause proposal (multi-sig voting).
+    /// Caller must be in the signer list and signs this transaction.
+    pub fn approve_emergency_pause(env: Env, proposal_id: u32) -> Result<(), GovernanceError> {
+        let signer = env.invoker();
+        emergency_pause::approve_pause(&env, proposal_id, &signer)
+    }
+
+    /// Execute an approved pause proposal after the 24-hour timelock.
+    /// Requires threshold number of approvals.
+    pub fn execute_emergency_pause(env: Env, proposal_id: u32) -> Result<(), GovernanceError> {
+        let executor = env.invoker();
+        emergency_pause::execute_pause(&env, proposal_id, &executor)
+    }
+
+    /// Cancel a pending pause proposal (before execution).
+    pub fn cancel_emergency_pause(env: Env, proposal_id: u32) -> Result<(), GovernanceError> {
+        let canceller = env.invoker();
+        emergency_pause::cancel_pause(&env, proposal_id, &canceller)
+    }
+
+    /// Check if a specific function is paused (circuit breaker).
+    /// Returns true if either globally paused or this function is paused.
+    pub fn is_function_paused(env: Env, function_id: Symbol) -> bool {
+        emergency_pause::is_function_paused(&env, &function_id)
+    }
+
+    /// Get all currently paused functions.
+    pub fn get_paused_functions(env: Env) -> Vec<Symbol> {
+        emergency_pause::get_paused_functions(&env)
+    }
+
+    /// Check global pause status.
+    pub fn is_globally_paused(env: Env) -> bool {
+        emergency_pause::is_globally_paused(&env)
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
