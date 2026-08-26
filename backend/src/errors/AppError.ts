@@ -65,6 +65,10 @@ export class AppError extends Error {
     return new AppError(message, 503, true, errorCode ?? ErrorCode.SERVICE_UNAVAILABLE);
   }
 
+  static tooManyRequests(message = 'Too many requests', errorCode?: ErrorCode): AppError {
+    return new AppError(message, 429, true, errorCode ?? ErrorCode.RATE_LIMIT_EXCEEDED);
+  }
+
   /**
    * Create a validation error with field information.
    */
