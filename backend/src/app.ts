@@ -23,6 +23,7 @@ import eventRoutes from './routes/eventRoutes.js';
 import remittanceRoutes from './routes/remittanceRoutes.js';
 import transactionRoutes from './routes/transactionRoutes.js';
 import { registerStatusRoutes } from './routes/statusRoutes.js';
+import internalRoutes from './routes/internalRoutes.js';
 import { requireApiKey } from './middleware/auth.js';
 import { globalRateLimiter } from './middleware/rateLimiter.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -30,11 +31,13 @@ import { metricsHandler, metricsMiddleware } from './middleware/metrics.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
 import { pauseGuard } from './middleware/pauseGuard.js';
+import { deprecationHeadersMiddleware } from './middleware/deprecationHeaders.js';
 import { asyncHandler } from './utils/asyncHandler.js';
 import { AppError } from './errors/AppError.js';
-import { idempotencyMiddleware } from './middleware/idempotency.js';
-import { shutdownCoordinator } from './middleware/shutdownHandler.js';
+import { setupConnectionLeakDetection, shutdownConnectionLeakDetection, dbConnectionLeakDetector } from './middleware/dbConnectionLeakDetector.js';
 const app = express();
+
+setupConnectionLeakDetection();
 
 const isProduction = process.env.NODE_ENV === 'production';
 const configuredFrontendUrl = process.env.FRONTEND_URL?.trim();
@@ -69,18 +72,10 @@ const devOrigins = new Set([
   'http://127.0.0.1:3001',
 ]);
 
+app.use(cspNonceMiddleware);
 app.use(
   helmet({
-    contentSecurityPolicy: {
-      directives: {
-        'default-src': ["'self'"],
-        'script-src': ["'self'"],
-        'style-src': ["'self'", 'https:', "'unsafe-inline'"],
-        'img-src': ["'self'", 'data:', 'https:'],
-        'font-src': ["'self'", 'https:', 'data:'],
-        'frame-ancestors': ["'self'"],
-      },
-    },
+    contentSecurityPolicy: false,
     strictTransportSecurity: isProduction
       ? {
           maxAge: 31536000,
@@ -90,6 +85,7 @@ app.use(
       : false,
   }),
 );
+app.use(cspHeadersMiddleware);
 
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
@@ -120,6 +116,7 @@ app.use(globalRateLimiter);
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(metricsMiddleware);
+app.use(dbConnectionLeakDetector);
 
 // Shutdown coordinator: track in-flight requests and reject new ones during shutdown
 app.use(shutdownCoordinator.middleware());
@@ -131,6 +128,11 @@ app.use(idempotencyMiddleware);
 // Pause guard: reject state-mutating requests when contracts are paused
 // Issue #1381: Cross-layer emergency pause coordination
 app.use(pauseGuard);
+
+app.post(
+  '/api/v1/csp-report',
+  asyncHandler(async (req: Request, res: Response) => reportCSPViolation(req, res)),
+);
 
 app.get('/', (_req: Request, res: Response) => {
   res.send('RemitLend Backend is running');
@@ -196,6 +198,22 @@ app.get(
   }),
 );
 
+/**
+ * GET /metrics
+ *
+ * Prometheus metrics endpoint exposing operational and business metrics.
+ * Requires admin:indexer API key.
+ *
+ * Metrics exposed:
+ * - Request metrics: http_request_duration_seconds (request latency by method, route, status)
+ * - Database metrics: db_query_duration_seconds (query latency by operation, table)
+ * - Cache metrics: cache_hits_total, cache_misses_total (by key pattern)
+ * - Loan metrics: loan_approvals_total, loan_rejections_total, active_loans_total
+ * - Pool metrics: pool_utilization_ratio (utilization % by pool_id)
+ * - Transaction metrics: transaction_processing_time_seconds (on-chain latency by type)
+ * - Indexer metrics: indexer_last_ledger, indexer_chain_tip, indexer_lag_ledgers
+ * - System metrics: process_*, nodejs_* (default prom-client metrics)
+ */
 app.get('/metrics', requireApiKey('admin:indexer'), asyncHandler(metricsHandler));
 
 /**
@@ -298,6 +316,8 @@ registerStatusRoutes(statusRouter);
 app.use('/', statusRouter);
 
 // Legacy routes (deprecated, maintained for backward compatibility)
+// All /api/* routes include deprecation headers directing clients to /api/v1/*
+app.use('/api', deprecationHeadersMiddleware);
 app.use('/api', simulationRoutes);
 app.use('/api/score', scoreRoutes);
 app.use('/api/loans', loanRoutes);
@@ -323,6 +343,9 @@ app.use('/api/v1/pool', poolRoutes);
 app.use('/api/v1/notifications', notificationsRoutes);
 app.use('/api/v1/events', eventRoutes);
 app.use('/user', userRoutes);
+
+// Internal service-to-service routes (HMAC-signed only)
+app.use('/api/internal', internalRoutes);
 
 mountSwaggerDocs(app);
 
@@ -370,3 +393,11 @@ Sentry.setupExpressErrorHandler(app);
 app.use(errorHandler);
 
 export default app;
+
+process.on('SIGTERM', () => {
+  shutdownConnectionLeakDetection();
+});
+
+process.on('SIGINT', () => {
+  shutdownConnectionLeakDetection();
+});

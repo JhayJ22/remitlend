@@ -27,6 +27,10 @@ import { query } from '../db/connection.js';
 
 import { buildRejectLoanTx } from '../controllers/loanController.js';
 import { listAuditLogs } from '../controllers/authController.js';
+import {
+  listLoanStateEventsEndpoint,
+  replayLoanStateEndpoint,
+} from '../controllers/loanStateEventController.js';
 
 const router = Router();
 
@@ -165,6 +169,70 @@ router.post(
     const result = await defaultChecker.checkOverdueLoans(req.body.loanIds);
     res.json(result);
   }),
+);
+
+/**
+ * @swagger
+ * /admin/loans/{loanId}/replay-state:
+ *   get:
+ *     summary: Reconstruct loan state by replaying its event log
+ *     description: >
+ *       Admin endpoint (issue #75) that rebuilds a loan's current state by
+ *       replaying its append-only loan state events. Returns the folded
+ *       snapshot and the full ordered event list for auditability.
+ *     tags: [Admin]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: loanId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Reconstructed loan state
+ *       400:
+ *         description: Invalid loan ID
+ */
+router.get('/loans/:loanId/replay-state', requireApiKey('admin:loans'), replayLoanStateEndpoint);
+
+/**
+ * @swagger
+ * /admin/loans/{loanId}/state-events:
+ *   get:
+ *     summary: List raw loan state events
+ *     description: >
+ *       Returns the append-only loan state events for a loan in chronological
+ *       order, supporting `?limit=` and `?beforeId=` cursor pagination.
+ *     tags: [Admin]
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: loanId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 100
+ *       - in: query
+ *         name: beforeId
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Loan state events retrieved
+ *       400:
+ *         description: Invalid loan ID
+ */
+router.get(
+  '/loans/:loanId/state-events',
+  requireApiKey('admin:loans'),
+  listLoanStateEventsEndpoint,
 );
 
 /**

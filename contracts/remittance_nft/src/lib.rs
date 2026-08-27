@@ -67,6 +67,15 @@ pub enum DataKey {
     RecipientCommitment(Address),
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NftTransferEvent {
+    pub from: Address,
+    pub to: Address,
+    pub score: u32,
+    pub ledger: u32,
+}
+
 #[contract]
 pub struct RemittanceNFT;
 
@@ -1024,6 +1033,17 @@ impl RemittanceNFT {
             .set(&to_cooldown_key, &next_allowed_ledger);
         Self::bump_persistent_ttl(&env, &to_cooldown_key);
 
+        // Emit detailed transfer event for indexing
+        let transfer_event = NftTransferEvent {
+            from: from.clone(),
+            to: to.clone(),
+            score: metadata.score,
+            ledger: env.ledger().sequence(),
+        };
+        env.events()
+            .publish((Symbol::new(&env, "NftTransferred"),), transfer_event);
+
+        // Legacy event for backward compatibility
         env.events()
             .publish((symbol_short!("Transfer"), from, to), ());
 

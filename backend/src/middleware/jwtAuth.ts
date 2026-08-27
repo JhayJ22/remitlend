@@ -6,6 +6,7 @@ import {
   extractBearerToken,
   isTokenRevoked,
   type JwtPayload,
+  getTokenTtl,
 } from '../services/authService.js';
 
 const DEFAULT_JWT_COOKIE_NAME = 'remitlend_jwt';
@@ -65,7 +66,7 @@ function capPayloadToCurrentRole(payload: JwtPayload): JwtPayload {
 
 export const requireJwtAuth = async (
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction,
 ): Promise<void> => {
   const authHeader = req.headers.authorization;
@@ -85,6 +86,14 @@ export const requireJwtAuth = async (
 
   if (payload.jti && (await isTokenRevoked(payload.jti))) {
     throw AppError.unauthorized('Token has been revoked');
+  }
+
+  const ttl = getTokenTtl(token);
+  if (ttl !== null) {
+    res.set('X-Token-TTL', String(ttl));
+    if (ttl < 3600) {
+      res.set('X-Token-Expiry-Warning', 'true');
+    }
   }
 
   req.user = capPayloadToCurrentRole(payload);

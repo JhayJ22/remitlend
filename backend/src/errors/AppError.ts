@@ -57,12 +57,20 @@ export class AppError extends Error {
     return new AppError(message, 409, true, errorCode ?? ErrorCode.CONFLICT);
   }
 
+  static tooManyRequests(message = 'Too many requests', errorCode?: ErrorCode): AppError {
+    return new AppError(message, 429, true, errorCode ?? ErrorCode.RATE_LIMIT_EXCEEDED);
+  }
+
   static internal(message = 'Internal server error', errorCode?: ErrorCode): AppError {
     return new AppError(message, 500, false, errorCode ?? ErrorCode.INTERNAL_ERROR);
   }
 
   static serviceUnavailable(message = 'Service unavailable', errorCode?: ErrorCode): AppError {
     return new AppError(message, 503, true, errorCode ?? ErrorCode.SERVICE_UNAVAILABLE);
+  }
+
+  static tooManyRequests(message = 'Too many requests', errorCode?: ErrorCode): AppError {
+    return new AppError(message, 429, true, errorCode ?? ErrorCode.RATE_LIMIT_EXCEEDED);
   }
 
   /**

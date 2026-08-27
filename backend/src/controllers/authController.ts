@@ -26,7 +26,11 @@ import {
   verifySignature,
   verifyChallengeTimestamp,
   generateJwtToken,
+  generateRefreshToken,
   revokeToken,
+  introspectToken,
+  getTokenTtl,
+  verifyRefreshToken,
 } from '../services/authService.js';
 import logger from '../utils/logger.js';
 
@@ -174,5 +178,47 @@ export const logout = async (req: Request, res: Response): Promise<void> => {
   res.status(200).json({
     success: true,
     data: { message: 'Logged out' },
+  });
+};
+
+export const introspect = (req: Request, res: Response): void => {
+  const { token } = req.body;
+
+  if (!token || typeof token !== 'string') {
+    throw AppError.badRequest('Token is required', ErrorCode.MISSING_FIELD, 'token');
+  }
+
+  const introspection = introspectToken(token);
+  res.status(200).json({
+    success: true,
+    data: introspection,
+  });
+};
+
+export const refreshAccessToken = (req: Request, res: Response): void => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken || typeof refreshToken !== 'string') {
+    throw AppError.badRequest('Refresh token is required', ErrorCode.MISSING_FIELD, 'refreshToken');
+  }
+
+  const decoded = verifyRefreshToken(refreshToken);
+  if (!decoded) {
+    logAuthFailure(req, undefined, 'invalid_refresh_token');
+    throw AppError.unauthorized('Invalid or expired refresh token', ErrorCode.INVALID_TOKEN);
+  }
+
+  const newAccessToken = generateJwtToken(decoded.publicKey);
+  const newRefreshToken = generateRefreshToken(decoded.publicKey, decoded.tokenFamily);
+  const ttl = getTokenTtl(newAccessToken) || 86400;
+
+  res.status(200).json({
+    success: true,
+    data: {
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+      expiresIn: ttl,
+      tokenType: 'Bearer',
+    },
   });
 };

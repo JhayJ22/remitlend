@@ -30,6 +30,7 @@ pub trait LendingPoolInterface {
 }
 
 mod events;
+pub mod upgrade_proxy;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -2778,3 +2779,6 @@ impl LoanManager {
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod formal_verification;
