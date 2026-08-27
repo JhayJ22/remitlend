@@ -4,23 +4,23 @@ import { useTranslations } from "next-intl";
 import { useAdminGovernancePending } from "../../../hooks/useApi";
 import { useUserStore } from "../../../stores/useUserStore";
 
-function shortAddress(value: string | null | undefined) {
-  if (!value) return "Not configured";
-  return value.length > 14 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value;
-}
-
-function timeUntil(value: string | null | undefined) {
-  if (!value) return "Not scheduled";
-  const deltaMs = new Date(value).getTime() - Date.now();
-  if (!Number.isFinite(deltaMs)) return "Unknown";
-  if (deltaMs <= 0) return "Executable now";
-  const minutes = Math.ceil(deltaMs / 60_000);
-  if (minutes < 60) return `${minutes}m`;
-  return `${Math.ceil(minutes / 60)}h`;
-}
-
 export default function GovernancePage() {
   const t = useTranslations("Governance");
+
+  function shortAddress(value: string | null | undefined) {
+    if (!value) return t("notConfigured");
+    return value.length > 14 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value;
+  }
+
+  function timeUntil(value: string | null | undefined) {
+    if (!value) return t("notScheduled");
+    const deltaMs = new Date(value).getTime() - Date.now();
+    if (!Number.isFinite(deltaMs)) return t("unknown");
+    if (deltaMs <= 0) return t("executableNow");
+    const minutes = Math.ceil(deltaMs / 60_000);
+    if (minutes < 60) return `${minutes}m`;
+    return `${Math.ceil(minutes / 60)}h`;
+  }
   const role = useUserStore((state) => state.user?.role);
   const { data, isLoading, isError } = useAdminGovernancePending();
 
@@ -100,7 +100,7 @@ export default function GovernancePage() {
                 <div>
                   <p className="text-xs uppercase tracking-wide text-zinc-500">{t("expiresAt")}</p>
                   <p className="mt-1 text-sm text-zinc-950 dark:text-zinc-50">
-                    {data.pendingProposal.expiresAt ?? "Not configured"}
+                    {data.pendingProposal.expiresAt ?? t("notConfigured")}
                   </p>
                 </div>
               </div>

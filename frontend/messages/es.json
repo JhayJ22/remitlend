@@ -81,7 +81,12 @@
     "activity": "Actividad",
     "notifications": "Notificaciones",
     "liquidations": "Liquidaciones",
-    "adminDisputes": "Disputas"
+    "adminDisputes": "Disputas",
+    "lend": "Prestar",
+    "wallet": "Billetera",
+    "walletStatus": "Estado de billetera",
+    "disconnected": "Desconectada",
+    "connected": "Conectada"
   },
   "Loans": {
     "title": "Préstamos",
@@ -197,6 +202,9 @@
     "contactSupport": "Contactar soporte",
     "viewDetails": "Ver detalles",
     "details": "Detalles"
+  },
+  "AdminLayout": {
+    "adminArea": "Área de administración"
   },
   "AdminDisputes": {
     "eyebrow": "Consola admin",
@@ -363,6 +371,10 @@
     "currentAdmin": "Administrador actual",
     "targetContract": "Contrato objetivo",
     "expiresAt": "Expira",
-    "timeToExecutable": "Tiempo hasta ejecutable"
+    "timeToExecutable": "Tiempo hasta ejecutable",
+    "notConfigured": "No configurado",
+    "notScheduled": "No programado",
+    "unknown": "Desconocido",
+    "executableNow": "Ejecutable ahora"
   }
 }
