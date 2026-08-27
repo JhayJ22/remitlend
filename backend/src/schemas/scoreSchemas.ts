@@ -7,6 +7,21 @@ export const getScoreSchema = z.object({
   }),
 });
 
+// Schema for GET /score/confidence/filter
+export const filterByConfidenceSchema = z.object({
+  query: z.object({
+    minConfidence: z
+      .string()
+      .optional()
+      .transform((v) => (v ? parseFloat(v) : 0.6))
+      .refine((v) => v >= 0 && v <= 1, 'Confidence must be between 0 and 1'),
+    lenderIds: z
+      .string()
+      .optional()
+      .transform((v) => (v ? v.split(',') : undefined)),
+  }),
+});
+
 // Schema for GET /score/:walletAddress/history
 export const getScoreHistorySchema = z.object({
   params: z.object({

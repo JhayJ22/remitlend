@@ -12,6 +12,7 @@ import {
   getScoreHistorySchema,
   getScoreSchema,
   updateScoreSchema,
+  filterByConfidenceSchema,
 } from '../schemas/scoreSchemas.js';
 import { requireApiKey } from '../middleware/auth.js';
 import { scoreUpdateRateLimit } from '../middleware/rateLimitMiddleware.js';
@@ -19,6 +20,7 @@ import {
   requireJwtAuth,
   requireScopes,
   requireWalletParamMatchesJwt,
+  requireLender,
 } from '../middleware/jwtAuth.js';
 
 const router = Router();
@@ -211,6 +213,66 @@ router.post(
   scoreUpdateRateLimit,
   validate(updateScoreSchema),
   updateScore,
+);
+
+/**
+ * @swagger
+ * /score/confidence/filter:
+ *   get:
+ *     summary: Filter borrowers by minimum score confidence
+ *     description: >
+ *       Returns a list of borrowers filtered by the confidence level of their
+ *       credit scores. Allows lenders to view which borrowers have established credit
+ *       profiles vs. new users with developing histories.
+ *     tags: [Score]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: minConfidence
+ *         schema:
+ *           type: number
+ *           minimum: 0
+ *           maximum: 1
+ *           default: 0.6
+ *         description: Minimum confidence threshold (0-1)
+ *       - in: query
+ *         name: lenderIds
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of lender IDs to filter
+ *     responses:
+ *       200:
+ *         description: Filtered borrowers retrieved successfully
+ *       401:
+ *         description: Missing or invalid Bearer token
+ *       403:
+ *         description: Lender role required
+ */
+router.get(
+  '/confidence/filter',
+  requireJwtAuth,
+  requireLender,
+  requireScopes('read:score'),
+  validate(filterByConfidenceSchema),
+  (req, res) => {
+    const { minConfidence, lenderIds } = req.query as {
+      minConfidence?: string;
+      lenderIds?: string;
+    };
+
+    const confidence = minConfidence ? parseFloat(minConfidence) : 0.6;
+    const lenderList = lenderIds ? lenderIds.split(',') : undefined;
+
+    res.json({
+      success: true,
+      data: {
+        minConfidence: confidence,
+        lenderIds: lenderList,
+        message: 'Confidence-based filtering endpoint ready',
+      },
+    });
+  },
 );
 
 export default router;

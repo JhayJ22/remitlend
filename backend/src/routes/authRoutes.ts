@@ -1,7 +1,7 @@
 import { registerTestUser } from '../controllers/authController.js';
 import { Router } from 'express';
 import { z } from 'zod';
-import { requestChallenge, login, verify, logout } from '../controllers/authController.js';
+import { requestChallenge, login, verify, logout, introspect, refreshAccessToken } from '../controllers/authController.js';
 import {
   challengeRateLimiter,
   loginRateLimiter,
@@ -126,5 +126,55 @@ router.get('/verify', requireJwtAuth, verifyRateLimiter, verify);
  *         description: Missing or invalid Bearer token
  */
 router.post('/logout', requireJwtAuth, logout);
+
+/**
+ * @swagger
+ * /auth/introspect:
+ *   post:
+ *     summary: Introspect token details
+ *     description: Returns token metadata including expiration, scopes, and TTL without requiring authentication.
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [token]
+ *             properties:
+ *               token:
+ *                 type: string
+ *                 description: JWT to introspect
+ *     responses:
+ *       200:
+ *         description: Token introspection details
+ */
+router.post('/introspect', validateBody(z.object({ token: z.string().min(1) })), introspect);
+
+/**
+ * @swagger
+ * /auth/refresh:
+ *   post:
+ *     summary: Refresh access token using refresh token
+ *     description: Exchanges a valid refresh token for a new access token with rotated refresh token.
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [refreshToken]
+ *             properties:
+ *               refreshToken:
+ *                 type: string
+ *                 description: Refresh token from previous login
+ *     responses:
+ *       200:
+ *         description: New access token issued
+ *       401:
+ *         description: Invalid or expired refresh token
+ */
+router.post('/refresh', validateBody(z.object({ refreshToken: z.string().min(1) })), refreshAccessToken);
 
 export default router;
