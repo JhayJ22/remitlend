@@ -11,7 +11,6 @@ import { isValidStellarAddress } from "../../utils/stellar";
 import { AlertCircle, Send, Loader } from "lucide-react";
 import { useCreateRemittance } from "../../hooks/useApi";
 import { truncateDecimals, getAssetPrecision } from "../../utils/precision";
-import { toast } from "sonner";
 import {
   buildAmountHelperText,
   getPrecisionError,
@@ -20,6 +19,7 @@ import {
   formatAmountOnBlur,
   getAssetDecimals,
 } from "../../utils/amount";
+import { useContractToast } from "../../hooks/useContractToast";
 
 interface RemittanceFormProps {
   onSuccess?: () => void;
@@ -37,6 +37,7 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
   const decimals = getAssetDecimals(token);
   const precisionError = getPrecisionError(amount, token);
   const helperText = buildAmountHelperText(amount, token, decimals);
+  const toast = useContractToast();
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -97,9 +98,7 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
 
   const handleReviewTransaction = async () => {
     if (!validateForm()) {
-      toast.error("Validation Error", {
-        description: "Please fix the errors in the form",
-      });
+      toast.error("Validation Error", "Please fix the errors in the form");
       return;
     }
 
@@ -126,9 +125,7 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
         memo: memo || undefined,
       });
 
-      toast.success("Success!", {
-        description: "Remittance sent successfully",
-      });
+      toast.success("Success!", "Remittance sent successfully");
 
       // Reset form
       setRecipientAddress("");
@@ -139,9 +136,7 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
       onSuccess?.();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Failed to send remittance";
-      toast.error("Error", {
-        description: errorMessage,
-      });
+      toast.error("Error", errorMessage);
     }
   };
 

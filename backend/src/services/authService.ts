@@ -11,6 +11,32 @@ export interface JwtPayload {
   jti: string;
   iat: number;
   exp: number;
+  token_type?: string;
+  scope?: string;
+}
+
+export interface RefreshToken {
+  jti: string;
+  publicKey: string;
+  role: UserRole;
+  scopes: string[];
+  iat: number;
+  exp: number;
+  tokenFamily?: string;
+}
+
+export interface TokenIntrospection {
+  active: boolean;
+  scope?: string;
+  client_id?: string;
+  username?: string;
+  token_type?: string;
+  exp?: number;
+  iat?: number;
+  sub?: string;
+  iss?: string;
+  jti?: string;
+  ttl?: number;
 }
 
 export interface ChallengeMessage {
@@ -21,6 +47,7 @@ export interface ChallengeMessage {
 }
 
 const JWT_EXPIRES_IN = '24h';
+const REFRESH_TOKEN_EXPIRES_IN = '7d';
 const CHALLENGE_EXPIRES_IN_MS = 5 * 60 * 1000;
 // Small allowance for client/server clock drift when a challenge timestamp
 // is slightly in the future.
@@ -113,11 +140,14 @@ export function generateJwtToken(publicKey: string): string {
     role,
     scopes,
     jti: crypto.randomUUID(),
+    token_type: 'Bearer',
+    scope: scopes.join(' '),
   };
 
   return jwt.sign(payload, secret, {
     expiresIn: JWT_EXPIRES_IN,
     algorithm: 'HS256',
+    notBefore: 0,
   });
 }
 
@@ -182,4 +212,70 @@ export function extractBearerToken(authHeader: string | undefined): string | nul
   }
 
   return parts[1] ?? null;
+}
+
+export function generateRefreshToken(publicKey: string, tokenFamily: string = crypto.randomUUID()): string {
+  const secret = getJwtSecret();
+  const role = resolveRoleForWallet(publicKey);
+  const scopes = resolveScopesForRole(role);
+
+  const payload: Omit<RefreshToken, 'iat' | 'exp'> = {
+    jti: crypto.randomUUID(),
+    publicKey,
+    role,
+    scopes,
+    tokenFamily,
+  };
+
+  return jwt.sign(payload, secret, {
+    expiresIn: REFRESH_TOKEN_EXPIRES_IN,
+    algorithm: 'HS256',
+  });
+}
+
+export function verifyRefreshToken(token: string): RefreshToken | null {
+  try {
+    const secret = getJwtSecret();
+    const decoded = jwt.verify(token, secret, {
+      algorithms: ['HS256'],
+    }) as RefreshToken;
+
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+export function introspectToken(token: string): TokenIntrospection {
+  const decoded = decodeJwtToken(token);
+  if (!decoded) {
+    return { active: false };
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const active = decoded.exp > now;
+  const ttl = Math.max(0, decoded.exp - now);
+
+  return {
+    active,
+    scope: decoded.scope || decoded.scopes?.join(' '),
+    client_id: decoded.publicKey,
+    username: decoded.publicKey,
+    token_type: decoded.token_type || 'Bearer',
+    exp: decoded.exp,
+    iat: decoded.iat,
+    sub: decoded.publicKey,
+    jti: decoded.jti,
+    ttl,
+  };
+}
+
+export function getTokenTtl(token: string): number | null {
+  const decoded = decodeJwtToken(token);
+  if (!decoded) {
+    return null;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  return Math.max(0, decoded.exp - now);
 }

@@ -30,9 +30,13 @@ import { metricsHandler, metricsMiddleware } from './middleware/metrics.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
 import { pauseGuard } from './middleware/pauseGuard.js';
+import { deprecationHeadersMiddleware } from './middleware/deprecationHeaders.js';
 import { asyncHandler } from './utils/asyncHandler.js';
 import { AppError } from './errors/AppError.js';
+import { setupConnectionLeakDetection, shutdownConnectionLeakDetection, dbConnectionLeakDetector } from './middleware/dbConnectionLeakDetector.js';
 const app = express();
+
+setupConnectionLeakDetection();
 
 const isProduction = process.env.NODE_ENV === 'production';
 const configuredFrontendUrl = process.env.FRONTEND_URL?.trim();
@@ -118,6 +122,7 @@ app.use(globalRateLimiter);
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(metricsMiddleware);
+app.use(dbConnectionLeakDetector);
 
 // Pause guard: reject state-mutating requests when contracts are paused
 // Issue #1381: Cross-layer emergency pause coordination
@@ -289,6 +294,8 @@ registerStatusRoutes(statusRouter);
 app.use('/', statusRouter);
 
 // Legacy routes (deprecated, maintained for backward compatibility)
+// All /api/* routes include deprecation headers directing clients to /api/v1/*
+app.use('/api', deprecationHeadersMiddleware);
 app.use('/api', simulationRoutes);
 app.use('/api/score', scoreRoutes);
 app.use('/api/loans', loanRoutes);
@@ -361,3 +368,11 @@ Sentry.setupExpressErrorHandler(app);
 app.use(errorHandler);
 
 export default app;
+
+process.on('SIGTERM', () => {
+  shutdownConnectionLeakDetection();
+});
+
+process.on('SIGINT', () => {
+  shutdownConnectionLeakDetection();
+});
