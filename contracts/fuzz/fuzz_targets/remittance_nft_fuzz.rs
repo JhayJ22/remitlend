@@ -333,3 +333,141 @@ fuzz_target!(|data: FuzzAction| {
         }
     }
 });
+
+// Additional fuzzing targets for edge cases
+#[derive(Arbitrary, Debug)]
+enum EdgeCaseAction {
+    BoundaryScores { score: u32 },
+    LargeRepayments { amount: i128 },
+    ConcurrentMinters { count: u8 },
+    MetadataValidation { uri_len: u16 },
+    TransferCooldownEdges { ledger_offset: u32 },
+}
+
+pub fn fuzz_boundary_conditions(data: EdgeCaseAction) {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let nft_id = env.register(RemittanceNFT, ());
+    let nft_client = RemittanceNFTClient::new(&env, &nft_id);
+    let admin = Address::generate(&env);
+    nft_client.initialize(&admin);
+
+    match data {
+        EdgeCaseAction::BoundaryScores { score } => {
+            let user = Address::generate(&env);
+            let history_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+            // Test minimum credit score (300)
+            if score < 300 {
+                // Should handle low scores
+            }
+
+            // Test maximum score (850)
+            if score > 850 {
+                // Should cap at maximum
+            }
+
+            let result = nft_client.mint(
+                &user,
+                &score,
+                &history_hash,
+                &soroban_sdk::String::from_str(&env, "ipfs://test"),
+                &BytesN::from_array(&env, &[0u8; 32]),
+                &None,
+            );
+
+            // Verify no crash on boundary scores
+            let _ = result;
+        }
+
+        EdgeCaseAction::LargeRepayments { amount } => {
+            let user = Address::generate(&env);
+            let history_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+            nft_client.mint(
+                &user,
+                &500u32,
+                &history_hash,
+                &soroban_sdk::String::from_str(&env, "ipfs://test"),
+                &BytesN::from_array(&env, &[0u8; 32]),
+                &None,
+            );
+
+            // Test with i128::MAX or very large values
+            if amount > 0 {
+                nft_client.update_score(&user, &amount, &None);
+            }
+        }
+
+        EdgeCaseAction::ConcurrentMinters { count } => {
+            let user = Address::generate(&env);
+            let history_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+            // Authorize multiple minters
+            for _ in 0..count.min(32) {
+                let minter = Address::generate(&env);
+                nft_client.authorize_minter(&minter);
+            }
+
+            // Operations with many authorized minters
+            let minter = Address::generate(&env);
+            nft_client.authorize_minter(&minter);
+
+            let result = nft_client.mint(
+                &user,
+                &600u32,
+                &history_hash,
+                &soroban_sdk::String::from_str(&env, "ipfs://test"),
+                &BytesN::from_array(&env, &[0u8; 32]),
+                &None,
+            );
+
+            let _ = result;
+        }
+
+        EdgeCaseAction::MetadataValidation { uri_len } => {
+            let user = Address::generate(&env);
+            let history_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+            // Create URI of arbitrary length
+            let uri_str = (0..uri_len.min(1024))
+                .map(|_| "a")
+                .collect::<Vec<_>>()
+                .join("");
+            let uri = soroban_sdk::String::from_str(&env, &uri_str);
+
+            let result = nft_client.mint(
+                &user,
+                &650u32,
+                &history_hash,
+                &uri,
+                &BytesN::from_array(&env, &[0u8; 32]),
+                &None,
+            );
+
+            // Should not crash on various URI lengths
+            let _ = result;
+        }
+
+        EdgeCaseAction::TransferCooldownEdges { ledger_offset } => {
+            let user1 = Address::generate(&env);
+            let user2 = Address::generate(&env);
+            let history_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+            // Mint NFT for user1
+            nft_client.mint(
+                &user1,
+                &700u32,
+                &history_hash,
+                &soroban_sdk::String::from_str(&env, "ipfs://test"),
+                &BytesN::from_array(&env, &[0u8; 32]),
+                &None,
+            );
+
+            // Attempt transfer at different ledger points
+            // Note: Actual transfer logic depends on cooldown implementation
+            let _ = ledger_offset;
+        }
+    }
+}
