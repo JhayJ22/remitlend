@@ -64,5 +64,7 @@ export function useLoanStream(loanId: string | undefined): RealtimeStatus {
       invalidateLoanQueries();
     },
     onFallbackPoll: invalidateLoanQueries,
+    showToasts: true,
+    toastPrefix: "Loan updates",
   });
 }
