@@ -45,6 +45,64 @@ export const httpRequestDurationHistogram = new client.Histogram({
   registers: [metricsRegistry],
 });
 
+export const dbQueryDurationHistogram = new client.Histogram({
+  name: 'db_query_duration_seconds',
+  help: 'Database query duration in seconds.',
+  labelNames: ['operation', 'table'] as const,
+  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
+  registers: [metricsRegistry],
+});
+
+export const cacheHitRateCounter = new client.Counter({
+  name: 'cache_hits_total',
+  help: 'Total number of cache hits.',
+  labelNames: ['key_pattern'] as const,
+  registers: [metricsRegistry],
+});
+
+export const cacheMissRateCounter = new client.Counter({
+  name: 'cache_misses_total',
+  help: 'Total number of cache misses.',
+  labelNames: ['key_pattern'] as const,
+  registers: [metricsRegistry],
+});
+
+export const loanApprovalRateCounter = new client.Counter({
+  name: 'loan_approvals_total',
+  help: 'Total number of approved loans.',
+  labelNames: ['loan_type'] as const,
+  registers: [metricsRegistry],
+});
+
+export const loanRejectionRateCounter = new client.Counter({
+  name: 'loan_rejections_total',
+  help: 'Total number of rejected loans.',
+  labelNames: ['rejection_reason'] as const,
+  registers: [metricsRegistry],
+});
+
+export const poolUtilizationGauge = new client.Gauge({
+  name: 'pool_utilization_ratio',
+  help: 'Current utilization ratio of the lending pool (0-1).',
+  labelNames: ['pool_id'] as const,
+  registers: [metricsRegistry],
+});
+
+export const activeLoansGauge = new client.Gauge({
+  name: 'active_loans_total',
+  help: 'Total number of currently active loans.',
+  labelNames: ['status'] as const,
+  registers: [metricsRegistry],
+});
+
+export const transactionProcessingTimeHistogram = new client.Histogram({
+  name: 'transaction_processing_time_seconds',
+  help: 'Time taken to process a transaction on-chain.',
+  labelNames: ['transaction_type'] as const,
+  buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60],
+  registers: [metricsRegistry],
+});
+
 function routeLabel(req: Request): string {
   const routePath = req.route?.path;
   if (typeof routePath === 'string') {
@@ -102,4 +160,36 @@ export async function refreshWebhookRetryQueueDepth(): Promise<void> {
 export async function metricsHandler(_req: Request, res: Response): Promise<void> {
   res.set('Content-Type', metricsRegistry.contentType);
   res.send(await metricsRegistry.metrics());
+}
+
+export function recordDbQueryDuration(duration: number, operation: string, table: string): void {
+  dbQueryDurationHistogram.observe({ operation, table }, duration);
+}
+
+export function recordCacheHit(keyPattern: string): void {
+  cacheHitRateCounter.inc({ key_pattern: keyPattern });
+}
+
+export function recordCacheMiss(keyPattern: string): void {
+  cacheMissRateCounter.inc({ key_pattern: keyPattern });
+}
+
+export function recordLoanApproval(loanType: string = 'standard'): void {
+  loanApprovalRateCounter.inc({ loan_type: loanType });
+}
+
+export function recordLoanRejection(rejectionReason: string = 'unknown'): void {
+  loanRejectionRateCounter.inc({ rejection_reason: rejectionReason });
+}
+
+export function updatePoolUtilization(poolId: string, utilizationRatio: number): void {
+  poolUtilizationGauge.set({ pool_id: poolId }, Math.max(0, Math.min(1, utilizationRatio)));
+}
+
+export function updateActiveLoans(status: string, count: number): void {
+  activeLoansGauge.set({ status }, count);
+}
+
+export function recordTransactionProcessingTime(duration: number, transactionType: string): void {
+  transactionProcessingTimeHistogram.observe({ transaction_type: transactionType }, duration);
 }

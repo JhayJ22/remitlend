@@ -1,0 +1,49 @@
+{
+  "total_budget_bytes": 262144,
+  "total_budget_description": "256 KiB per-contract budget",
+  "per_function_budgets": {
+    "loan_manager": {
+      "budget_bytes": 12288,
+      "budget_kib": 12,
+      "reason": "Complex contract with multiple loan management functions"
+    },
+    "lending_pool": {
+      "budget_bytes": 10240,
+      "budget_kib": 10,
+      "reason": "Medium complexity - pool management and state tracking"
+    },
+    "remittance_nft": {
+      "budget_bytes": 10240,
+      "budget_kib": 10,
+      "reason": "Medium complexity - NFT operations and transfers"
+    },
+    "money": {
+      "budget_bytes": 6144,
+      "budget_kib": 6,
+      "reason": "Simple contract - tightly constrained money operations"
+    },
+    "multisig_governance": {
+      "budget_bytes": 8192,
+      "budget_kib": 8,
+      "reason": "Standard functions for multi-signature governance"
+    }
+  },
+  "default_function_budget": {
+    "budget_bytes": 8192,
+    "budget_kib": 8,
+    "reason": "Default budget for any contract not explicitly listed"
+  },
+  "optimization_flags": {
+    "opt_level": "z",
+    "lto": true,
+    "codegen_units": 1,
+    "strip": true
+  },
+  "last_updated": "2026-08-26",
+  "notes": [
+    "Budgets are per-function averages based on contract complexity",
+    "Total size budget of 256 KiB is enforced by CI",
+    "Adjust per-function budgets if optimization requirements change",
+    "Use scripts/analyze-contract-sizes.sh to analyze actual sizes"
+  ]
+}
