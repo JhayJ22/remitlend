@@ -40,10 +40,24 @@ const REDACTED_FIELDS = [
   'recipient_name',
   'authorization',
   'Authorization',
+  'authorization_code',
+  'access_token',
+  'refresh_token',
+  'api_key',
+  'secret_key',
+  'password',
   'email',
   'phone',
+  'wallet_address',
+  'public_key',
+  'private_key',
+  'mnemonic',
   'legalName',
   'pii',
+  'ssn',
+  'tin',
+  'bank_account',
+  'credit_card',
 ];
 
 const redactPiiFormat = winston.format((info) => {
@@ -81,6 +95,12 @@ const productionFormat = winston.format.combine(
   winston.format.timestamp({ format: 'iso' }),
   winston.format.errors({ stack: true }),
   redactPiiFormat(),
+  winston.format((info) => {
+    if (!info.service) {
+      info.service = 'remitlend-backend';
+    }
+    return info;
+  })(),
   winston.format.json(),
 );
 
@@ -110,24 +130,41 @@ const logger = winston.createLogger({
 
 export interface LogContext {
   requestId?: string;
+  traceId?: string;
   userId?: string;
   loanId?: string;
+  service?: string;
+  module?: string;
+  action?: string;
   [key: string]: any;
 }
 
+const shouldSample = (sampleRate: number = 0.1): boolean => {
+  return Math.random() < sampleRate;
+};
+
 const withContext = (context: LogContext = {}) => {
   const requestId = context.requestId || getRequestId();
+  const traceId = context.traceId || context.requestId || getRequestId();
   const baseMeta: Record<string, any> = {};
 
   if (requestId) baseMeta.requestId = requestId;
+  if (traceId) baseMeta.traceId = traceId;
   if (context.userId) baseMeta.userId = context.userId;
   if (context.loanId) baseMeta.loanId = context.loanId;
+  if (context.service) baseMeta.service = context.service;
+  if (context.module) baseMeta.module = context.module;
+  if (context.action) baseMeta.action = context.action;
 
   return {
-    info: (message: string, meta?: any) => logger.info(message, { ...baseMeta, ...meta }),
+    info: (message: string, meta?: any, sampleRate?: number) => {
+      if (sampleRate !== undefined && !shouldSample(sampleRate)) return;
+      logger.info(message, { ...baseMeta, ...meta });
+    },
     warn: (message: string, meta?: any) => logger.warn(message, { ...baseMeta, ...meta }),
     error: (message: string, meta?: any) => logger.error(message, { ...baseMeta, ...meta }),
     http: (message: string, meta?: any) => logger.http(message, { ...baseMeta, ...meta }),
+    debug: (message: string, meta?: any) => logger.debug(message, { ...baseMeta, ...meta }),
   };
 };
 

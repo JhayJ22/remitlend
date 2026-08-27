@@ -1,8 +1,12 @@
 import type { Request, Response, NextFunction } from 'express';
 import { cacheService } from '../services/cacheService.js';
 import logger from '../utils/logger.js';
+import { AppError } from '../errors/AppError.js';
 
 const IDEMPOTENCY_TTL = 24 * 60 * 60; // 24 hours in seconds
+
+// Methods that require idempotency keys
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 interface CachedResponse {
   status: number;
@@ -11,8 +15,10 @@ interface CachedResponse {
 
 /**
  * Middleware to handle Idempotency-Key headers.
- * If the key is present and a cached response exists, it returns the cached response.
- * Otherwise, it intercepts the response, captures it, and stores it in Redis.
+ * - For write operations (POST/PUT/PATCH/DELETE), an Idempotency-Key is REQUIRED
+ * - If the key exists in cache, returns the cached response
+ * - Otherwise, captures and caches the response
+ * - Enforces that duplicate keys within 24h return the same response
  */
 export const idempotencyMiddleware = async (
   req: Request,
@@ -20,6 +26,14 @@ export const idempotencyMiddleware = async (
   next: NextFunction,
 ): Promise<void> => {
   const key = req.header('Idempotency-Key');
+  const isWriteOperation = WRITE_METHODS.has(req.method);
+
+  // Enforce idempotency key on all write operations
+  if (isWriteOperation && !key) {
+    return next(
+      AppError.badRequest('Idempotency-Key header is required for write operations'),
+    );
+  }
 
   if (!key) {
     return next();
@@ -80,8 +94,8 @@ export const idempotencyMiddleware = async (
 
     // Store the response in cache once the request is finished
     res.on('finish', async () => {
-      // Only cache 2xx and 4xx status codes.
-      // 5xx errors should usually be retried without returning a cached failure.
+      // Cache 2xx and 4xx status codes (errors are cacheable too).
+      // 5xx errors should NOT be cached—let client retry.
       if (res.statusCode >= 200 && res.statusCode < 500 && responseBody) {
         try {
           await cacheService.set(
@@ -92,6 +106,11 @@ export const idempotencyMiddleware = async (
             },
             IDEMPOTENCY_TTL,
           );
+          logger.debug(`Idempotency key cached: ${key}`, {
+            method: req.method,
+            path: req.path,
+            status: res.statusCode,
+          });
         } catch (error) {
           logger.error(`Error caching idempotency key ${key}`, { error });
         }
@@ -102,5 +121,30 @@ export const idempotencyMiddleware = async (
   } catch (error) {
     logger.error('Error in idempotency middleware', { error, key });
     next();
+  }
+};
+
+/**
+ * Rotate an old idempotency key to a new one within the same 24h window.
+ * Useful when clients need to retry with a fresh key (e.g., after timeout).
+ * The old key remains cached; the new key becomes the primary for future requests.
+ */
+export const rotateIdempotencyKey = async (
+  oldKey: string,
+  newKey: string,
+): Promise<boolean> => {
+  try {
+    const cacheKey = `idemp:${oldKey}`;
+    const cached = await cacheService.get<CachedResponse>(cacheKey);
+    if (cached) {
+      const newCacheKey = `idemp:${newKey}`;
+      await cacheService.set(newCacheKey, cached, IDEMPOTENCY_TTL);
+      logger.info(`Idempotency key rotated: ${oldKey} -> ${newKey}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    logger.error('Error rotating idempotency key', { oldKey, newKey, error });
+    return false;
   }
 };

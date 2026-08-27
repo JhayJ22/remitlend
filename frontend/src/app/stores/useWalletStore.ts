@@ -16,6 +16,7 @@
 
 import { create } from "zustand";
 import { createJSONStorage, devtools, persist } from "zustand/middleware";
+import type { QueryClient } from "@tanstack/react-query";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -51,6 +52,8 @@ interface WalletState {
   error: string | null;
   /** Whether the app should try to restore the wallet on refresh */
   shouldAutoReconnect: boolean;
+  /** Query client for cancelling pending requests on disconnect */
+  queryClient: QueryClient | null;
 }
 
 interface WalletActions {
@@ -58,6 +61,10 @@ interface WalletActions {
   setConnected: (address: string, network: WalletNetwork) => void;
   /** Call on disconnect or user-initiated Sign Out with wallet */
   disconnect: () => void;
+  /** Enhanced disconnect that also cancels pending queries and clears cache */
+  disconnectAndCleanup: () => void;
+  /** Set the query client for cancelling pending requests */
+  setQueryClient: (client: QueryClient) => void;
   /** Update balances after fetching from the chain */
   setBalances: (balances: TokenBalance[]) => void;
   /** Update network when the user switches chains */
@@ -79,6 +86,7 @@ const initialState: WalletState = {
   isLoadingBalances: false,
   error: null,
   shouldAutoReconnect: false,
+  queryClient: null,
 };
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -86,7 +94,7 @@ const initialState: WalletState = {
 export const useWalletStore = create<WalletStore>()(
   devtools(
     persist(
-      (set) => ({
+      (set, get) => ({
         ...initialState,
 
         setConnected: (address, network) =>
@@ -110,6 +118,39 @@ export const useWalletStore = create<WalletStore>()(
             false,
             "wallet/disconnect",
           ),
+
+        disconnectAndCleanup: () => {
+          const { queryClient } = get();
+          
+          // Cancel all pending queries and mutations
+          if (queryClient) {
+            queryClient.cancelQueries({});
+            queryClient.cancelMutations();
+            // Clear query cache for wallet-specific data
+            queryClient.removeQueries({ queryKey: ["loans"] });
+            queryClient.removeQueries({ queryKey: ["remittances"] });
+            queryClient.removeQueries({ queryKey: ["pool"] });
+            queryClient.removeQueries({ queryKey: ["scoreBreakdown"] });
+            queryClient.removeQueries({ queryKey: ["creditScore"] });
+            queryClient.removeQueries({ queryKey: ["yieldHistory"] });
+            queryClient.removeQueries({ queryKey: ["remittanceNft"] });
+            queryClient.removeQueries({ queryKey: ["notifications"] });
+            queryClient.removeQueries({ queryKey: ["notificationPreferences"] });
+            queryClient.removeQueries({ queryKey: ["user"] });
+          }
+          
+          // Reset to initial state
+          set(
+            {
+              ...initialState,
+            },
+            false,
+            "wallet/disconnectAndCleanup",
+          );
+        },
+
+        setQueryClient: (client: QueryClient) =>
+          set({ queryClient: client }, false, "wallet/setQueryClient"),
 
         setBalances: (balances) =>
           set({ balances, isLoadingBalances: false }, false, "wallet/setBalances"),

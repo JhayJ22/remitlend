@@ -1,8 +1,10 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { TokenBalance, WalletNetwork, WalletStatus } from "../../stores/useWalletStore";
 import { useWalletStore } from "../../stores/useWalletStore";
+import { useWalletToasts } from "../../hooks/useWalletToasts";
 
 type FreighterApi = typeof import("@stellar/freighter-api");
 
@@ -109,10 +111,13 @@ async function loadFreighterApi(): Promise<FreighterApi> {
 }
 
 export function WalletProvider({ children }: WalletProviderProps) {
+  const queryClient = useQueryClient();
   const address = useWalletStore((state) => state.address);
   const shouldAutoReconnect = useWalletStore((state) => state.shouldAutoReconnect);
   const setConnected = useWalletStore((state) => state.setConnected);
   const disconnect = useWalletStore((state) => state.disconnect);
+  const disconnectAndCleanup = useWalletStore((state) => state.disconnectAndCleanup);
+  const setQueryClient = useWalletStore((state) => state.setQueryClient);
   const setBalances = useWalletStore((state) => state.setBalances);
   const setNetwork = useWalletStore((state) => state.setNetwork);
   const setStatus = useWalletStore((state) => state.setStatus);
@@ -120,6 +125,11 @@ export function WalletProvider({ children }: WalletProviderProps) {
   const setLoadingBalances = useWalletStore((state) => state.setLoadingBalances);
   const [isFreighterAvailable, setIsFreighterAvailable] = useState(false);
   const syncRef = useRef<Promise<void> | null>(null);
+
+  // Set query client for disconnect cleanup
+  useEffect(() => {
+    setQueryClient(queryClient);
+  }, [queryClient, setQueryClient]);
 
   async function refreshBalances(nextAddress: string, horizonUrl: string, status: WalletStatus) {
     setLoadingBalances(true);
@@ -232,7 +242,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
   }
 
   function disconnectWallet() {
-    disconnect();
+    disconnectAndCleanup();
   }
 
   const NETWORK_PASSPHRASES: Record<string, string> = {
@@ -270,6 +280,9 @@ export function WalletProvider({ children }: WalletProviderProps) {
     if (!shouldAutoReconnect && !address) return;
     await syncWallet(false);
   }
+
+  // Toast notifications for wallet state changes
+  useWalletToasts();
 
   // Initial check and Auto-reconnect
   useEffect(() => {
@@ -309,7 +322,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
       if (typeof api.watchAddress === "function") {
         unwatchAddress = api.watchAddress((newAddress: string) => {
           if (!newAddress && address) {
-            disconnect();
+            disconnectAndCleanup();
           } else if (newAddress && newAddress !== address) {
             void refreshWallet();
           }

@@ -3,6 +3,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { query } from '../db/connection.js';
 import { cacheService } from '../services/cacheService.js';
 import { sorobanService } from '../services/sorobanService.js';
+import { calculateTieredScore } from '../services/bayesianScoringService.js';
 
 // ---------------------------------------------------------------------------
 // Score computation helpers
@@ -44,6 +45,9 @@ export const getScore = asyncHandler(async (req: Request, res: Response) => {
   const cachedScoreParams = await cacheService.get<{
     score: number;
     band: CreditBand;
+    confidence: number;
+    tier: string;
+    credibleInterval: [number, number];
   }>(cacheKey);
 
   if (cachedScoreParams) {
@@ -52,31 +56,41 @@ export const getScore = asyncHandler(async (req: Request, res: Response) => {
       userId,
       score: cachedScoreParams.score,
       band: cachedScoreParams.band,
+      confidence: cachedScoreParams.confidence,
+      tier: cachedScoreParams.tier,
+      credibleInterval: cachedScoreParams.credibleInterval,
       factors: {
         repaymentHistory: 'On-time payments increase score by 15 pts each',
         latePaymentPenalty: 'Late payments decrease score by 30 pts each',
         range: '500 (Poor) – 850 (Excellent)',
+        bayesianConfidence: 'Confidence increases with more transactions (0-1 scale)',
       },
     });
     return;
   }
 
-  const result = await query('SELECT current_score FROM scores WHERE user_id = $1', [userId]);
+  const tieredScore = await calculateTieredScore(userId);
+  const band = getCreditBand(tieredScore.score);
 
-  const score = result.rows.length > 0 ? result.rows[0].current_score : 500;
-  const band = getCreditBand(score);
+  const response = {
+    score: tieredScore.score,
+    band,
+    confidence: tieredScore.confidence,
+    tier: tieredScore.tier,
+    credibleInterval: tieredScore.credibleInterval,
+  };
 
-  await cacheService.set(cacheKey, { score, band }, 300); // 5 minutes TTL
+  await cacheService.set(cacheKey, response, 300);
 
   res.json({
     success: true,
     userId,
-    score,
-    band,
+    ...response,
     factors: {
       repaymentHistory: 'On-time payments increase score by 15 pts each',
       latePaymentPenalty: 'Late payments decrease score by 30 pts each',
       range: '500 (Poor) – 850 (Excellent)',
+      bayesianConfidence: 'Confidence increases with more transactions (0-1 scale)',
     },
   });
 });

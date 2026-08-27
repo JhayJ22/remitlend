@@ -12,10 +12,14 @@ import { eventStreamService } from './eventStreamService.js';
 import { notificationService, type NotificationType } from './notificationService.js';
 import { sorobanService } from './sorobanService.js';
 import { updateUserScoresBulk } from './scoresService.js';
+import { transferHistoryService } from './transferHistoryService.js';
 import { AppError } from '../errors/AppError.js';
 import { recordIndexerLedgers } from '../middleware/metrics.js';
 import { setPauseState } from '../middleware/pauseGuard.js';
 import { fromStroops } from '../money/decimal.js';
+import { LOAN_STATE_EVENT_TYPES } from './loanStateEventStore.js';
+
+const LOAN_STATE_EVENT_TYPE_SET = new Set<string>(LOAN_STATE_EVENT_TYPES);
 
 const EVENT_TYPE_ALIASES: Record<string, WebhookEventType> = {
   Mint: 'NFTMinted',
@@ -23,6 +27,7 @@ const EVENT_TYPE_ALIASES: Record<string, WebhookEventType> = {
   ScoreUpd: 'ScoreUpdated',
   Seized: 'NFTSeized',
   NftBurned: 'NFTBurned',
+  NftTransferred: 'NFTTransferred',
   MinScore: 'MinScoreUpdated',
   GovProp: 'ProposalCreated',
   GovAppr: 'ProposalApproved',
@@ -81,6 +86,10 @@ interface ContractEvent extends IndexedLoanEvent {
   value: string;
   interestRateBps?: number;
   termLedgers?: number;
+  /** Transfer event details for NftTransferred events */
+  nftTransferFrom?: string;
+  nftTransferTo?: string;
+  nftTransferScore?: number;
 }
 
 interface EventIndexerConfig {
@@ -660,6 +669,34 @@ export class EventIndexer {
             );
           }
 
+          /**
+           * Issue #75: append a domain loan-state event for every on-chain
+           * loan state transition so the current loan state is fully
+           * reconstructable by replaying these append-only events (see
+           * loanStateEventStore.replayLoanState). Runs inside the same
+           * transaction as the raw event insert so the two stay consistent.
+           */
+          if (event.loanId !== undefined && LOAN_STATE_EVENT_TYPE_SET.has(event.eventType)) {
+            await client.query(
+              `INSERT INTO loan_state_events (event_id, loan_id, event_type, payload, actor, occurred_at)
+               VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+               ON CONFLICT (event_id) DO NOTHING`,
+              [
+                `lse_${event.eventId}`,
+                event.loanId,
+                event.eventType,
+                JSON.stringify({
+                  amount: event.amount ?? null,
+                  interestRateBps: event.interestRateBps ?? null,
+                  termLedgers: event.termLedgers ?? null,
+                  txHash: event.txHash,
+                }),
+                event.adminAddress ?? event.address ?? null,
+                event.ledgerClosedAt,
+              ],
+            );
+          }
+
           // Aggregate score deltas per borrower; a single bulk upsert at
           // the end of the transaction avoids N+1 score updates.
           if (event.eventType === 'LoanRepaid') {
@@ -690,6 +727,26 @@ export class EventIndexer {
       // together — satisfying the atomicity requirement.
       if (scoreUpdates.size > 0) {
         await updateUserScoresBulk(scoreUpdates, client);
+      }
+
+      // Handle NftTransferred events — store in transfer history table
+      for (const event of parsedEvents) {
+        if (
+          event.eventType === 'NftTransferred' &&
+          (event as any).nftTransferFrom &&
+          (event as any).nftTransferTo
+        ) {
+          const fromAddr = (event as any).nftTransferFrom as string;
+          const toAddr = (event as any).nftTransferTo as string;
+          const score = (event as any).nftTransferScore as number;
+
+          await client.query(
+            `INSERT INTO nft_transfer_events (from_address, to_address, score, ledger_sequence)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT DO NOTHING`,
+            [fromAddr, toAddr, score, event.ledger],
+          );
+        }
       }
     });
     // withTransaction commits here; any error triggers automatic ROLLBACK
@@ -824,6 +881,28 @@ export class EventIndexer {
       // (from, to), ()
       if (event.topic[2]) {
         address = this.decodeAddress(event.topic[2]);
+      }
+    } else if (type === 'NftTransferred') {
+      // Decode structured NftTransferEvent { from, to, score, ledger }
+      try {
+        const data = scValToNative(event.value);
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          const transferData = data as any;
+          const fromAddr = transferData.from?.toString() || '';
+          const toAddr = transferData.to?.toString() || '';
+          const score = Number(transferData.score) || 0;
+
+          // Store transfer-specific data
+          (event as any).nftTransferFrom = fromAddr;
+          (event as any).nftTransferTo = toAddr;
+          (event as any).nftTransferScore = score;
+
+          // Set address to the "to" address for audit trail
+          address = toAddr;
+        }
+      } catch (error) {
+        logger.withContext().warn('Failed to decode NftTransferred event', { eventId: event.id, error });
+        return null;
       }
     } else if (type === 'LoanRefinanced') {
       // (type, loan_id, borrower), [new_amount, new_term]

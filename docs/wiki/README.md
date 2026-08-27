@@ -6,9 +6,14 @@ This folder is a GitHub Wiki-style set of documents that live in the repo so the
 
 - [Soroban Contract State Machine](./contract-state-machine.md)
 - [Indexer ↔ Database Sync Flow](./indexer-sync-flow.md)
-- [Frontend “Standard Library” Patterns](./frontend-patterns.md)
+- [Frontend "Standard Library" Patterns](./frontend-patterns.md)
 - [JWT Revocation & Role-Change Propagation](./jwt-revocation.md)
 - [Security Scanning](./security-scanning.md)
 - [API Idempotency](./api-idempotency.md)
 - [Webhook Signatures](./webhook-signatures.md)
+
+## Runbooks
+
+- [Troubleshooting Guide](../runbooks/troubleshooting.md) — Comprehensive troubleshooting for development and production issues.
+- [Indexer Recovery](../runbooks/indexer-recovery.md) — Responding to indexer lag, RPC outages, and quarantined events.
 

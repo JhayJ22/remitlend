@@ -132,17 +132,41 @@ stricter rate limit (10 requests/minute/IP) to prevent abuse.
 
 ---
 
+## Docker Compose Production
+
+The production Compose deployment uses the following variables:
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `OWNER` | Yes | — | GitHub Container Registry owner/organization used to pull RemitLend production images |
+| `TAG` | Yes | — | Production image tag. Use an explicit release tag; do not use `latest` or a staging tag |
+| `POSTGRES_DB` | Yes | — | PostgreSQL database name 
+|
+| `POSTGRES_USER` | Yes | — | PostgreSQL database user |
+
+
+### Production Secrets
+
+The PostgreSQL password is provided through the Docker Compose secrets mechanism rather than an environment variable.
+
+Create the secret on the deployment host:
+
+```bash
+mkdir -p secrets
+openssl rand -base64 48 > secrets/postgres_password.txt
+chmod 600 secrets/postgres_password.txt
+
 ## Pinned Infrastructure Image Versions
 
 The `docker-compose.yml` and `docker-compose.staging.yml` files pin dependency
 images to specific minor versions to prevent silent environment drift.
 
-| Service  | Image                  | Used in                                               |
-| -------- | ---------------------- | ----------------------------------------------------- |
-| Postgres | `postgres:16.9-alpine` | `docker-compose.yml`, `docker-compose.staging.yml`    |
-| Redis    | `redis:7.4-alpine`     | `docker-compose.yml`, `docker-compose.staging.yml`    |
+| Service  | Image                  | Used in |
+| -------- | ---------------------- | ------- |
+| Postgres | `postgres:16.9-alpine` | `docker-compose.yml`, `docker-compose.staging.yml`, `docker-compose.production.yml` |
+| Redis    | `redis:7.4-alpine`     | `docker-compose.yml`, `docker-compose.staging.yml`, `docker-compose.production.yml` |
 
-When upgrading either dependency, update **both** compose files and this table
+When upgrading either dependency, update **all** compose files and this table
 in the same PR.
 
 ---
