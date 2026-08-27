@@ -17,6 +17,9 @@ import { AppError } from '../errors/AppError.js';
 import { recordIndexerLedgers } from '../middleware/metrics.js';
 import { setPauseState } from '../middleware/pauseGuard.js';
 import { fromStroops } from '../money/decimal.js';
+import { LOAN_STATE_EVENT_TYPES } from './loanStateEventStore.js';
+
+const LOAN_STATE_EVENT_TYPE_SET = new Set<string>(LOAN_STATE_EVENT_TYPES);
 
 const EVENT_TYPE_ALIASES: Record<string, WebhookEventType> = {
   Mint: 'NFTMinted',
@@ -662,6 +665,34 @@ export class EventIndexer {
                 }),
                 null,
                 200, // Loan approved on-chain
+              ],
+            );
+          }
+
+          /**
+           * Issue #75: append a domain loan-state event for every on-chain
+           * loan state transition so the current loan state is fully
+           * reconstructable by replaying these append-only events (see
+           * loanStateEventStore.replayLoanState). Runs inside the same
+           * transaction as the raw event insert so the two stay consistent.
+           */
+          if (event.loanId !== undefined && LOAN_STATE_EVENT_TYPE_SET.has(event.eventType)) {
+            await client.query(
+              `INSERT INTO loan_state_events (event_id, loan_id, event_type, payload, actor, occurred_at)
+               VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+               ON CONFLICT (event_id) DO NOTHING`,
+              [
+                `lse_${event.eventId}`,
+                event.loanId,
+                event.eventType,
+                JSON.stringify({
+                  amount: event.amount ?? null,
+                  interestRateBps: event.interestRateBps ?? null,
+                  termLedgers: event.termLedgers ?? null,
+                  txHash: event.txHash,
+                }),
+                event.adminAddress ?? event.address ?? null,
+                event.ledgerClosedAt,
               ],
             );
           }

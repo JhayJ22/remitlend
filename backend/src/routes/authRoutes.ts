@@ -6,6 +6,7 @@ import {
   challengeRateLimiter,
   loginRateLimiter,
   ipLoginRateLimiter,
+  verifyRateLimiter,
 } from '../middleware/rateLimiter.js';
 import { requireJwtAuth } from '../middleware/jwtAuth.js';
 import { validateBody } from '../middleware/validation.js';
