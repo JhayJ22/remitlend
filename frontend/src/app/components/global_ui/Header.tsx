@@ -8,7 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { useRouter } from "next/navigation";
-import { Menu, Search, User, Wallet } from "lucide-react";
+import { Menu, Search, User, Wallet, HelpCircle } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { ThemeToggle } from "../ui/ThemeToggle";
@@ -22,6 +22,8 @@ import { useLoans, useRemittances } from "../../hooks/useApi";
 import { useContractToast } from "../../hooks/useContractToast";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { useTranslations, useLocale } from "next-intl";
+import { useKeyboardShortcuts, createGlobalShortcuts, createNavigationShortcuts, createWalletShortcuts, createSearchShortcut } from "../../hooks/useKeyboardShortcuts";
+import { KeyboardShortcutsHelp } from "../ui/KeyboardShortcutsHelp";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -70,6 +72,41 @@ export function Header({ onMenuClick, className }: HeaderProps) {
     ],
     [locale, t],
   );
+
+  const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
+
+  const navigationShortcuts = createNavigationShortcuts(router, locale);
+  const walletShortcuts = createWalletShortcuts(connectWallet, disconnectWallet, isConnected);
+  const searchShortcuts = createSearchShortcut(() => {
+    setIsOpen(true);
+    inputRef.current?.focus();
+  });
+  const globalShortcuts = createGlobalShortcuts(
+    () => {
+      const event = new CustomEvent("toggle-theme");
+      window.dispatchEvent(event);
+    },
+    () => setShortcutsHelpOpen(true),
+  );
+
+  const allShortcuts = [
+    ...navigationShortcuts,
+    ...walletShortcuts,
+    ...searchShortcuts,
+    ...globalShortcuts,
+  ];
+
+  useKeyboardShortcuts(allShortcuts, { enabled: true, scope: "global" });
+
+  useEffect(() => {
+    const handleThemeToggle = () => {
+      const event = new CustomEvent("toggle-theme");
+      window.dispatchEvent(event);
+    };
+
+    window.addEventListener("toggle-theme", handleThemeToggle);
+    return () => window.removeEventListener("toggle-theme", handleThemeToggle);
+  }, []);
 
   const searchResults = useMemo(() => {
     const term = debouncedQuery.trim().toLowerCase();
@@ -156,22 +193,6 @@ export function Header({ onMenuClick, className }: HeaderProps) {
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  useEffect(() => {
-    const handleShortcut = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setIsOpen(true);
-        inputRef.current?.focus();
-      }
-      if (event.key === "Escape") {
-        setIsOpen(false);
-      }
-    };
-
-    window.addEventListener("keydown", handleShortcut);
-    return () => window.removeEventListener("keydown", handleShortcut);
   }, []);
 
   const handleSelect = (href: string) => {
@@ -383,6 +404,17 @@ export function Header({ onMenuClick, className }: HeaderProps) {
 
         <button
           type="button"
+          onClick={() => setShortcutsHelpOpen(true)}
+          aria-label="Keyboard shortcuts"
+          className="p-2 text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900 rounded-lg"
+        >
+          <HelpCircle className="h-5 w-5" />
+        </button>
+
+        <div className="h-8 w-px bg-zinc-200 dark:bg-zinc-800 hidden sm:block" />
+
+        <button
+          type="button"
           aria-label={`Profile: ${profileLabel}`}
           className="flex items-center gap-2 rounded-full p-1 border border-zinc-200 hover:border-zinc-300 transition-colors dark:border-zinc-800 dark:hover:border-zinc-700"
         >
@@ -397,5 +429,12 @@ export function Header({ onMenuClick, className }: HeaderProps) {
         </button>
       </div>
     </header>
+    {shortcutsHelpOpen && (
+      <KeyboardShortcutsHelp
+        isOpen={shortcutsHelpOpen}
+        onClose={() => setShortcutsHelpOpen(false)}
+        shortcuts={allShortcuts}
+      />
+    )}
   );
 }

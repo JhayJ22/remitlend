@@ -100,7 +100,7 @@ jobs:
           trivyignores: '.trivyignore'
 
       - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
@@ -126,7 +126,7 @@ jobs:
           trivyignores: '.trivyignore'
 
       - name: Upload frontend Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: 'frontend-trivy-results.sarif'
@@ -189,7 +189,7 @@ jobs:
           envsubst < docker-compose.staging.yml > deploy/docker-compose.staging.rollback.yml
 
       - name: Copy compose files to server
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.STAGING_SSH_HOST }}
           username: ${{ secrets.STAGING_SSH_USER }}

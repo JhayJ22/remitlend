@@ -16,7 +16,9 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:e2e": "playwright test",
-    "prepare": "husky"
+    "prepare": "husky",
+    "generate:api-types": "tsx scripts/generate-api-types.ts",
+    "validate:api-contract": "node scripts/check-contract-drift.js --fail-on-breaking"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.46.0",
@@ -24,13 +26,13 @@
     "@serwist/precaching": "^9.0.12",
     "@serwist/sw": "^9.0.12",
     "@stellar/freighter-api": "^6.0.1",
-    "@stellar/stellar-sdk": "^14.6.1",
+    "@stellar/stellar-sdk": "^16.2.0",
     "@tanstack/react-query": "^5.95.2",
     "@tanstack/react-query-devtools": "^5.95.2",
     "clsx": "^2.1.1",
     "framer-motion": "^12.38.0",
     "lottie-react": "^2.4.1",
-    "lucide-react": "^0.575.0",
+    "lucide-react": "^1.30.0",
     "next": "^16.2.1",
     "next-intl": "^4.8.3",
     "qrcode.react": "^4.2.0",
@@ -39,6 +41,7 @@
     "recharts": "^3.8.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
+    "zod": "^3.23.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
@@ -55,7 +58,7 @@
     "@types/react-dom": "^19.2.3",
     "axe-playwright": "^2.2.2",
     "babel-plugin-react-compiler": "1.0.0",
-    "eslint": "^9.39.4",
+    "eslint": "^10.8.0",
     "eslint-config-next": "16.1.6",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-jsx-a11y": "^6.10.2",
@@ -64,10 +67,14 @@
     "jest": "^30.3.0",
     "jest-environment-jsdom": "^30.3.0",
     "lint-staged": "^16.4.0",
+    "openapi-typescript": "^7.4.0",
+    "openapi-zod-generator": "^1.0.0",
     "prettier": "^3.8.1",
     "tailwindcss": "^4",
     "ts-jest": "^29.4.6",
-    "typescript": "^5.9.3"
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3",
+    "zod": "^3.23.0"
   },
   "lint-staged": {
     "src/**/*.{ts,tsx}": [

@@ -12,6 +12,7 @@ import { eventStreamService } from './eventStreamService.js';
 import { notificationService, type NotificationType } from './notificationService.js';
 import { sorobanService } from './sorobanService.js';
 import { updateUserScoresBulk } from './scoresService.js';
+import { transferHistoryService } from './transferHistoryService.js';
 import { AppError } from '../errors/AppError.js';
 import { recordIndexerLedgers } from '../middleware/metrics.js';
 import { setPauseState } from '../middleware/pauseGuard.js';
@@ -26,6 +27,7 @@ const EVENT_TYPE_ALIASES: Record<string, WebhookEventType> = {
   ScoreUpd: 'ScoreUpdated',
   Seized: 'NFTSeized',
   NftBurned: 'NFTBurned',
+  NftTransferred: 'NFTTransferred',
   MinScore: 'MinScoreUpdated',
   GovProp: 'ProposalCreated',
   GovAppr: 'ProposalApproved',
@@ -84,6 +86,10 @@ interface ContractEvent extends IndexedLoanEvent {
   value: string;
   interestRateBps?: number;
   termLedgers?: number;
+  /** Transfer event details for NftTransferred events */
+  nftTransferFrom?: string;
+  nftTransferTo?: string;
+  nftTransferScore?: number;
 }
 
 interface EventIndexerConfig {
@@ -722,6 +728,26 @@ export class EventIndexer {
       if (scoreUpdates.size > 0) {
         await updateUserScoresBulk(scoreUpdates, client);
       }
+
+      // Handle NftTransferred events — store in transfer history table
+      for (const event of parsedEvents) {
+        if (
+          event.eventType === 'NftTransferred' &&
+          (event as any).nftTransferFrom &&
+          (event as any).nftTransferTo
+        ) {
+          const fromAddr = (event as any).nftTransferFrom as string;
+          const toAddr = (event as any).nftTransferTo as string;
+          const score = (event as any).nftTransferScore as number;
+
+          await client.query(
+            `INSERT INTO nft_transfer_events (from_address, to_address, score, ledger_sequence)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT DO NOTHING`,
+            [fromAddr, toAddr, score, event.ledger],
+          );
+        }
+      }
     });
     // withTransaction commits here; any error triggers automatic ROLLBACK
 
@@ -855,6 +881,28 @@ export class EventIndexer {
       // (from, to), ()
       if (event.topic[2]) {
         address = this.decodeAddress(event.topic[2]);
+      }
+    } else if (type === 'NftTransferred') {
+      // Decode structured NftTransferEvent { from, to, score, ledger }
+      try {
+        const data = scValToNative(event.value);
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          const transferData = data as any;
+          const fromAddr = transferData.from?.toString() || '';
+          const toAddr = transferData.to?.toString() || '';
+          const score = Number(transferData.score) || 0;
+
+          // Store transfer-specific data
+          (event as any).nftTransferFrom = fromAddr;
+          (event as any).nftTransferTo = toAddr;
+          (event as any).nftTransferScore = score;
+
+          // Set address to the "to" address for audit trail
+          address = toAddr;
+        }
+      } catch (error) {
+        logger.withContext().warn('Failed to decode NftTransferred event', { eventId: event.id, error });
+        return null;
       }
     } else if (type === 'LoanRefinanced') {
       // (type, loan_id, borrower), [new_amount, new_term]

@@ -1,0 +1,185 @@
+name: Fuzz RemittanceNFT - Nightly Campaign
+
+on:
+  schedule:
+    # Run nightly fuzzing campaign at 2 AM UTC
+    - cron: '0 2 * * *'
+  # Allow manual triggering
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzzing duration in seconds (default 86400 = 24h)'
+        required: false
+        default: '86400'
+      jobs:
+        description: 'Number of parallel fuzzing jobs'
+        required: false
+        default: '4'
+
+jobs:
+  fuzz-remittance-nft:
+    name: Fuzz RemittanceNFT Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 1500  # 25 hours to allow for fuzzing + reporting
+    container:
+      image: rust:latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install nightly
+          rustup override set nightly
+          rustup component add rust-src
+          cargo install cargo-fuzz
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y llvm-dev libclang-dev
+
+      - name: Run fuzz campaign
+        working-directory: contracts/fuzz
+        timeout-minutes: 1440  # 24 hours
+        run: |
+          # Determine duration and jobs
+          DURATION="${{ github.event.inputs.duration || '86400' }}"
+          JOBS="${{ github.event.inputs.jobs || '4' }}"
+
+          echo "Starting fuzz campaign..."
+          echo "Duration: $DURATION seconds"
+          echo "Jobs: $JOBS"
+
+          # Run fuzzing with sanitizers
+          timeout $DURATION cargo fuzz run remittance_nft_fuzz \
+            --sanitizer=address \
+            --release \
+            -- \
+            -max_len=1024 \
+            -timeout=30 \
+            -jobs=$JOBS \
+            -rss_limit_mb=2048 \
+            -print_final_stats=1 || true
+
+      - name: Minimize corpus
+        working-directory: contracts/fuzz
+        run: |
+          echo "Minimizing corpus..."
+          # Optional: Merge and minimize corpus
+          if [ -d "corpus/remittance_nft_fuzz" ]; then
+            cargo fuzz cmin remittance_nft_fuzz \
+              --sanitizer=address \
+              --release || true
+          fi
+
+      - name: Generate report
+        working-directory: contracts/fuzz
+        if: always()
+        run: |
+          echo "# Fuzz Campaign Report" > fuzz_report.md
+          echo "" >> fuzz_report.md
+          echo "**Campaign Duration**: ${{ github.event.inputs.duration || '86400' }} seconds" >> fuzz_report.md
+          echo "**Run Date**: $(date)" >> fuzz_report.md
+          echo "**Status**: $(if [ $? -eq 0 ]; then echo 'Passed'; else echo 'Failed'; fi)" >> fuzz_report.md
+          echo "" >> fuzz_report.md
+
+          if [ -d "fuzz_artifacts" ]; then
+            echo "## Artifacts" >> fuzz_report.md
+            find fuzz_artifacts -type f | head -20 | xargs -I {} bash -c "echo '- {}' >> fuzz_report.md" || true
+          fi
+
+          if [ -d "corpus/remittance_nft_fuzz" ]; then
+            CORPUS_SIZE=$(du -sh corpus/remittance_nft_fuzz | cut -f1)
+            CORPUS_COUNT=$(find corpus/remittance_nft_fuzz -type f | wc -l)
+            echo "" >> fuzz_report.md
+            echo "## Corpus" >> fuzz_report.md
+            echo "- **Size**: $CORPUS_SIZE" >> fuzz_report.md
+            echo "- **Count**: $CORPUS_COUNT test cases" >> fuzz_report.md
+          fi
+
+          cat fuzz_report.md
+
+      - name: Upload fuzz artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: fuzz-artifacts
+          path: contracts/fuzz/fuzz_artifacts/
+          retention-days: 30
+
+      - name: Upload minimized corpus
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: fuzz-corpus
+          path: contracts/fuzz/corpus/remittance_nft_fuzz/
+          retention-days: 90
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '🧪 Fuzz campaign completed for RemittanceNFT. Check artifacts for results.'
+            })
+
+      - name: Fail if crashes found
+        working-directory: contracts/fuzz
+        run: |
+          if [ -d "fuzz_artifacts" ] && [ -n "$(find fuzz_artifacts -type f -name '*crash*')" ]; then
+            echo "::error::Fuzz campaign found crashes!"
+            exit 1
+          fi
+
+  # Secondary job for PR validation (faster, shorter)
+  fuzz-pr-gate:
+    name: Quick Fuzz Gate (PR)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 30
+    container:
+      image: rust:latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install nightly
+          rustup override set nightly
+          rustup component add rust-src
+          cargo install cargo-fuzz
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y llvm-dev libclang-dev
+
+      - name: Run quick fuzz test (5 min)
+        working-directory: contracts/fuzz
+        timeout-minutes: 10
+        run: |
+          echo "Running quick fuzz gate for PR validation..."
+          cargo fuzz run remittance_nft_fuzz \
+            --sanitizer=address \
+            --release \
+            -- \
+            -max_total_time=300 \
+            -max_len=1024 \
+            -timeout=30 || true
+
+      - name: Check for crashes
+        run: |
+          if [ -d "contracts/fuzz/fuzz_artifacts" ]; then
+            if find contracts/fuzz/fuzz_artifacts -type f -name '*crash*' | grep -q .; then
+              echo "::error::Fuzz test found crashes in PR!"
+              exit 1
+            fi
+          fi

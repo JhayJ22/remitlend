@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useUserStore } from "../stores/useUserStore";
+import { useToastStore } from "../stores/useToastStore";
 
 export type SSEStatus = "connecting" | "connected" | "disconnected";
 export type RealtimeStatus = SSEStatus | "polling";
@@ -19,6 +20,10 @@ interface UseSSEOptions<T> {
   onFallbackPoll?: () => void | Promise<void>;
   /** Polling interval in milliseconds when in fallback mode. Default: 30000 (30s) */
   pollingInterval?: number;
+  /** Show toast notifications for connection status changes */
+  showToasts?: boolean;
+  /** Custom message prefix for toast notifications */
+  toastPrefix?: string;
 }
 
 /**
@@ -33,6 +38,8 @@ export function useSSE<T = unknown>({
   onError,
   onFallbackPoll,
   pollingInterval = 30_000,
+  showToasts = false,
+  toastPrefix = "Live updates",
 }: UseSSEOptions<T>): RealtimeStatus {
   const [status, setStatus] = useState<RealtimeStatus>("connecting");
   const token = useUserStore((s) => s.authToken);
@@ -42,6 +49,19 @@ export function useSSE<T = unknown>({
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 3;
+  const previousStatusRef = useRef<RealtimeStatus>("connecting");
+  const toastIdRef = useRef<string | null>(null);
+  const { addToast, updateToast, dismissToast } = useToastStore();
+
+  const showToast = (type: "info" | "success" | "error" | "warning", title: string, description?: string, options?: { duration?: number; action?: { label: string; onClick: () => void } }) => {
+    if (!showToasts) return;
+    return addToast({ type, title, description, ...options });
+  };
+
+  const updateToastMessage = (toastId: string | null, type: "info" | "success" | "error" | "warning", title: string, description?: string, options?: { duration?: number; action?: { label: string; onClick: () => void } }) => {
+    if (!showToasts || !toastId) return;
+    updateToast(toastId, { type, title, description, ...options });
+  };
 
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
@@ -73,6 +93,8 @@ export function useSSE<T = unknown>({
       }
 
       setStatus("polling");
+      // Show polling toast
+      toastIdRef.current = showToast("info", `${toastPrefix}: Using polling fallback`, "Real-time updates temporarily unavailable. Refreshing every 30 seconds.", { duration: 0 });
       void onFallbackPollRef.current();
       pollingIntervalRef.current = setInterval(() => {
         void onFallbackPollRef.current?.();
@@ -87,6 +109,10 @@ export function useSSE<T = unknown>({
       }
 
       setStatus("connecting");
+      // Show connecting toast (only if not already connecting)
+      if (previousStatusRef.current !== "connecting") {
+        toastIdRef.current = showToast("info", `${toastPrefix}: Connecting...`, "Establishing real-time connection");
+      }
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
@@ -117,6 +143,12 @@ export function useSSE<T = unknown>({
         retryDelay.current = 1_000;
         reconnectAttempts.current = 0;
         onOpenRef.current?.();
+
+        // Show connected toast
+        if (previousStatusRef.current !== "connected") {
+          updateToastMessage(toastIdRef.current, "success", `${toastPrefix}: Connected`, "Real-time updates are active", { duration: 3000 });
+          toastIdRef.current = null;
+        }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -161,10 +193,16 @@ export function useSSE<T = unknown>({
         if (!cancelled) {
           const delay = Math.min(retryDelay.current, 5_000);
           retryDelay.current = Math.min(delay * 2, 30_000);
+          // Show reconnecting toast
+          updateToastMessage(toastIdRef.current, "warning", `${toastPrefix}: Reconnecting...`, `Attempt ${reconnectAttempts.current}/${maxReconnectAttempts}. Retrying in ${delay / 1000}s...`, { duration: 0 });
           timeoutRef.current = setTimeout(connect, delay);
         }
       }
     }
+
+    // Track status changes for toast notifications
+    const prevStatus = previousStatusRef.current;
+    previousStatusRef.current = status;
 
     connect();
 
@@ -177,8 +215,12 @@ export function useSSE<T = unknown>({
         clearTimeout(timeoutRef.current);
       }
       stopPolling();
+      // Clean up toast on unmount if still showing
+      if (toastIdRef.current) {
+        dismissToast(toastIdRef.current);
+      }
     };
-  }, [url, token, pollingInterval]);
+  }, [url, token, pollingInterval, showToasts, toastPrefix]);
 
   return status;
 }

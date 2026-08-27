@@ -5,6 +5,7 @@ Operational runbooks for on-call engineers working on the RemitLend platform.
 ## Index
 
 - [Indexer Recovery](indexer-recovery.md) — Responding to indexer lag, RPC outages, and quarantined events.
+- [Troubleshooting Guide](troubleshooting.md) — Comprehensive troubleshooting for development and production issues.
 
 ## Purpose
 

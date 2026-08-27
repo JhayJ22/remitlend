@@ -125,6 +125,8 @@ export default function AdminDisputesPage() {
         queryClient.invalidateQueries({ queryKey: queryKeys.adminDisputes.all() });
       }
     },
+    showToasts: true,
+    toastPrefix: "Admin events",
   });
 
   if (isChecking || !isAdmin) {

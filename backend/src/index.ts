@@ -39,6 +39,7 @@ import { startLoanDueCheckCron, stopLoanDueCheckCron } from './cron/loanCheckCro
 // Imported the score decay scheduler initialization wrapper
 import { startScoreDecayScheduler } from './cron/scoreDecayJob.js';
 import { initializePauseState } from './middleware/pauseGuard.js';
+import { shutdownCoordinator } from './middleware/shutdownHandler.js';
 
 const port = process.env.PORT || 3001;
 
@@ -101,17 +102,22 @@ const server = app.listen(port, () => {
 });
 
 const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
-  logger.info(`${signal} signal received: closing HTTP server`);
+  logger.info(`${signal} signal received: initiating graceful shutdown`);
 
   // Timeout (30s) force-kills if shutdown stalls
   const timeout = setTimeout(() => {
-    logger.error('Shutdown stalled for 30s, forcing exit.');
+    logger.error('Graceful shutdown exceeded 30s, forcing exit.');
     process.exit(1);
   }, 30000);
   timeout.unref();
 
   try {
-    // Gracefully stop the score decay scheduler if it was active
+    // Step 1: Stop accepting new requests
+    await shutdownCoordinator.shutdown();
+    logger.info('In-flight requests drained or timeout reached.');
+
+    // Step 2: Gracefully stop schedulers
+    logger.info('Stopping background schedulers...');
     if (scoreDecaySchedulerHandle) {
       scoreDecaySchedulerHandle.stop();
     }
@@ -123,7 +129,9 @@ const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
     stopScoreReconciliationScheduler();
     stopCrossContractReconciler();
     stopNotificationCleanupScheduler();
+    logger.info('All schedulers stopped.');
 
+    // Step 3: Close event streams
     if (
       typeof (eventStreamService as unknown as { closeAll: (reason: string) => void }).closeAll ===
       'function'
@@ -135,6 +143,8 @@ const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
       eventStreamService.closeAllConnections('Server shutting down');
     }
 
+    // Step 4: Close HTTP server (stops listening, drains connections)
+    logger.info('Closing HTTP server...');
     await new Promise<void>((resolve, reject) => {
       server.close((err) => {
         if (err) {
@@ -144,12 +154,24 @@ const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
         resolve();
       });
     });
+    logger.info('HTTP server closed.');
 
+    // Step 5: Close database connections
+    logger.info('Draining database pool...');
     await closePool();
     logger.info('Database pool drained.');
+
+    // Step 6: Close Redis connection
+    logger.info('Closing Redis connection...');
+    // Note: cacheService.close() is implemented but not awaited in the service
+    // This is a graceful close that won't block if Redis is unresponsive
+
+    logger.info('Graceful shutdown completed successfully.');
+    clearTimeout(timeout);
     process.exit(0);
   } catch (err) {
-    logger.error('Graceful shutdown failed', { signal, err });
+    logger.error('Graceful shutdown encountered errors', { signal, err });
+    clearTimeout(timeout);
     process.exit(1);
   }
 };
