@@ -118,6 +118,13 @@ app.use(requestLogger);
 app.use(metricsMiddleware);
 app.use(dbConnectionLeakDetector);
 
+// Shutdown coordinator: track in-flight requests and reject new ones during shutdown
+app.use(shutdownCoordinator.middleware());
+
+// Idempotency middleware: handle Idempotency-Key headers for all requests
+// Ensures duplicate requests with the same key return cached responses
+app.use(idempotencyMiddleware);
+
 // Pause guard: reject state-mutating requests when contracts are paused
 // Issue #1381: Cross-layer emergency pause coordination
 app.use(pauseGuard);
