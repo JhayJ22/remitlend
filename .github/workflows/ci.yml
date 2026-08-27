@@ -361,6 +361,35 @@ jobs:
             fi
           done
         working-directory: contracts
+      - name: Analyze per-function contract sizes
+        run: |
+          bash ../scripts/analyze-contract-sizes.sh ./target/wasm32-unknown-unknown/release
+        working-directory: contracts
+      - name: Check for size regressions
+        if: github.event_name == 'pull_request'
+        run: |
+          bash ../scripts/check-wasm-size-regression.sh origin/main ./target/wasm32-unknown-unknown/release || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            echo "::warning::Size regression detected. Run optimization analysis locally:"
+            echo "  bash scripts/optimize-wasm-sizes.sh target/wasm32-unknown-unknown/release"
+            exit 1
+          fi
+        working-directory: contracts
+        continue-on-error: true
+      - name: Generate optimization report
+        run: |
+          bash ../scripts/optimize-wasm-sizes.sh ./target/wasm32-unknown-unknown/release ./.wasm-optimized
+        working-directory: contracts
+        continue-on-error: true
+      - name: Upload size analysis and optimization report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wasm-optimization-report
+          path: |
+            contracts/.wasm-optimized/
+            contracts/size-budgets.json
+          retention-days: 30
       - name: Upload wasm artifacts
         uses: actions/upload-artifact@v4
         with:
