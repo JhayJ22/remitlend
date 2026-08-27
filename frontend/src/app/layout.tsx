@@ -12,6 +12,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { THEME_STORAGE_KEY } from "./lib/theme";
 import { getSiteUrl } from "./lib/metadata";
+import { WebVitalsReporter } from "./components/providers/WebVitalsReporter";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -50,6 +51,7 @@ export default async function RootLayout({
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <NextIntlClientProvider locale={locale} messages={messages}>
           <QueryProvider>
+            <WebVitalsReporter />
             <WalletProvider>
               <DashboardShell>
                 <ErrorBoundary scope="active page" variant="section">

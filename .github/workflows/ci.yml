@@ -226,6 +226,9 @@ jobs:
       - name: Type check
         run: npm run typecheck
         working-directory: frontend
+      - name: Check translation parity
+        run: npm run i18n:check
+        working-directory: frontend
       - name: Unit tests
         run: npm test
         working-directory: frontend
@@ -233,6 +236,9 @@ jobs:
           NODE_ENV: test
       - name: Build
         run: npm run build
+        working-directory: frontend
+      - name: Check performance budget
+        run: npm run performance:budget
         working-directory: frontend
 
   scripts-typecheck:
