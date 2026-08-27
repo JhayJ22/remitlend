@@ -29,6 +29,89 @@ pub enum PoolError {
     /// The computed share/asset amount for an operation rounded down to
     /// zero, so no value would actually move.
     ZeroShares = 14,
+    /// Operation is paused (deposits, withdrawals, or yield distribution).
+    OperationPaused = 15,
+}
+
+/// Granular pause flags for pool operations.
+/// Uses bit flags to represent which operations are paused:
+/// - Bit 0 (1):   Deposits paused
+/// - Bit 1 (2):   Withdrawals paused
+/// - Bit 2 (4):   Yield distribution paused
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PauseFlags {
+    pub flags: u32,
+}
+
+impl PauseFlags {
+    const DEPOSITS_BIT: u32 = 0x1;      // Bit 0
+    const WITHDRAWALS_BIT: u32 = 0x2;   // Bit 1
+    const YIELD_BIT: u32 = 0x4;         // Bit 2
+
+    pub fn new(deposits: bool, withdrawals: bool, yield_distribution: bool) -> Self {
+        let mut flags = 0u32;
+        if deposits {
+            flags |= Self::DEPOSITS_BIT;
+        }
+        if withdrawals {
+            flags |= Self::WITHDRAWALS_BIT;
+        }
+        if yield_distribution {
+            flags |= Self::YIELD_BIT;
+        }
+        PauseFlags { flags }
+    }
+
+    pub fn none() -> Self {
+        PauseFlags { flags: 0 }
+    }
+
+    pub fn all() -> Self {
+        PauseFlags {
+            flags: Self::DEPOSITS_BIT | Self::WITHDRAWALS_BIT | Self::YIELD_BIT,
+        }
+    }
+
+    pub fn is_deposits_paused(&self) -> bool {
+        (self.flags & Self::DEPOSITS_BIT) != 0
+    }
+
+    pub fn is_withdrawals_paused(&self) -> bool {
+        (self.flags & Self::WITHDRAWALS_BIT) != 0
+    }
+
+    pub fn is_yield_paused(&self) -> bool {
+        (self.flags & Self::YIELD_BIT) != 0
+    }
+
+    pub fn is_any_paused(&self) -> bool {
+        self.flags != 0
+    }
+
+    pub fn pause_deposits(&mut self) {
+        self.flags |= Self::DEPOSITS_BIT;
+    }
+
+    pub fn unpause_deposits(&mut self) {
+        self.flags &= !Self::DEPOSITS_BIT;
+    }
+
+    pub fn pause_withdrawals(&mut self) {
+        self.flags |= Self::WITHDRAWALS_BIT;
+    }
+
+    pub fn unpause_withdrawals(&mut self) {
+        self.flags &= !Self::WITHDRAWALS_BIT;
+    }
+
+    pub fn pause_yield(&mut self) {
+        self.flags |= Self::YIELD_BIT;
+    }
+
+    pub fn unpause_yield(&mut self) {
+        self.flags &= !Self::YIELD_BIT;
+    }
 }
 
 /// Storage keys.
@@ -45,6 +128,8 @@ pub enum PoolError {
 pub enum DataKey {
     Admin,
     Paused,
+    /// Granular pause flags: bit 0 = deposits, bit 1 = withdrawals, bit 2 = yield distribution
+    PauseFlags,
     WithdrawalCooldown,
     /// token → max pool size cap (0 = unlimited)
     MaxPoolSize(Address),
@@ -244,6 +329,42 @@ impl LendingPool {
             .unwrap_or(false);
         if paused {
             return Err(PoolError::ContractPaused);
+        }
+        Ok(())
+    }
+
+    /// Reads the granular pause flags from storage.
+    fn read_pause_flags(env: &Env) -> PauseFlags {
+        Self::bump_instance_ttl(env);
+        env.storage()
+            .instance()
+            .get(&DataKey::PauseFlags)
+            .unwrap_or_else(|| PauseFlags::none())
+    }
+
+    /// Checks if deposits are paused. Returns `OperationPaused` if paused.
+    fn assert_deposits_not_paused(env: &Env) -> Result<(), PoolError> {
+        let flags = Self::read_pause_flags(env);
+        if flags.is_deposits_paused() {
+            return Err(PoolError::OperationPaused);
+        }
+        Ok(())
+    }
+
+    /// Checks if withdrawals are paused. Returns `OperationPaused` if paused.
+    fn assert_withdrawals_not_paused(env: &Env) -> Result<(), PoolError> {
+        let flags = Self::read_pause_flags(env);
+        if flags.is_withdrawals_paused() {
+            return Err(PoolError::OperationPaused);
+        }
+        Ok(())
+    }
+
+    /// Checks if yield distribution is paused. Returns `OperationPaused` if paused.
+    fn assert_yield_not_paused(env: &Env) -> Result<(), PoolError> {
+        let flags = Self::read_pause_flags(env);
+        if flags.is_yield_paused() {
+            return Err(PoolError::OperationPaused);
         }
         Ok(())
     }
@@ -555,6 +676,7 @@ impl LendingPool {
     ) -> Result<(), PoolError> {
         provider.require_auth();
         Self::assert_not_paused(&env)?;
+        Self::assert_deposits_not_paused(&env)?;
 
         if amount <= 0 {
             return Err(PoolError::InvalidAmount);
@@ -702,6 +824,7 @@ impl LendingPool {
     ) -> Result<(), PoolError> {
         from.require_auth();
         Self::assert_not_paused(&env)?;
+        Self::assert_yield_not_paused(&env)?;
 
         if amount <= 0 {
             return Err(PoolError::InvalidAmount);
@@ -817,6 +940,7 @@ impl LendingPool {
     ) -> Result<(), PoolError> {
         provider.require_auth();
         Self::assert_not_paused(&env)?;
+        Self::assert_withdrawals_not_paused(&env)?;
         Self::assert_withdrawal_cooldown_elapsed(&env, &provider, &token);
         Self::redeem_shares(&env, &provider, &token, shares, min_assets_out)
     }
@@ -970,6 +1094,121 @@ impl LendingPool {
             .instance()
             .get(&DataKey::Paused)
             .unwrap_or(false)
+    }
+
+    /// Set granular pause flags for deposits, withdrawals, and yield distribution.
+    /// Each boolean parameter indicates whether to pause (true) or allow (false) that operation.
+    pub fn set_pause_flags(
+        env: Env,
+        pause_deposits: bool,
+        pause_withdrawals: bool,
+        pause_yield: bool,
+    ) {
+        Self::admin(&env).require_auth();
+        let flags = PauseFlags::new(pause_deposits, pause_withdrawals, pause_yield);
+        env.storage().instance().set(&DataKey::PauseFlags, &flags);
+        Self::bump_instance_ttl(&env);
+        pause_flags_updated(&env, flags);
+    }
+
+    /// Pause only deposits while allowing withdrawals and yield distribution.
+    pub fn pause_deposits_only(env: Env) {
+        Self::admin(&env).require_auth();
+        let mut flags = Self::read_pause_flags(&env);
+        flags.pause_deposits();
+        env.storage().instance().set(&DataKey::PauseFlags, &flags);
+        Self::bump_instance_ttl(&env);
+        pause_flags_updated(&env, flags);
+    }
+
+    /// Pause only withdrawals while allowing deposits and yield distribution.
+    pub fn pause_withdrawals_only(env: Env) {
+        Self::admin(&env).require_auth();
+        let mut flags = Self::read_pause_flags(&env);
+        flags.pause_withdrawals();
+        env.storage().instance().set(&DataKey::PauseFlags, &flags);
+        Self::bump_instance_ttl(&env);
+        pause_flags_updated(&env, flags);
+    }
+
+    /// Pause only yield distribution while allowing deposits and withdrawals.
+    pub fn pause_yield_only(env: Env) {
+        Self::admin(&env).require_auth();
+        let mut flags = Self::read_pause_flags(&env);
+        flags.pause_yield();
+        env.storage().instance().set(&DataKey::PauseFlags, &flags);
+        Self::bump_instance_ttl(&env);
+        pause_flags_updated(&env, flags);
+    }
+
+    /// Unpause deposits (does not affect withdrawals or yield distribution).
+    pub fn unpause_deposits(env: Env) {
+        Self::admin(&env).require_auth();
+        let mut flags = Self::read_pause_flags(&env);
+        flags.unpause_deposits();
+        env.storage().instance().set(&DataKey::PauseFlags, &flags);
+        Self::bump_instance_ttl(&env);
+        pause_flags_updated(&env, flags);
+    }
+
+    /// Unpause withdrawals (does not affect deposits or yield distribution).
+    pub fn unpause_withdrawals(env: Env) {
+        Self::admin(&env).require_auth();
+        let mut flags = Self::read_pause_flags(&env);
+        flags.unpause_withdrawals();
+        env.storage().instance().set(&DataKey::PauseFlags, &flags);
+        Self::bump_instance_ttl(&env);
+        pause_flags_updated(&env, flags);
+    }
+
+    /// Unpause yield distribution (does not affect deposits or withdrawals).
+    pub fn unpause_yield(env: Env) {
+        Self::admin(&env).require_auth();
+        let mut flags = Self::read_pause_flags(&env);
+        flags.unpause_yield();
+        env.storage().instance().set(&DataKey::PauseFlags, &flags);
+        Self::bump_instance_ttl(&env);
+        pause_flags_updated(&env, flags);
+    }
+
+    /// Unpause all operations.
+    pub fn unpause_all(env: Env) {
+        Self::admin(&env).require_auth();
+        let flags = PauseFlags::none();
+        env.storage().instance().set(&DataKey::PauseFlags, &flags);
+        Self::bump_instance_ttl(&env);
+        pause_flags_updated(&env, flags);
+    }
+
+    /// Get the current granular pause flags as a raw u32.
+    /// Bit 0: deposits paused, Bit 1: withdrawals paused, Bit 2: yield distribution paused.
+    pub fn get_pause_flags_raw(env: Env) -> u32 {
+        let flags = Self::read_pause_flags(&env);
+        flags.flags
+    }
+
+    /// Check if deposits are currently paused.
+    pub fn is_deposits_paused(env: Env) -> bool {
+        let flags = Self::read_pause_flags(&env);
+        flags.is_deposits_paused()
+    }
+
+    /// Check if withdrawals are currently paused.
+    pub fn is_withdrawals_paused(env: Env) -> bool {
+        let flags = Self::read_pause_flags(&env);
+        flags.is_withdrawals_paused()
+    }
+
+    /// Check if yield distribution is currently paused.
+    pub fn is_yield_paused(env: Env) -> bool {
+        let flags = Self::read_pause_flags(&env);
+        flags.is_yield_paused()
+    }
+
+    /// Check if any operation is paused.
+    pub fn is_any_paused(env: Env) -> bool {
+        let flags = Self::read_pause_flags(&env);
+        flags.is_any_paused()
     }
 
     pub fn get_total_outstanding(env: Env, token: Address) -> i128 {
