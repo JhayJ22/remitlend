@@ -1,5 +1,10 @@
 import { getClient } from './connection.js';
 import logger from '../utils/logger.js';
+import {
+  trackConnectionAcquisition,
+  trackConnectionRelease,
+  withConnectionTracking,
+} from '../middleware/dbConnectionLeakDetector.js';
 
 /**
  * Execute a database transaction with automatic rollback on error
@@ -8,13 +13,21 @@ import logger from '../utils/logger.js';
  */
 export async function withTransaction<T>(
   operations: (client: import('pg').PoolClient) => Promise<T>,
+  requestId?: string,
+  method?: string,
+  path?: string,
 ): Promise<T> {
   let client;
+  const reqId = requestId ?? `txn-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  const reqMethod = method ?? 'UNKNOWN';
+  const reqPath = path ?? 'transaction';
+
   try {
     client = await getClient();
   } catch (error) {
     logger.error('Failed to acquire database client for transaction', {
       error,
+      requestId: reqId,
     });
     throw new Error('Database connection failed');
   }
@@ -23,22 +36,31 @@ export async function withTransaction<T>(
     throw new Error('Database client is undefined');
   }
 
+  const clientId = (client as any).processID;
+  trackConnectionAcquisition(reqId, reqMethod, reqPath, clientId);
+
   try {
     await client.query('BEGIN');
-    logger.debug('Database transaction started');
+    logger.debug('Database transaction started', { requestId: reqId });
 
     const result = await operations(client);
 
     await client.query('COMMIT');
-    logger.debug('Database transaction committed');
+    logger.debug('Database transaction committed', { requestId: reqId });
 
     return result;
   } catch (error) {
     await client.query('ROLLBACK');
-    logger.error('Database transaction rolled back due to error:', error);
+    logger.error('Database transaction rolled back due to error:', {
+      error,
+      requestId: reqId,
+    });
     throw error;
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+      trackConnectionRelease(reqId);
+    }
   }
 }
 
@@ -49,17 +71,25 @@ export async function withTransaction<T>(
  */
 export async function executeTransactionQueries(
   queries: Array<{ text: string; params?: unknown[] }>,
+  requestId?: string,
+  method?: string,
+  path?: string,
 ): Promise<unknown[]> {
-  return withTransaction(async (client) => {
-    const results = [];
+  return withTransaction(
+    async (client) => {
+      const results = [];
 
-    for (const query of queries) {
-      const result = await client.query(query.text, query.params || []);
-      results.push(result);
-    }
+      for (const query of queries) {
+        const result = await client.query(query.text, query.params || []);
+        results.push(result);
+      }
 
-    return results;
-  });
+      return results;
+    },
+    requestId,
+    method,
+    path,
+  );
 }
 
 /**
@@ -71,29 +101,39 @@ export async function executeTransactionQueries(
 export async function withStellarAndDbTransaction<T>(
   stellarOperation: () => Promise<unknown>,
   dbOperations: (stellarResult: unknown, client: import('pg').PoolClient) => Promise<T>,
+  requestId?: string,
+  method?: string,
+  path?: string,
 ): Promise<{ stellarResult: unknown; dbResult: T }> {
-  return withTransaction(async (client) => {
-    try {
-      // Execute Stellar operation first
-      const stellarResult = await stellarOperation();
+  return withTransaction(
+    async (client) => {
+      try {
+        // Execute Stellar operation first
+        const stellarResult = await stellarOperation();
 
-      // Then execute database operations with the Stellar result
-      const dbResult = await dbOperations(stellarResult, client);
+        // Then execute database operations with the Stellar result
+        const dbResult = await dbOperations(stellarResult, client);
 
-      return { stellarResult, dbResult };
-    } catch (error) {
-      logger.error('Operation failed in Stellar+DB transaction:', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        // Don't log sensitive Stellar data
-      });
+        return { stellarResult, dbResult };
+      } catch (error) {
+        logger.error('Operation failed in Stellar+DB transaction:', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          requestId,
+          // Don't log sensitive Stellar data
+        });
 
-      // Log for reconciliation since Stellar transaction might have succeeded
-      // but DB write failed
-      logger.warn('Stellar transaction might need manual reconciliation', {
-        timestamp: new Date().toISOString(),
-      });
+        // Log for reconciliation since Stellar transaction might have succeeded
+        // but DB write failed
+        logger.warn('Stellar transaction might need manual reconciliation', {
+          timestamp: new Date().toISOString(),
+          requestId,
+        });
 
-      throw error;
-    }
-  });
+        throw error;
+      }
+    },
+    requestId,
+    method,
+    path,
+  );
 }
