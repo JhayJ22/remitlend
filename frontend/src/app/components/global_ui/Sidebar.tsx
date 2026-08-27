@@ -1,13 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   HandCoins,
   PiggyBank,
-  SendHorizontal,
-  Settings,
   X,
   CreditCard,
   Clock,
@@ -61,10 +60,10 @@ export function Sidebar({ onClose, className }: SidebarProps) {
   const navItems = [
     { name: t("home"), href: `/${locale}`, icon: LayoutDashboard },
     { name: t("loans"), href: `/${locale}/loans`, icon: HandCoins },
-    { name: "Lend", href: `/${locale}/lend`, icon: PiggyBank },
+    { name: t("lend"), href: `/${locale}/lend`, icon: PiggyBank },
     { name: t("liquidations"), href: `/${locale}/liquidations`, icon: ShieldAlert },
     { name: t("activity"), href: `/${locale}/activity`, icon: Clock },
-    { name: "Wallet", href: `/${locale}/wallet`, icon: CreditCard },
+    { name: t("wallet"), href: `/${locale}/wallet`, icon: CreditCard },
     ...(isAdmin
       ? [{ name: t("adminDisputes"), href: `/${locale}/admin/disputes`, icon: ShieldAlert }]
       : []),
@@ -80,9 +79,14 @@ export function Sidebar({ onClose, className }: SidebarProps) {
     >
       <div className="flex h-16 items-center justify-between px-6 border-b border-zinc-200 dark:border-zinc-800">
         <Link href={`/${locale}`} className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-indigo-600 flex items-center justify-center">
-            <SendHorizontal className="h-5 w-5 text-white" />
-          </div>
+          <Image
+            src="/images/logo.png"
+            alt="RemitLend"
+            width={32}
+            height={32}
+            priority
+            className="rounded-lg"
+          />
           <span className="text-xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
             RemitLend
           </span>
@@ -132,7 +136,7 @@ export function Sidebar({ onClose, className }: SidebarProps) {
       <div className="p-4 border-t border-zinc-200 dark:border-zinc-800">
         <div className="rounded-xl bg-zinc-50 p-4 dark:bg-zinc-900">
           <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">
-            Wallet Status
+            {t("walletStatus")}
           </p>
           <div className="flex items-center gap-2">
             <div
@@ -142,7 +146,7 @@ export function Sidebar({ onClose, className }: SidebarProps) {
               )}
             />
             <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-              {isConnected ? `${network?.name || "Connected"}` : "Disconnected"}
+              {isConnected ? `${network?.name || t("connected")}` : t("disconnected")}
             </span>
           </div>
         </div>

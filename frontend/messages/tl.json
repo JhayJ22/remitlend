@@ -81,7 +81,12 @@
     "activity": "Aktibidad",
     "notifications": "Mga Notification",
     "liquidations": "Mga Liquidasyon",
-    "adminDisputes": "Mga Dispute"
+    "adminDisputes": "Mga Dispute",
+    "lend": "Magpautang",
+    "wallet": "Wallet",
+    "walletStatus": "Status ng Wallet",
+    "disconnected": "Nakaputol",
+    "connected": "Nakakonekta"
   },
   "Loans": {
     "title": "Mga Loan",
@@ -197,6 +202,9 @@
     "contactSupport": "Kontakin ang Support",
     "viewDetails": "Tingnan ang Mga Detalye",
     "details": "Mga Detalye"
+  },
+  "AdminLayout": {
+    "adminArea": "Lugar ng Admin"
   },
   "AdminDisputes": {
     "eyebrow": "Pagsusuri ng Admin",
@@ -363,6 +371,10 @@
     "currentAdmin": "Kasalukuyang admin",
     "targetContract": "Target na kontrata",
     "expiresAt": "Mawawalan ng bisa",
-    "timeToExecutable": "Oras hanggang sa maipatupad"
+    "timeToExecutable": "Oras hanggang sa maipatupad",
+    "notConfigured": "Hindi naka-configure",
+    "notScheduled": "Hindi naka-iskedyul",
+    "unknown": "Hindi alam",
+    "executableNow": "Maaaring ipatupad ngayon"
   }
 }

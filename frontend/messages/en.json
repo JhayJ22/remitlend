@@ -81,7 +81,12 @@
     "activity": "Activity",
     "notifications": "Notifications",
     "liquidations": "Liquidations",
-    "adminDisputes": "Disputes"
+    "adminDisputes": "Disputes",
+    "lend": "Lend",
+    "wallet": "Wallet",
+    "walletStatus": "Wallet Status",
+    "disconnected": "Disconnected",
+    "connected": "Connected"
   },
   "Loans": {
     "title": "Loans",
@@ -197,6 +202,9 @@
     "contactSupport": "Contact Support",
     "viewDetails": "View Details",
     "details": "Details"
+  },
+  "AdminLayout": {
+    "adminArea": "Admin Area"
   },
   "AdminDisputes": {
     "eyebrow": "Admin Review",
@@ -363,6 +371,10 @@
     "currentAdmin": "Current admin",
     "targetContract": "Target contract",
     "expiresAt": "Expires at",
-    "timeToExecutable": "Time to executable"
+    "timeToExecutable": "Time to executable",
+    "notConfigured": "Not configured",
+    "notScheduled": "Not scheduled",
+    "unknown": "Unknown",
+    "executableNow": "Executable now"
   }
 }
