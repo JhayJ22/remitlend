@@ -44,6 +44,19 @@ Developed a cohesive visual language built around:
 - Dark mode first — optimized for extended sessions and Web3 aesthetics
 - Consistency — shared component language across all dashboard views
 
+## Component Organization
+
+Shared UI is exposed through three stable layers under `frontend/src/app/components`:
+
+- `atoms`: primitive controls and visual building blocks
+- `molecules`: small combinations of atoms with a focused interaction
+- `organisms`: complete dashboard sections and resilient feature surfaces
+
+Feature-specific components remain grouped by domain (`borrower`, `loan-wizard`, `charts`, and
+`transaction`). New shared components should be added to the smallest appropriate layer and
+exported from its `index.ts`; consumers should import through the layer entry point rather than
+reaching into another feature's implementation.
+
 ---
 
 ## Color Palette

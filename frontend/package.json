@@ -8,6 +8,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "performance:budget": "node scripts/check-performance-budget.mjs",
+    "i18n:check": "node scripts/check-i18n.mjs",
     "start": "next start",
     "lint": "prettier --check .",
     "typecheck": "tsc --noEmit",
@@ -40,6 +42,7 @@
     "react-dom": "19.2.3",
     "recharts": "^3.8.1",
     "sonner": "^2.0.7",
+    "web-vitals": "^6.2.1",
     "tailwind-merge": "^3.5.0",
     "zod": "^3.23.0",
     "zustand": "^5.0.12"

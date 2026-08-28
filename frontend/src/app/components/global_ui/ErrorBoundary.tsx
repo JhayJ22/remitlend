@@ -3,6 +3,7 @@
 import React, { Component, type ErrorInfo, type ReactNode } from "react";
 import Link from "next/link";
 import { RefreshCcw, Siren, TriangleAlert } from "lucide-react";
+import * as Sentry from "@sentry/nextjs";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -122,6 +123,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     console.error("ErrorBoundary caught an error:", error, errorInfo);
+    Sentry.withScope((scope) => {
+      scope.setTag("error_boundary", this.props.scope ?? "section");
+      scope.setContext("component", { componentStack: errorInfo.componentStack });
+      Sentry.captureException(error);
+    });
   }
 
   handleReset = (): void => {

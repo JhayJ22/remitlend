@@ -33,6 +33,7 @@ import { Button } from "../ui/Button";
 import { AnalyticsSkeleton } from "../skeletons/AnalyticsSkeleton";
 import { SkeletonChart } from "../ui/Skeleton";
 import { RefreshCw, CheckCircle2, TrendingUp, DollarSign, Activity } from "lucide-react";
+import { ErrorBoundary } from "../global_ui/ErrorBoundary";
 
 interface FinancialPerformanceDashboardProps {
   userId: string;
@@ -373,7 +374,9 @@ export function FinancialPerformanceDashboard({
             </Card>
           ) : (
             <Suspense fallback={<SkeletonChart />}>
-              <CreditScoreTrendChart data={displayCreditScoreData} />
+              <ErrorBoundary scope="credit score chart" variant="section">
+                <CreditScoreTrendChart data={displayCreditScoreData} />
+              </ErrorBoundary>
             </Suspense>
           )}
 
@@ -466,13 +469,17 @@ export function FinancialPerformanceDashboard({
             </Card>
           ) : (
             <Suspense fallback={<SkeletonChart />}>
-              <YieldEarningsChart data={displayYieldData} />
+              <ErrorBoundary scope="yield chart" variant="section">
+                <YieldEarningsChart data={displayYieldData} />
+              </ErrorBoundary>
             </Suspense>
           )}
 
           {/* Active loan risk tier breakdown */}
           <Suspense fallback={<SkeletonChart />}>
-            <RiskTierChart data={displayRiskTierData} />
+            <ErrorBoundary scope="risk tier chart" variant="section">
+              <RiskTierChart data={displayRiskTierData} />
+            </ErrorBoundary>
           </Suspense>
         </div>
       )}
