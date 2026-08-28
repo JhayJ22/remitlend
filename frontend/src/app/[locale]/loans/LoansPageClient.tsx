@@ -11,6 +11,10 @@ import { PaginationControls } from "../../components/ui/PaginationControls";
 import { useWalletStore, selectWalletAddress } from "../../stores/useWalletStore";
 import { useTranslations, useLocale } from "next-intl";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { useUrlStates, enumParam, numberParam } from "../../hooks/useUrlState";
+
+const LOAN_TABS = ["all", "active", "repaid", "defaulted"] as const;
+type LoanTab = (typeof LOAN_TABS)[number];
 
 const PAGE_SIZE = 20;
 
@@ -29,8 +33,15 @@ function getLoanDisplayStatus(status: string, nextPaymentDeadline: string, now: 
 export function LoansPageClient() {
   const t = useTranslations("Loans");
   const locale = useLocale();
-  const [activeTab, setActiveTab] = useState<"all" | "active" | "repaid" | "defaulted">("all");
-  const [page, setPage] = useState(1);
+  // Filter + pagination state lives in the URL so it survives refresh and is
+  // shareable. `?status=active&page=2`. See docs/frontend/url-state.md.
+  const [{ status: activeTab, page }, setUrlState] = useUrlStates({
+    status: enumParam(LOAN_TABS, "all" as LoanTab),
+    page: numberParam(1),
+  });
+  const setActiveTab = (next: LoanTab) => setUrlState({ status: next, page: 1 });
+  const setPage = (next: number | ((previous: number) => number)) =>
+    setUrlState({ page: typeof next === "function" ? next(page) : next });
   const [pageCursors, setPageCursors] = useState<Record<number, string | null>>({ 1: null });
   const [now] = useState(() => Date.now());
   const address = useWalletStore(selectWalletAddress);
@@ -147,8 +158,7 @@ export function LoansPageClient() {
               <button
                 key={tab.key}
                 onClick={() => {
-                  setActiveTab(tab.key as typeof activeTab);
-                  setPage(1);
+                  setActiveTab(tab.key as LoanTab);
                   setPageCursors({ 1: null });
                 }}
                 className={`rounded-full px-4 py-2 text-sm font-medium transition ${
