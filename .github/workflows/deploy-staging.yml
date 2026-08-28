@@ -189,7 +189,7 @@ jobs:
           envsubst < docker-compose.staging.yml > deploy/docker-compose.staging.rollback.yml
 
       - name: Copy compose files to server
-        uses: appleboy/scp-action@v1.0.0
+        uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
         with:
           host: ${{ secrets.STAGING_SSH_HOST }}
           username: ${{ secrets.STAGING_SSH_USER }}
@@ -199,7 +199,7 @@ jobs:
           target: "~/remitlend"
 
       - name: Deploy on server and run migrations + healthcheck
-        uses: appleboy/ssh-action@v0.1.7
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.STAGING_SSH_HOST }}
           username: ${{ secrets.STAGING_SSH_USER }}
