@@ -990,6 +990,32 @@ export function useUserProfile(
   });
 }
 
+export interface UpdateUserProfilePayload {
+  /** Public display name. */
+  id?: string;
+  /** Contact email used for notifications. */
+  email?: string;
+}
+
+/**
+ * Persists profile changes via `PATCH /api/user/profile` and refreshes any
+ * cached profile data on success.
+ */
+export function useUpdateUserProfile() {
+  const queryClient = useQueryClient();
+  return useMutation<UserProfile, Error, UpdateUserProfilePayload>({
+    mutationFn: (payload) =>
+      apiFetch<UserProfile>("/user/profile", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKeys.user.profile(), data);
+      queryClient.invalidateQueries({ queryKey: queryKeys.user.profile() });
+    },
+  });
+}
+
 /**
  * Fetches the current user's wallet balance.
  */

@@ -28,6 +28,10 @@ import {
   formatAmountOnBlur,
   getAssetDecimals,
 } from "../../../utils/amount";
+import {
+  STELLAR_NETWORK_LABEL,
+  STELLAR_NETWORK_PASSPHRASE,
+} from "../../../utils/stellarNetwork";
 
 export default function RepayLoanPage() {
   const params = useParams<{ loanId: string }>();
@@ -111,7 +115,7 @@ export default function RepayLoanPage() {
             },
           ],
           estimatedGasFee: "0.01",
-          network: "Stellar Testnet",
+          network: STELLAR_NETWORK_LABEL,
           contractAddress: contractId,
         },
         async () => {
@@ -135,7 +139,7 @@ export default function RepayLoanPage() {
       setTrackerMessage("Approve the repayment transaction in your wallet.");
 
       const signResult = await signTransaction(unsignedXdr, {
-        networkPassphrase: "Test SDF Network ; September 2015",
+        networkPassphrase: STELLAR_NETWORK_PASSPHRASE,
       });
       if (signResult.error) {
         throw new Error(
