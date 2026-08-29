@@ -2,7 +2,7 @@
 
 import React, { Component, type ErrorInfo, type ReactNode } from "react";
 import Link from "next/link";
-import { RefreshCcw, Siren, TriangleAlert } from "lucide-react";
+import { Home, RefreshCcw, Siren, TriangleAlert } from "lucide-react";
 import * as Sentry from "@sentry/nextjs";
 
 interface ErrorBoundaryProps {
@@ -90,6 +90,15 @@ export function ErrorFallback({
             <RefreshCcw className="h-4 w-4" />
             Try Again
           </button>
+          {isPage ? (
+            <Link
+              href="/"
+              className="inline-flex items-center justify-center gap-2 rounded-full border border-zinc-300 px-5 py-2.5 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:border-zinc-500 dark:hover:bg-zinc-900"
+            >
+              <Home className="h-4 w-4" />
+              Go Home
+            </Link>
+          ) : null}
           <Link
             href={REPORT_ISSUE_URL}
             target="_blank"
