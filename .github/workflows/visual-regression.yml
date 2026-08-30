@@ -1,0 +1,48 @@
+name: Visual Regression
+
+# Issue #111 — block PRs on unreviewed visual diffs.
+# Mark this job as a required status check in branch protection so a PR
+# cannot merge while the screenshots differ from the committed baselines.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/visual-regression.yml"
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+
+      - name: Run visual regression tests
+        run: npm run test:visual
+
+      - name: Upload Playwright report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-visual-report
+          path: frontend/playwright-report/
+          retention-days: 7
