@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Clock, ArrowUpRight, ArrowDownLeft, ExternalLink } from "lucide-react";
 import { useWalletStore, selectIsWalletConnected } from "../../stores/useWalletStore";
@@ -9,6 +9,7 @@ import { ErrorBoundary } from "../../components/global_ui/ErrorBoundary";
 import { StatusIndicator } from "../../components/ui/StatusIndicator";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { downloadCsv, rowsToCsv } from "../../utils/csv";
+import { useWindowedList } from "../../hooks/useWindowedList";
 
 type FilterType = "all" | "loan" | "remittance";
 
@@ -39,6 +40,10 @@ interface ActivityItem {
 }
 
 const ITEMS_PER_PAGE = 20;
+/** Above this many rows the feed is windowed instead of paginated. */
+const VIRTUALIZATION_THRESHOLD = 50;
+/** Fixed rendered height of one activity row, in px. */
+const ACTIVITY_ROW_HEIGHT = 82;
 
 export default function ActivityPage() {
   const t = useTranslations("ActivityPage");
@@ -112,6 +117,31 @@ export default function ActivityPage() {
   const totalPages = Math.ceil(allActivity.length / ITEMS_PER_PAGE);
   const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginatedActivity = allActivity.slice(startIdx, startIdx + ITEMS_PER_PAGE);
+
+  const shouldVirtualize = allActivity.length > VIRTUALIZATION_THRESHOLD;
+  const {
+    startIndex: vStart,
+    endIndex: vEnd,
+    totalHeight: vTotalHeight,
+    offsetY: vOffsetY,
+    containerRef: vContainerRef,
+    scrollTo: vScrollTo,
+  } = useWindowedList({
+    itemCount: allActivity.length,
+    itemHeight: ACTIVITY_ROW_HEIGHT,
+    overscan: 100,
+  });
+
+  // Preserve scroll position across re-renders, reset it only on filter change.
+  const previousFilter = useRef<FilterType>(filterType);
+  useEffect(() => {
+    if (previousFilter.current !== filterType) {
+      previousFilter.current = filterType;
+      vScrollTo(0);
+    }
+  }, [filterType, vScrollTo]);
+
+  const windowedActivity = allActivity.slice(vStart, vEnd + 1);
 
   function handleExportCsv() {
     const today = new Date().toISOString().split("T")[0];
@@ -217,11 +247,12 @@ export default function ActivityPage() {
               />
             </div>
           ) : (
-            <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
-              {paginatedActivity.map((item) => (
+            (() => {
+              const renderRow = (item: ActivityItem) => (
                 <div
                   key={item.id}
-                  className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 transition-colors"
+                  className="flex h-[82px] items-center justify-between border-b border-zinc-200 p-4 transition-colors last:border-b-0 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/50"
+                  role="listitem"
                 >
                   <div className="flex items-center gap-4 flex-1">
                     <div
@@ -287,13 +318,49 @@ export default function ActivityPage() {
                     />
                   </div>
                 </div>
-              ))}
-            </div>
+              );
+
+              if (shouldVirtualize) {
+                return (
+                  <>
+                    <div
+                      ref={vContainerRef}
+                      className="max-h-[70vh] overflow-y-auto"
+                      role="list"
+                      aria-label={`${allActivity.length} activity entries`}
+                    >
+                      <div style={{ height: vTotalHeight, position: "relative" }}>
+                        <div style={{ transform: `translateY(${vOffsetY}px)` }}>
+                          {windowedActivity.map(renderRow)}
+                        </div>
+                      </div>
+                    </div>
+                    <noscript>
+                      <div>{allActivity.slice(0, ITEMS_PER_PAGE).map(renderRow)}</div>
+                    </noscript>
+                  </>
+                );
+              }
+
+              return (
+                <div role="list">{paginatedActivity.map(renderRow)}</div>
+              );
+            })()
           )}
         </div>
       </ErrorBoundary>
 
-      {totalPages > 1 && (
+      {shouldVirtualize && (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400" aria-live="polite">
+          {t("pagination.showing", {
+            start: vStart + 1,
+            end: vEnd + 1,
+            total: allActivity.length,
+          })}
+        </p>
+      )}
+
+      {!shouldVirtualize && totalPages > 1 && (
         <ErrorBoundary scope="pagination" variant="section">
           <div className="flex items-center justify-between py-4">
             <div className="text-sm text-zinc-500 dark:text-zinc-400">

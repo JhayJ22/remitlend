@@ -9,6 +9,26 @@
   "orientation": "portrait",
   "categories": ["finance", "lending"],
   "lang": "en",
+  "shortcuts": [
+    {
+      "name": "Request a loan",
+      "short_name": "Borrow",
+      "url": "/en/request-loan",
+      "description": "Start a new loan request"
+    },
+    {
+      "name": "Send remittance",
+      "short_name": "Send",
+      "url": "/en/send-remittance",
+      "description": "Send money across borders"
+    },
+    {
+      "name": "Activity",
+      "short_name": "Activity",
+      "url": "/en/activity",
+      "description": "View your loan and remittance history"
+    }
+  ],
   "icons": [
     {
       "src": "/icons/icon-192x192.svg",
