@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { signTransaction } from "@stellar/freighter-api";
 import { submitLoanTransaction } from "../../../hooks/useApi";
@@ -20,6 +20,7 @@ import {
 } from "../../../stores/useWalletStore";
 import { useContractToast } from "../../../hooks/useContractToast";
 import { TransactionPreviewModal } from "../../../components/transaction/TransactionPreviewModal";
+import { RepaymentFormSkeleton } from "../../../components/skeletons/RepaymentFormSkeleton";
 import { useTransactionPreview } from "../../../hooks/useTransactionPreview";
 import {
   buildAmountHelperText,
@@ -48,6 +49,7 @@ export default function RepayLoanPage() {
 
   const [trackerState, setTrackerState] = useState<TransactionStatusState>("idle");
   const [trackerTitle, setTrackerTitle] = useState("Ready to repay");
+  const [initializing, setInitializing] = useState(true);
   const [trackerMessage, setTrackerMessage] = useState("");
   const [trackerGuidance, setTrackerGuidance] = useState<string | undefined>(undefined);
   const [trackerTxHash, setTrackerTxHash] = useState<string | null>(null);
@@ -55,6 +57,16 @@ export default function RepayLoanPage() {
 
   const amountNumber = useMemo(() => Number(amount || "0"), [amount]);
   const decimals = getAssetDecimals("USDC");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setInitializing(false), 150);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  if (initializing) {
+    return <RepaymentFormSkeleton />;
+  }
+
   const precisionError = getPrecisionError(amount, "USDC");
   const helperText = buildAmountHelperText(amount, "USDC", decimals);
 

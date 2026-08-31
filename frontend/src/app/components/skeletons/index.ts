@@ -5,3 +5,7 @@ export { AnalyticsSkeleton } from "./AnalyticsSkeleton";
 export { CreditScoreSkeleton } from "./CreditScoreSkeleton";
 export { DepositWithdrawSkeleton } from "./DepositWithdrawSkeleton";
 export { TransactionsSkeleton, TransactionDetailSkeleton } from "./TransactionsSkeleton";
+export { LendDashboardSkeleton } from "./LendDashboardSkeleton";
+export { RemittanceHistorySkeleton } from "./RemittanceHistorySkeleton";
+export { RepaymentFormSkeleton } from "./RepaymentFormSkeleton";
+export { ActivitySkeleton } from "./ActivitySkeleton";

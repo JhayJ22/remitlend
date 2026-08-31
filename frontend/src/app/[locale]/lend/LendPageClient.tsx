@@ -26,6 +26,7 @@ import {
 } from "../../hooks/useApi";
 import { LoanStatusBadge } from "../../components/ui/LoanStatusBadge";
 import { DepositWithdrawSkeleton } from "../../components/skeletons/DepositWithdrawSkeleton";
+import { LendDashboardSkeleton } from "../../components/skeletons/LendDashboardSkeleton";
 import { OperationProgress } from "../../components/ui/OperationProgress";
 import { useDepositOperation, useWithdrawalOperation } from "../../hooks/useRepaymentOperation";
 import { selectWalletAddress, useWalletStore } from "../../stores/useWalletStore";
@@ -178,6 +179,10 @@ export function LendPageClient() {
   }
 
   const isLoading = poolLoading || depositorLoading || loansLoading || historyLoading;
+
+  if (isLoading) {
+    return <LendDashboardSkeleton />;
+  }
 
   return (
     <main className="space-y-6">
