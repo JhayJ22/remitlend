@@ -11,6 +11,7 @@ import { PaginationControls } from "../../components/ui/PaginationControls";
 import { useWalletStore, selectWalletAddress } from "../../stores/useWalletStore";
 import { useTranslations, useLocale } from "next-intl";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { PrintButton } from "../../components/ui/PrintButton";
 
 const PAGE_SIZE = 20;
 
@@ -98,6 +99,7 @@ export function LoansPageClient() {
             {t("description")}
           </p>
         </div>
+        <PrintButton label="Print summary" documentTitle="RemitLend - Loan Summary" />
       </header>
 
       <ErrorBoundary scope="loan summary cards" variant="section">
