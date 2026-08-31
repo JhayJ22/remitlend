@@ -2,7 +2,7 @@
 
 import React, { Component, type ErrorInfo, type ReactNode } from "react";
 import Link from "next/link";
-import { RefreshCcw, Siren, TriangleAlert } from "lucide-react";
+import { Home, RefreshCcw, Siren, TriangleAlert } from "lucide-react";
 import * as Sentry from "@sentry/nextjs";
 
 interface ErrorBoundaryProps {
@@ -21,6 +21,8 @@ interface ErrorFallbackProps {
   onRetry: () => void;
   scope?: string;
   variant?: "page" | "section";
+  /** When provided, renders a "Tell us what happened" button that opens the Sentry feedback dialog. */
+  onReportFeedback?: () => void;
 }
 
 const REPORT_ISSUE_URL = "https://github.com/LabsCrypt/remitlend/issues/new";
@@ -30,6 +32,7 @@ export function ErrorFallback({
   onRetry,
   scope = "section",
   variant = "section",
+  onReportFeedback,
 }: ErrorFallbackProps) {
   const isPage = variant === "page";
 
@@ -90,14 +93,23 @@ export function ErrorFallback({
             <RefreshCcw className="h-4 w-4" />
             Try Again
           </button>
-          <Link
-            href={REPORT_ISSUE_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center justify-center rounded-full border border-zinc-300 px-5 py-2.5 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:border-zinc-500 dark:hover:bg-zinc-900"
-          >
-            Report this issue
-          </Link>
+          {onReportFeedback ? (
+            <button
+              onClick={onReportFeedback}
+              className="inline-flex items-center justify-center rounded-full border border-zinc-300 px-5 py-2.5 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:border-zinc-500 dark:hover:bg-zinc-900"
+            >
+              Tell us what happened
+            </button>
+          ) : (
+            <Link
+              href={REPORT_ISSUE_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center justify-center rounded-full border border-zinc-300 px-5 py-2.5 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:border-zinc-500 dark:hover:bg-zinc-900"
+            >
+              Report this issue
+            </Link>
+          )}
         </div>
       </div>
     </div>

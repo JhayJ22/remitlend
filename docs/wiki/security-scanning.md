@@ -14,7 +14,8 @@ If a vulnerability is flagged but is considered a false positive, not applicable
 
 Example:
 ```
-# Not vulnerable in our configuration because we do not use the affected feature.
-# See issue #123
-CVE-202X-XXXXX
+# axios SSRF / credential-leak advisory. Not exploitable here: we never pass
+# user-controlled URLs to axios and always set an explicit baseURL.
+# Re-evaluate once the base image ships axios >= 1.6.0. See issue #123
+CVE-2023-45857
 ```

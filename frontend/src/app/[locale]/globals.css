@@ -76,14 +76,120 @@ body {
   animation: dot-bounce 1.4s infinite ease-in-out both;
 }
 
-@keyframes shimmer {
-  100% {
-    transform: translateX(100%);
+/* ── Print Stylesheet ────────────────────────────────────────── */
+/* Produces clean, ink-friendly loan summaries, yield / tax reports.
+   Add `data-print-hidden` to any element that should never print,
+   `no-print` as a utility alias, and `print-break-before` to force a
+   page break before a section. */
+@media print {
+  @page {
+    margin: 16mm;
   }
-}
 
-@layer utilities {
-  .animate-shimmer {
-    animation: shimmer 1.6s ease-in-out infinite;
+  :root {
+    --background: #ffffff;
+    --foreground: #000000;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt;
+    line-height: 1.4;
+  }
+
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Hide application chrome and interactive-only affordances */
+  nav,
+  aside,
+  [role="tablist"],
+  [role="navigation"],
+  [data-print-hidden],
+  .no-print,
+  button:not([data-print-keep]),
+  a[role="button"],
+  input,
+  select,
+  textarea {
+    display: none !important;
+  }
+
+  /* Let the printed document use the full page width */
+  main,
+  [role="main"] {
+    display: block !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Flatten cards / panels: no shadows, tints or heavy radii wasting ink */
+  *,
+  *::before,
+  *::after {
+    box-shadow: none !important;
+    text-shadow: none !important;
+    color: #000000 !important;
+    background: transparent !important;
+  }
+
+  section,
+  article,
+  .rounded-3xl,
+  .rounded-2xl,
+  .rounded-xl {
+    border: 1px solid #cccccc !important;
+    border-radius: 4px !important;
+    padding: 12px !important;
+    margin-bottom: 12px !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    border: 1px solid #cccccc;
+    padding: 6px 8px;
+    text-align: left;
+  }
+
+  /* Charts and images must never be clipped across a page boundary */
+  svg,
+  img,
+  canvas {
+    max-width: 100% !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Make external references self-describing on paper */
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 9pt;
+    font-weight: normal;
+    word-break: break-all;
+  }
+
+  .print-break-before {
+    break-before: page;
+    page-break-before: always;
   }
 }

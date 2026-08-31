@@ -26,7 +26,12 @@ import {
 } from "../../stores/useWalletStore";
 import { useUserStore, selectUser } from "../../stores/useUserStore";
 import { logoutUser } from "../../lib/session";
-import { useNotificationPreferences, useUpdateNotificationPreferences } from "../../hooks/useApi";
+import {
+  useNotificationPreferences,
+  useUpdateNotificationPreferences,
+  useUpdateUserProfile,
+} from "../../hooks/useApi";
+import { useToast } from "../../hooks/useToast";
 import { COPY_FEEDBACK_RESET_MS } from "../../components/ui";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -134,11 +139,42 @@ function ProfileSection() {
   const [displayName, setDisplayName] = useState(user?.id ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const { toast } = useToast();
+  const updateProfile = useUpdateUserProfile();
 
   const handleSave = () => {
-    // In real impl: call PATCH /api/user/profile
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    const name = displayName.trim();
+
+    if (!name) {
+      setSaveError("Display name is required.");
+      return;
+    }
+
+    setSaveError(null);
+
+    updateProfile.mutate(
+      { id: name, email: email.trim() },
+      {
+        onSuccess: () => {
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+          toast({
+            variant: "success",
+            title: "Profile saved",
+            description: "Your profile changes have been saved.",
+          });
+        },
+        onError: (error) => {
+          setSaveError(error.message);
+          toast({
+            variant: "destructive",
+            title: "Could not save profile",
+            description: error.message,
+          });
+        },
+      },
+    );
   };
 
   return (
@@ -183,8 +219,15 @@ function ProfileSection() {
           <span className="text-red-600">*</span> Required field
         </p>
 
-        <Button variant="primary" onClick={handleSave} className="w-full sm:w-auto">
-          {saved ? "Saved!" : "Save Profile"}
+        {saveError && <p className="text-sm text-red-600 dark:text-red-400">{saveError}</p>}
+
+        <Button
+          variant="primary"
+          onClick={handleSave}
+          disabled={updateProfile.isPending}
+          className="w-full sm:w-auto"
+        >
+          {updateProfile.isPending ? "Saving..." : saved ? "Saved!" : "Save Profile"}
         </Button>
       </CardContent>
     </Card>

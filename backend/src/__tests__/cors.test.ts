@@ -94,4 +94,30 @@ describe('CORS middleware', () => {
     expect(response.status).toBe(200);
     expect(response.headers['access-control-allow-origin']).toBe('http://127.0.0.1:3000');
   });
+
+  it('allows wildcard origins when configured in production', async () => {
+    process.env.CORS_ALLOWED_ORIGINS = 'https://*.example.com';
+
+    const { default: app } = await loadApp();
+
+    const response = await request(app)
+      .get('/health')
+      .set('Origin', 'https://app.example.com');
+
+    expect(response.status).toBe(200);
+    expect(response.headers['access-control-allow-origin']).toBe('https://app.example.com');
+  });
+
+  it('rejects subdomains that do not match wildcard config in production', async () => {
+    process.env.CORS_ALLOWED_ORIGINS = 'https://*.example.com';
+
+    const { default: app } = await loadApp();
+
+    const response = await request(app)
+      .get('/health')
+      .set('Origin', 'https://example.com');
+
+    expect(response.status).toBe(403);
+    expect(response.body.error?.message).toBe('Origin is not allowed by CORS policy');
+  });
 });
