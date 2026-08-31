@@ -60,7 +60,34 @@ if (isProduction && allowedOriginsList.length === 0) {
   throw new Error('No allowed origins configured for CORS in production. Set FRONTEND_URL.');
 }
 
-const allowedOrigins = new Set(allowedOriginsList);
+const normalizeOrigin = (value: string) => value.trim().replace(/\/+$/, '').toLowerCase();
+
+const originMatchesPattern = (origin: string, pattern: string): boolean => {
+  const normalizedOrigin = normalizeOrigin(origin);
+  const normalizedPattern = normalizeOrigin(pattern);
+
+  if (!normalizedPattern || normalizedPattern === '*') {
+    return normalizedPattern === '*';
+  }
+
+  if (!normalizedPattern.includes('*')) {
+    return normalizedOrigin === normalizedPattern;
+  }
+
+  const escapedPattern = normalizedPattern
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*');
+
+  return new RegExp(`^${escapedPattern}$`, 'i').test(normalizedOrigin);
+};
+
+const isOriginAllowed = (origin: string): boolean => {
+  if (allowedOriginsList.some((pattern) => originMatchesPattern(origin, pattern))) {
+    return true;
+  }
+
+  return !isProduction && devOrigins.has(origin);
+};
 
 // In non-production environments, additionally allow common localhost origins
 // used during development. Without this, staging/preview deployments that run
@@ -93,11 +120,7 @@ const corsOptions: cors.CorsOptions = {
       return callback(null, true);
     }
 
-    if (allowedOrigins.has(origin)) {
-      return callback(null, true);
-    }
-
-    if (!isProduction && devOrigins.has(origin)) {
+    if (isOriginAllowed(origin)) {
       return callback(null, true);
     }
 
