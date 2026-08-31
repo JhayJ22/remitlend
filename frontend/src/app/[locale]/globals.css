@@ -75,3 +75,15 @@ body {
 .animate-dot-bounce {
   animation: dot-bounce 1.4s infinite ease-in-out both;
 }
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@layer utilities {
+  .animate-shimmer {
+    animation: shimmer 1.6s ease-in-out infinite;
+  }
+}
