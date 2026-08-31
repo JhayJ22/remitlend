@@ -9,14 +9,45 @@ export function getSystemTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function isTheme(value: string | null | undefined): value is Theme {
+  return value === "dark" || value === "light" || value === "system";
+}
+
+function readThemeCookie(): Theme | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  const match = document.cookie
+    .split("; ")
+    .find((row) => row.startsWith(`${THEME_STORAGE_KEY}=`));
+  const value = match?.split("=")[1];
+  return isTheme(value) ? value : null;
+}
+
+/**
+ * Persist the preference to both localStorage (fast client reads) and a cookie
+ * (survives storage clears and is readable by the server for SSR).
+ */
+export function persistTheme(theme: Theme) {
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      /* storage unavailable */
+    }
+  }
+  if (typeof document !== "undefined") {
+    // 1 year, site-wide, lax so it rides top-level navigations.
+    document.cookie = `${THEME_STORAGE_KEY}=${theme}; path=/; max-age=31536000; samesite=lax`;
+  }
+}
+
 export function getStoredTheme(): Theme | null {
   if (typeof window === "undefined") {
     return null;
   }
   const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-  return storedTheme === "dark" || storedTheme === "light" || storedTheme === "system"
-    ? (storedTheme as Theme)
-    : null;
+  return isTheme(storedTheme) ? storedTheme : readThemeCookie();
 }
 
 export function applyTheme(theme: Theme) {

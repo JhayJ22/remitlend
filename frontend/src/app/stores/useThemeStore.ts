@@ -1,11 +1,11 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import {
-  THEME_STORAGE_KEY,
   type Theme,
   getSystemTheme,
   getStoredTheme,
   applyTheme,
+  persistTheme,
   resolveInitialTheme,
 } from "../lib/theme";
 
@@ -59,9 +59,7 @@ export const useThemeStore = create<ThemeStore>()(
 
       setTheme: (theme) => {
         applyTheme(theme);
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-        }
+        persistTheme(theme);
         set({ theme, hydrated: true }, false, "theme/setTheme");
       },
 
