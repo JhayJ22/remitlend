@@ -1,148 +1,147 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Card, CardHeader, CardTitle, CardContent } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { TransactionPreviewModal } from "../transaction/TransactionPreviewModal";
 import { useTransactionPreview } from "../../hooks/useTransactionPreview";
 import { formatRemittanceSend } from "../../utils/transactionFormatter";
-import { isValidStellarAddress } from "../../utils/stellar";
 import { AlertCircle, Send, Loader } from "lucide-react";
-import { useCreateRemittance } from "../../hooks/useApi";
-import { truncateDecimals, getAssetPrecision } from "../../utils/precision";
+import { useCreateRemittance, useRemittances } from "../../hooks/useApi";
 import {
   buildAmountHelperText,
-  getPrecisionError,
   parseAmount,
   sanitizeAmountInput,
   formatAmountOnBlur,
   getAssetDecimals,
 } from "../../utils/amount";
 import { useContractToast } from "../../hooks/useContractToast";
+import {
+  MEMO_MAX_LENGTH,
+  REMITTANCE_FORM_DEFAULTS,
+  REMITTANCE_TOKENS,
+  remittanceSchema,
+  type RemittanceFormValues,
+} from "../../../lib/validation/remittance";
 
 interface RemittanceFormProps {
   onSuccess?: () => void;
 }
 
-export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
-  const [recipientAddress, setRecipientAddress] = useState("");
-  const [amount, setAmount] = useState("");
-  const [token, setToken] = useState("USDC");
-  const [memo, setMemo] = useState("");
-  const [errors, setErrors] = useState<Record<string, string>>({});
+// A remittance counts as a duplicate if the same recipient/amount/token is
+// still in flight (or was accepted moments ago). This is the async, server-data
+// backed validation the ad-hoc version never had.
+const DUPLICATE_WINDOW_MS = 5 * 60 * 1000;
 
+export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
   const txPreview = useTransactionPreview();
   const mutation = useCreateRemittance();
-  const decimals = getAssetDecimals(token);
-  const precisionError = getPrecisionError(amount, token);
-  const helperText = buildAmountHelperText(amount, token, decimals);
   const toast = useContractToast();
+  const { data: existingRemittances } = useRemittances();
 
-  const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {};
+  const {
+    register,
+    handleSubmit,
+    watch,
+    setValue,
+    setError,
+    clearErrors,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<RemittanceFormValues>({
+    resolver: zodResolver(remittanceSchema),
+    mode: "onBlur",
+    defaultValues: REMITTANCE_FORM_DEFAULTS,
+  });
 
-    if (!recipientAddress.trim()) {
-      newErrors.recipientAddress = "Recipient address is required";
-    } else if (!isValidStellarAddress(recipientAddress)) {
-      newErrors.recipientAddress =
-        "Invalid Stellar address format (must be 56 characters starting with G)";
-    }
+  const amount = watch("amount");
+  const token = watch("token");
+  const memo = watch("memo") ?? "";
+  const recipientAddress = watch("recipientAddress");
 
-    if (!amount) {
-      newErrors.amount = "Amount is required";
-    } else {
-      const numAmount = parseAmount(amount);
-      if (isNaN(numAmount) || numAmount <= 0) {
-        newErrors.amount = "Amount must be greater than 0";
-      } else if (precisionError) {
-        newErrors.amount = precisionError;
-      }
-    }
+  const decimals = getAssetDecimals(token);
+  const helperText = buildAmountHelperText(amount, token, decimals);
 
-    if (memo && memo.length > 28) {
-      newErrors.memo = "Memo must be 28 characters or less";
-    }
+  const isBusy = mutation.isPending || isSubmitting;
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
+  const errorSummary = useMemo(
+    () =>
+      Object.entries(errors)
+        .filter(([key]) => key !== "root")
+        .map(([key, value]) => ({ key, message: value?.message }))
+        .filter((entry): entry is { key: string; message: string } => Boolean(entry.message)),
+    [errors],
+  );
 
-  const handleAddressChange = (value: string) => {
-    setRecipientAddress(value.trim());
-    if (errors.recipientAddress) {
-      setErrors({ ...errors, recipientAddress: "" });
-    }
-  };
-
-  const handleAmountChange = (value: string) => {
-    setAmount(sanitizeAmountInput(value));
-    if (errors.amount) {
-      setErrors({ ...errors, amount: "" });
-    }
-  };
-
-  const handleAmountBlur = (value: string) => {
-    const formatted = formatAmountOnBlur(value, token);
-    if (formatted && formatted !== value) {
-      setAmount(formatted);
-    }
-  };
-
-  const handleMemoChange = (value: string) => {
-    setMemo(value);
-    if (errors.memo) {
-      setErrors({ ...errors, memo: "" });
-    }
-  };
-
-  const handleReviewTransaction = async () => {
-    if (!validateForm()) {
-      toast.error("Validation Error", "Please fix the errors in the form");
-      return;
-    }
-
-    const numAmount = parseAmount(amount);
-
-    const previewData = formatRemittanceSend({
-      amount: numAmount,
-      recipient: recipientAddress,
-      token,
-    });
-
-    txPreview.show(previewData, async () => {
-      await handleSubmitRemittance(numAmount);
+  const findDuplicate = (values: RemittanceFormValues) => {
+    const numAmount = parseAmount(values.amount);
+    return (existingRemittances ?? []).find((remittance) => {
+      const sameTarget =
+        remittance.recipientAddress === values.recipientAddress.trim() &&
+        remittance.fromCurrency === values.token &&
+        Math.abs(remittance.amount - numAmount) < Number.EPSILON;
+      if (!sameTarget) return false;
+      if (remittance.status === "pending" || remittance.status === "processing") return true;
+      return Date.now() - new Date(remittance.createdAt).getTime() < DUPLICATE_WINDOW_MS;
     });
   };
 
-  const handleSubmitRemittance = async (numAmount: number) => {
+  const submitRemittance = async (values: RemittanceFormValues) => {
+    const numAmount = parseAmount(values.amount);
     try {
       await mutation.mutateAsync({
         amount: numAmount,
-        fromCurrency: token,
-        toCurrency: token,
-        recipientAddress,
-        memo: memo || undefined,
+        fromCurrency: values.token,
+        toCurrency: values.token,
+        recipientAddress: values.recipientAddress.trim(),
+        memo: values.memo ? values.memo : undefined,
       });
 
       toast.success("Success!", "Remittance sent successfully");
-
-      // Reset form
-      setRecipientAddress("");
-      setAmount("");
-      setMemo("");
-      setErrors({});
-
+      reset(REMITTANCE_FORM_DEFAULTS);
       onSuccess?.();
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to send remittance";
-      toast.error("Error", errorMessage);
+      const message = error instanceof Error ? error.message : "Failed to send remittance";
+      toast.error("Error", message);
+      setError("root", { type: "server", message });
     }
   };
 
+  const onValid = async (values: RemittanceFormValues) => {
+    clearErrors("root");
+
+    const duplicate = findDuplicate(values);
+    if (duplicate) {
+      setError("root", {
+        type: "duplicate",
+        message:
+          "A matching remittance to this recipient is already pending or was just sent. Wait for it to settle before retrying.",
+      });
+      toast.error("Possible duplicate", "This remittance looks identical to a recent one.");
+      return;
+    }
+
+    const previewData = formatRemittanceSend({
+      amount: parseAmount(values.amount),
+      recipient: values.recipientAddress.trim(),
+      token: values.token,
+    });
+
+    txPreview.show(previewData, () => submitRemittance(values));
+  };
+
+  const onInvalid = () => {
+    toast.error("Validation Error", "Please fix the highlighted fields before continuing");
+  };
+
+  const rootError = errors.root?.message;
+
   return (
     <>
-      <div className="space-y-6">
+      <form className="space-y-6" onSubmit={handleSubmit(onValid, onInvalid)} noValidate>
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -151,16 +150,33 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
+            {(errorSummary.length > 0 || rootError) && (
+              <div
+                role="alert"
+                className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+              >
+                <p className="mb-1 flex items-center gap-2 font-semibold">
+                  <AlertCircle className="h-4 w-4" />
+                  Please fix the following
+                </p>
+                <ul className="list-inside list-disc space-y-1">
+                  {rootError && <li>{rootError}</li>}
+                  {errorSummary.map((entry) => (
+                    <li key={entry.key}>{entry.message}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <Input
               id="recipientAddress"
               label="Recipient Address"
               placeholder="G... (Stellar public key)"
-              value={recipientAddress}
-              onChange={(e) => handleAddressChange(e.target.value)}
-              disabled={mutation.isPending}
+              disabled={isBusy}
               required
-              error={errors.recipientAddress || undefined}
+              error={errors.recipientAddress?.message}
               helperText="Enter the recipient's Stellar public key (56 characters starting with G)"
+              {...register("recipientAddress")}
             />
 
             {/* Token Selection */}
@@ -173,18 +189,23 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
               </label>
               <select
                 id="token"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                disabled={mutation.isPending}
+                disabled={isBusy}
                 className="w-full px-3 py-2 border border-zinc-300 rounded-lg bg-white dark:bg-zinc-900 dark:border-zinc-700 text-zinc-900 dark:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-indigo-600 dark:focus:ring-indigo-400"
+                {...register("token")}
               >
-                <option value="USDC">USDC</option>
-                <option value="EURC">EURC</option>
-                <option value="PHP">PHP</option>
+                {REMITTANCE_TOKENS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
               </select>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                Select the currency for remittance
-              </p>
+              {errors.token?.message ? (
+                <p className="text-sm text-red-600">{errors.token.message}</p>
+              ) : (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Select the currency for remittance
+                </p>
+              )}
             </div>
 
             <Input
@@ -195,12 +216,21 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
               placeholder="0.00"
               step={Math.pow(10, -decimals)}
               value={amount}
-              onChange={(e) => handleAmountChange(e.target.value)}
-              onBlur={(e) => handleAmountBlur(e.target.value)}
-              disabled={mutation.isPending}
+              onChange={(e) =>
+                setValue("amount", sanitizeAmountInput(e.target.value), {
+                  shouldValidate: Boolean(errors.amount),
+                })
+              }
+              onBlur={(e) => {
+                const formatted = formatAmountOnBlur(e.target.value, token);
+                setValue("amount", formatted && formatted !== e.target.value ? formatted : e.target.value, {
+                  shouldValidate: true,
+                });
+              }}
+              disabled={isBusy}
               required
               min="0"
-              error={errors.amount || undefined}
+              error={errors.amount?.message}
               helperText={helperText ?? `Up to ${decimals} decimal places supported.`}
               className={errors.amount ? "border-red-600" : ""}
             />
@@ -219,24 +249,23 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
               </label>
               <textarea
                 id="memo"
-                placeholder="Add a note for the recipient (max 28 characters)"
-                value={memo}
-                onChange={(e) => handleMemoChange(e.target.value)}
-                disabled={mutation.isPending}
-                maxLength={28}
+                placeholder={`Add a note for the recipient (max ${MEMO_MAX_LENGTH} characters)`}
+                disabled={isBusy}
+                maxLength={MEMO_MAX_LENGTH}
                 rows={2}
                 className={`w-full px-3 py-2 border rounded-lg bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-indigo-600 dark:focus:ring-indigo-400 resize-none dark:border-zinc-700 ${
                   errors.memo ? "border-red-600" : "border-zinc-300"
                 }`}
+                {...register("memo")}
               />
-              {errors.memo && (
+              {errors.memo?.message && (
                 <div className="flex items-start gap-2 text-sm text-red-600">
                   <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                  <span>{errors.memo}</span>
+                  <span>{errors.memo.message}</span>
                 </div>
               )}
               <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                {memo.length}/28 characters
+                {memo.length}/{MEMO_MAX_LENGTH} characters
               </p>
             </div>
 
@@ -257,12 +286,8 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
 
             {/* Action Buttons */}
             <div className="flex gap-3 pt-4">
-              <Button
-                onClick={handleReviewTransaction}
-                disabled={mutation.isPending || !recipientAddress || !amount || !!precisionError}
-                className="flex-1"
-              >
-                {mutation.isPending ? (
+              <Button type="submit" disabled={isBusy || !recipientAddress || !amount} className="flex-1">
+                {isBusy ? (
                   <div role="status" className="flex items-center">
                     <Loader className="h-4 w-4 mr-2 animate-spin" />
                     Processing...
@@ -300,7 +325,7 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
             </ul>
           </CardContent>
         </Card>
-      </div>
+      </form>
 
       <TransactionPreviewModal
         isOpen={txPreview.isOpen}
