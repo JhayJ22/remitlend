@@ -8,6 +8,7 @@ import { useLoans, useRemittances } from "../../hooks/useApi";
 import { ErrorBoundary } from "../../components/global_ui/ErrorBoundary";
 import { StatusIndicator } from "../../components/ui/StatusIndicator";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { ActivitySkeleton } from "../../components/skeletons/ActivitySkeleton";
 import { downloadCsv, rowsToCsv } from "../../utils/csv";
 import { useWindowedList } from "../../hooks/useWindowedList";
 
@@ -172,6 +173,10 @@ export default function ActivityPage() {
         </div>
       </main>
     );
+  }
+
+  if (isLoading) {
+    return <ActivitySkeleton />;
   }
 
   return (

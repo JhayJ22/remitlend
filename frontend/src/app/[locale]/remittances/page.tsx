@@ -26,6 +26,7 @@ import { Spinner } from "../../components/global_ui/Spinner";
 import { PaginationControls } from "../../components/ui/PaginationControls";
 import Link from "next/link";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { RemittanceHistorySkeleton } from "../../components/skeletons/RemittanceHistorySkeleton";
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
@@ -147,6 +148,10 @@ export default function RemittancesPage() {
 
   if (!isConnected) {
     return <ConnectWalletPrompt />;
+  }
+
+  if (isLoading) {
+    return <RemittanceHistorySkeleton />;
   }
 
   return (

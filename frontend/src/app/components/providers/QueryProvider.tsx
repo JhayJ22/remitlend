@@ -28,8 +28,14 @@ export function QueryProvider({ children }: QueryProviderProps) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            // Data is considered fresh for 60 seconds — avoids unnecessary refetches
+            // Data is considered fresh for 60 seconds — within this window a
+            // component that mounts (or a page that is navigated back to) reuses
+            // the cache instead of hitting the network.
             staleTime: 60 * 1000,
+            // Keep inactive/unused data in the cache for 5 minutes before it is
+            // garbage-collected. This makes back/forward navigation instant while
+            // still bounding memory for long sessions.
+            gcTime: 5 * 60 * 1000,
             // Retry failed requests (but don't spin when offline)
             retry: (failureCount) => {
               if (typeof navigator !== "undefined" && navigator.onLine === false) {
@@ -37,9 +43,14 @@ export function QueryProvider({ children }: QueryProviderProps) {
               }
               return failureCount < 2;
             },
-            // Refetch when the browser window regains focus
-            refetchOnWindowFocus: true,
-            // Refetch when connection is restored
+            // Do NOT refetch just because the window regained focus. Focus
+            // refetches caused visible flicker and redundant load on pages that
+            // are already covered by `staleTime` + explicit invalidation after
+            // mutations. Opt back in per-query for genuinely live data.
+            refetchOnWindowFocus: false,
+            // Only refetch on mount when the cached data is actually stale.
+            refetchOnMount: true,
+            // Refetch when connection is restored — cheap and usually desired.
             refetchOnReconnect: true,
           },
           mutations: {

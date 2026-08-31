@@ -19,15 +19,25 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      testIgnore: "visual/**",
       use: { ...devices["Desktop Chrome"] },
     },
     {
       name: "firefox",
+      testIgnore: "visual/**",
       use: { ...devices["Desktop Firefox"] },
     },
     {
       name: "webkit",
+      testIgnore: "visual/**",
       use: { ...devices["Desktop Safari"] },
+    },
+    {
+      // Issue #111: visual regression baselines. Chromium-only so the
+      // committed snapshots are deterministic across machines and CI.
+      name: "visual",
+      testDir: "./e2e/visual",
+      use: { ...devices["Desktop Chrome"] },
     },
   ],
 

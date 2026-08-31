@@ -3,7 +3,8 @@
 import { type HTMLAttributes } from "react";
 import { clsx } from "clsx";
 
-const baseClasses = "animate-pulse rounded bg-zinc-200 dark:bg-zinc-800";
+const baseClasses =
+  "animate-shimmer relative isolate overflow-hidden rounded bg-zinc-200 before:absolute before:inset-0 before:-translate-x-full before:animate-shimmer before:bg-gradient-to-r before:from-transparent before:via-white/60 before:to-transparent dark:bg-zinc-800 dark:before:via-white/10";
 
 export function Skeleton({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div aria-hidden="true" className={clsx(baseClasses, className)} {...props} />;

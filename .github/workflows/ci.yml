@@ -340,6 +340,15 @@ jobs:
       - name: Run tests
         run: cargo test -- --test-threads=1
         working-directory: contracts
+      - name: Formal verification (loan_manager invariants)
+        # Dedicated gate for the safety invariants proven in
+        # contracts/loan_manager/src/formal_verification.rs (issue #46):
+        # loan <= pool balance, collateral accounted exactly, repayment
+        # monotonicity, non-negative interest/fees/credit score, and the
+        # max_loan_amount ceiling. Kept as its own step so a regression here
+        # is unambiguous in the CI log.
+        run: cargo test -p loan_manager formal_verification -- --test-threads=1 --nocapture
+        working-directory: contracts
       - name: Build contracts for wasm32 and enforce size budget
         run: |
           set -euo pipefail

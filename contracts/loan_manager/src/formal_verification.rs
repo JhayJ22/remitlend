@@ -1,257 +1,255 @@
-#[cfg(test)]
-mod formal_verification_tests {
-    use crate::{LoanManager, LoanManagerClient, LoanStatus};
-    use lending_pool::{LendingPool, LendingPoolClient};
-    use remittance_nft::{RemittanceNFT, RemittanceNFTClient};
-    use soroban_sdk::testutils::{Address as _, Ledger};
-    use soroban_sdk::{Address, BytesN, Env, String};
+//! Formal verification of `loan_manager` safety invariants.
+//!
+//! The fuzz suite (`contracts/fuzz/fuzz_targets/loan_manager_fuzz.rs`) explores
+//! random call sequences looking for panics. This module complements it by
+//! pinning down the *state invariants* that must hold after every supported
+//! operation, expressed as concrete, deterministic assertions over real
+//! contract state (pool balances, collateral ledger, outstanding totals,
+//! per-loan accounting). Each test is an executable proof obligation:
+//!
+//!   INV-1  A disbursed loan never removes more than the pool actually holds.
+//!   INV-2  `get_total_outstanding` equals the sum of active loan principal.
+//!   INV-3  Collateral is accounted exactly and never mixes with liquidity.
+//!   INV-4  Repayment monotonically reduces debt and never over-credits.
+//!   INV-5  Accrued interest / late fees are non-negative at every ledger time.
+//!   INV-6  Credit score is always non-negative.
+//!   INV-7  Requests above `max_loan_amount` are rejected up-front.
+//!
+//! CI runs this module as a dedicated gate (see the "Formal verification"
+//! step in `.github/workflows/ci.yml`).
 
-    fn setup() -> (Env, LoanManagerClient, RemittanceNFTClient, LendingPoolClient) {
-        let env = Env::default();
-        env.mock_all_auths();
+#![cfg(test)]
 
-        // Setup RemittanceNFT
-        let nft_id = env.register(RemittanceNFT, ());
-        let nft_client = RemittanceNFTClient::new(&env, &nft_id);
-        let admin = Address::generate(&env);
-        nft_client.initialize(&admin);
+use crate::{LoanError, LoanManager, LoanManagerClient, LoanStatus};
+use lending_pool::{LendingPool, LendingPoolClient};
+use remittance_nft::{RemittanceNFT, RemittanceNFTClient};
+use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
+use soroban_sdk::{Address, BytesN, Env, String};
 
-        // Setup LendingPool
-        let lending_pool_id = env.register(LendingPool, ());
-        let lending_pool_client = LendingPoolClient::new(&env, &lending_pool_id);
-        let token_admin = Address::generate(&env);
-        let token_contract_id = env.register_stellar_asset_contract_v2(token_admin);
-        let token_id = token_contract_id.address();
+const TERM: u32 = 17_280;
 
-        // Setup LoanManager
-        let loan_manager_id = env.register(LoanManager, ());
-        let loan_manager_client = LoanManagerClient::new(&env, &loan_manager_id);
-        loan_manager_client.initialize(&nft_id, &lending_pool_id, &token_id, &admin);
+/// Deploys NFT + LendingPool + LoanManager wired together, mirroring the
+/// production initialization path used by the integration test-suite.
+fn setup<'a>(env: &Env) -> (LoanManagerClient<'a>, RemittanceNFTClient<'a>, Address, Address) {
+    env.mock_all_auths_allowing_non_root_auth();
 
-        // Authorize LoanManager in NFT
-        nft_client.authorize_minter(&loan_manager_id);
+    let admin = Address::generate(env);
 
-        (env, loan_manager_client, nft_client, lending_pool_client)
+    let nft_id = env.register(RemittanceNFT, ());
+    let nft = RemittanceNFTClient::new(env, &nft_id);
+    nft.initialize(&admin);
+
+    let token_admin = Address::generate(env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
+    let token = token_contract.address();
+
+    let pool_id = env.register(LendingPool, ());
+    let pool = LendingPoolClient::new(env, &pool_id);
+    pool.initialize(&admin);
+
+    let manager_id = env.register(LoanManager, ());
+    let manager = LoanManagerClient::new(env, &manager_id);
+    nft.authorize_minter(&manager_id);
+    manager.initialize(&nft_id, &pool_id, &token, &admin);
+    nft.set_min_repayment_amount(&0);
+
+    (manager, nft, pool.address, token)
+}
+
+fn borrower_with_score(env: &Env, nft: &RemittanceNFTClient, score: u32) -> Address {
+    let borrower = Address::generate(env);
+    let history_hash = BytesN::from_array(env, &[0u8; 32]);
+    let mut commitment = [0u8; 32];
+    commitment[0] = 1;
+    nft.mint(
+        &borrower,
+        &score,
+        &history_hash,
+        &String::from_str(env, "ipfs://QmTest"),
+        &BytesN::from_array(env, &commitment),
+        &None,
+    );
+    borrower
+}
+
+fn mint(env: &Env, token: &Address, to: &Address, amount: i128) {
+    StellarAssetClient::new(env, token).mint(to, &amount);
+}
+
+// INV-1: the pool can never pay out more than it holds. An approval that would
+// overdraw the pool must be rejected, and every successful approval reduces the
+// pool balance by *exactly* the loan principal.
+#[test]
+fn inv1_disbursed_loan_never_exceeds_pool_balance() {
+    let env = Env::default();
+    let (manager, nft, pool, token) = setup(&env);
+    let token_client = TokenClient::new(&env, &token);
+    mint(&env, &token, &pool, 10_000);
+    let borrower = borrower_with_score(&env, &nft, 650);
+
+    let ok_loan = manager.request_loan(&borrower, &4_000, &TERM);
+    manager.approve_loan(&ok_loan);
+
+    // Pool balance moved by exactly the principal, never more.
+    assert_eq!(token_client.balance(&pool), 6_000);
+    assert_eq!(manager.get_loan(&ok_loan).amount, 4_000);
+
+    // A second loan that exceeds the remaining 6_000 of liquidity is refused,
+    // leaving pool state untouched.
+    let over_loan = manager.request_loan(&borrower, &9_000, &TERM);
+    assert_eq!(
+        manager.try_approve_loan(&over_loan),
+        Err(Ok(LoanError::InsufficientPoolLiquidity))
+    );
+    assert_eq!(token_client.balance(&pool), 6_000);
+    assert_eq!(manager.get_loan(&over_loan).status, LoanStatus::Pending);
+}
+
+// INV-2: reported total outstanding is exactly the sum of active loan principal.
+#[test]
+fn inv2_total_outstanding_equals_sum_of_active_principal() {
+    let env = Env::default();
+    let (manager, nft, pool, token) = setup(&env);
+    mint(&env, &token, &pool, 20_000);
+
+    let a = borrower_with_score(&env, &nft, 700);
+    let b = borrower_with_score(&env, &nft, 700);
+
+    assert_eq!(manager.get_total_outstanding(&token), 0);
+
+    let loan_a = manager.request_loan(&a, &3_000, &TERM);
+    manager.approve_loan(&loan_a);
+    assert_eq!(manager.get_total_outstanding(&token), 3_000);
+
+    let loan_b = manager.request_loan(&b, &5_000, &TERM);
+    manager.approve_loan(&loan_b);
+
+    let expected = manager.get_loan(&loan_a).amount + manager.get_loan(&loan_b).amount;
+    assert_eq!(manager.get_total_outstanding(&token), expected);
+    assert_eq!(expected, 8_000);
+    // Outstanding can never exceed what the pool was funded with.
+    assert!(manager.get_total_outstanding(&token) <= 20_000);
+}
+
+// INV-3: collateral is tracked exactly and is additive to the manager balance;
+// it is never conflated with disbursement liquidity.
+#[test]
+fn inv3_collateral_is_accounted_exactly() {
+    let env = Env::default();
+    let (manager, nft, pool, token) = setup(&env);
+    let token_client = TokenClient::new(&env, &token);
+    mint(&env, &token, &pool, 20_000);
+    let borrower = borrower_with_score(&env, &nft, 650);
+    mint(&env, &token, &borrower, 5_000);
+
+    let loan_id = manager.request_loan(&borrower, &1_000, &TERM);
+    manager.approve_loan(&loan_id);
+
+    let manager_balance_before = token_client.balance(&manager.address);
+    let borrower_balance_before = token_client.balance(&borrower);
+
+    manager.deposit_collateral(&loan_id, &300);
+
+    assert_eq!(manager.get_collateral(&loan_id), 300);
+    assert_eq!(
+        token_client.balance(&manager.address),
+        manager_balance_before + 300
+    );
+    assert_eq!(token_client.balance(&borrower), borrower_balance_before - 300);
+    assert_eq!(manager.get_loan(&loan_id).collateral_amount, 300);
+}
+
+// INV-4: repayment only ever moves accounting in the safe direction -- principal
+// paid rises, stays positive, and never exceeds the borrowed amount; a fully
+// repaid loan settles and releases its collateral.
+#[test]
+fn inv4_repayment_monotonically_reduces_debt() {
+    let env = Env::default();
+    let (manager, nft, pool, token) = setup(&env);
+    let borrower = borrower_with_score(&env, &nft, 600);
+    mint(&env, &token, &pool, 20_000);
+    mint(&env, &token, &borrower, 20_000);
+
+    let loan_id = manager.request_loan(&borrower, &1_000, &TERM);
+    manager.approve_loan(&loan_id);
+    manager.deposit_collateral(&loan_id, &200);
+
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + 2_000);
+
+    manager.repay(&borrower, &loan_id, &500);
+    let mid = manager.get_loan(&loan_id);
+    assert!(mid.principal_paid > 0, "principal paid must advance");
+    assert!(
+        mid.principal_paid <= mid.amount,
+        "cannot repay more principal than borrowed"
+    );
+    assert!(mid.interest_paid >= 0);
+    assert_eq!(mid.status, LoanStatus::Approved);
+
+    let remaining = mid.amount + mid.accrued_interest + mid.accrued_late_fee
+        - mid.principal_paid
+        - mid.interest_paid
+        - mid.late_fee_paid;
+    manager.repay(&borrower, &loan_id, &remaining);
+
+    let done = manager.get_loan(&loan_id);
+    assert_eq!(done.status, LoanStatus::Repaid);
+    assert!(done.principal_paid <= done.amount);
+    // Collateral is returned once the debt is cleared.
+    assert_eq!(manager.get_collateral(&loan_id), 0);
+}
+
+// INV-5: interest and late-fee accumulators are non-negative at any ledger time,
+// including far in the future where naive accrual maths tends to overflow or
+// wrap.
+#[test]
+fn inv5_accrued_amounts_never_negative() {
+    let env = Env::default();
+    let (manager, nft, pool, token) = setup(&env);
+    mint(&env, &token, &pool, 20_000);
+    let borrower = borrower_with_score(&env, &nft, 700);
+
+    let loan_id = manager.request_loan(&borrower, &2_000, &TERM);
+    manager.approve_loan(&loan_id);
+
+    for delta in [0u32, 1, TERM, TERM * 10, u32::MAX / 2] {
+        env.ledger().set_sequence_number(delta);
+        let loan = manager.get_loan(&loan_id);
+        assert!(loan.accrued_interest >= 0, "accrued interest went negative");
+        assert!(loan.accrued_late_fee >= 0, "accrued late fee went negative");
+        assert!(loan.interest_residual >= 0, "interest residual went negative");
+        assert!(loan.principal_paid >= 0 && loan.interest_paid >= 0);
     }
+}
 
-    #[test]
-    fn invariant_loan_amount_within_pool_balance() {
-        let (_env, loan_manager_client, nft_client, _lending_pool_client) = setup();
-        let borrower = Address::generate(&_env);
-        let amount = 1_000_000i128;
-        let score = 600u32;
+// INV-6: the credit score exposed to the loan manager is always non-negative.
+#[test]
+fn inv6_credit_score_non_negative() {
+    let env = Env::default();
+    let (_manager, nft, _pool, _token) = setup(&env);
+    let borrower = borrower_with_score(&env, &nft, 500);
+    assert!(nft.get_score(&borrower) >= 0);
+    assert_eq!(nft.get_score(&borrower), 500);
+}
 
-        // Mint NFT with sufficient score
-        let history_hash = BytesN::from_array(&_env, &[0u8; 32]);
-        nft_client.mint(
-            &borrower,
-            &score,
-            &history_hash,
-            &String::from_str(&_env, "ipfs://test"),
-            &BytesN::from_array(&_env, &[0u8; 32]),
-            &None,
-        );
+// INV-7: the `max_loan_amount` ceiling is enforced at request time, before any
+// pool state is touched.
+#[test]
+fn inv7_requests_above_max_are_rejected() {
+    let env = Env::default();
+    let (manager, nft, pool, token) = setup(&env);
+    mint(&env, &token, &pool, 1_000_000);
+    let borrower = borrower_with_score(&env, &nft, 750);
 
-        // Request loan
-        let loan_result = loan_manager_client.request_loan(&borrower, &amount);
+    manager.set_max_loan_amount(&5_000);
+    assert_eq!(
+        manager.try_request_loan(&borrower, &6_000, &TERM),
+        Err(Ok(LoanError::InvalidAmount))
+    );
 
-        // Invariant: Either loan is created OR it fails due to insufficient pool balance
-        // In either case, no invariant is violated
-        match loan_result {
-            Ok(_) => {
-                // Loan was created - verify amount is reasonable
-                assert!(amount > 0, "Loan amount must be positive");
-            }
-            Err(_) => {
-                // This is expected if pool balance is insufficient
-            }
-        }
-    }
-
-    #[test]
-    fn invariant_collateral_locked_correctly() {
-        let (_env, loan_manager_client, nft_client, _lending_pool_client) = setup();
-        let borrower = Address::generate(&_env);
-        let collateral_amount = 500_000i128;
-        let loan_amount = 1_000_000i128;
-        let score = 650u32;
-
-        // Mint NFT
-        let history_hash = BytesN::from_array(&_env, &[0u8; 32]);
-        nft_client.mint(
-            &borrower,
-            &score,
-            &history_hash,
-            &String::from_str(&_env, "ipfs://test"),
-            &BytesN::from_array(&_env, &[0u8; 32]),
-            &None,
-        );
-
-        // Request loan with collateral
-        let result = loan_manager_client.request_loan(&borrower, &loan_amount);
-
-        // Invariant: If loan is requested, collateral lock must be properly enforced
-        if result.is_ok() {
-            // Collateral should be locked (verified through NFT contract)
-            // This is implicit - if we can continue, collateral logic is working
-            assert!(true, "Collateral lock invariant holds");
-        }
-    }
-
-    #[test]
-    fn invariant_interest_calculation_correct() {
-        let (_env, loan_manager_client, nft_client, _lending_pool_client) = setup();
-        let borrower = Address::generate(&_env);
-        let loan_amount = 1_000_000i128;
-        let score = 700u32;
-
-        // Mint NFT
-        let history_hash = BytesN::from_array(&_env, &[0u8; 32]);
-        nft_client.mint(
-            &borrower,
-            &score,
-            &history_hash,
-            &String::from_str(&_env, "ipfs://test"),
-            &BytesN::from_array(&_env, &[0u8; 32]),
-            &None,
-        );
-
-        // Request and approve loan
-        let _loan_result = loan_manager_client.request_loan(&borrower, &loan_amount);
-
-        // Simulate time passing (increase ledger)
-        _env.ledger().set_sequence_number(1000);
-
-        // Invariant: Interest should accrue based on rate and time
-        // The exact calculation depends on the rate and ledger sequence
-        // This test ensures that interest accrual logic doesn't violate constraints
-        assert!(true, "Interest calculation invariant holds");
-    }
-
-    #[test]
-    fn invariant_loan_amount_never_exceeds_pool_balance() {
-        let (_env, loan_manager_client, nft_client, _lending_pool_client) = setup();
-        let borrower = Address::generate(&_env);
-        let excessive_amount = i128::MAX / 2; // Very large amount
-        let score = 800u32;
-
-        // Mint NFT
-        let history_hash = BytesN::from_array(&_env, &[0u8; 32]);
-        nft_client.mint(
-            &borrower,
-            &score,
-            &history_hash,
-            &String::from_str(&_env, "ipfs://test"),
-            &BytesN::from_array(&_env, &[0u8; 32]),
-            &None,
-        );
-
-        // Request excessive loan
-        let result = loan_manager_client.request_loan(&borrower, &excessive_amount);
-
-        // Invariant: System should either:
-        // 1. Reject the loan due to insufficient funds, OR
-        // 2. Create loan but ensure pool balance constraint is met
-        match result {
-            Ok(_) => {
-                // If accepted, pool must have enough balance
-                // This is enforced by the pool contract
-                assert!(true, "Pool balance constraint maintained");
-            }
-            Err(_) => {
-                // Loan rejection is the correct behavior
-                assert!(true, "Properly rejected excessive loan request");
-            }
-        }
-    }
-
-    #[test]
-    fn invariant_borrower_mismatch_protection() {
-        let (_env, loan_manager_client, nft_client, _lending_pool_client) = setup();
-        let borrower1 = Address::generate(&_env);
-        let borrower2 = Address::generate(&_env);
-        let loan_amount = 100_000i128;
-        let score = 650u32;
-
-        // Mint NFT for borrower1
-        let history_hash = BytesN::from_array(&_env, &[0u8; 32]);
-        nft_client.mint(
-            &borrower1,
-            &score,
-            &history_hash,
-            &String::from_str(&_env, "ipfs://test"),
-            &BytesN::from_array(&_env, &[0u8; 32]),
-            &None,
-        );
-
-        // Request loan for borrower1
-        let _loan_result = loan_manager_client.request_loan(&borrower1, &loan_amount);
-
-        // Invariant: borrower2 should not be able to interact with borrower1's loan
-        // This is enforced through address-based checks in the contract
-        assert!(true, "Borrower mismatch protection invariant holds");
-    }
-
-    #[test]
-    fn invariant_total_outstanding_bounded_by_pool() {
-        let (_env, loan_manager_client, nft_client, _lending_pool_client) = setup();
-        let borrower1 = Address::generate(&_env);
-        let borrower2 = Address::generate(&_env);
-        let loan_amount = 500_000i128;
-        let score = 700u32;
-
-        // Create loans for multiple borrowers
-        let history_hash = BytesN::from_array(&_env, &[0u8; 32]);
-
-        // First borrower
-        nft_client.mint(
-            &borrower1,
-            &score,
-            &history_hash,
-            &String::from_str(&_env, "ipfs://test"),
-            &BytesN::from_array(&_env, &[0u8; 32]),
-            &None,
-        );
-        let _result1 = loan_manager_client.request_loan(&borrower1, &loan_amount);
-
-        // Second borrower
-        nft_client.mint(
-            &borrower2,
-            &score,
-            &history_hash,
-            &String::from_str(&_env, "ipfs://test"),
-            &BytesN::from_array(&_env, &[0u8; 32]),
-            &None,
-        );
-        let _result2 = loan_manager_client.request_loan(&borrower2, &loan_amount);
-
-        // Invariant: Total outstanding should not exceed pool balance
-        // This is enforced at request time
-        assert!(true, "Total outstanding bounded by pool invariant holds");
-    }
-
-    #[test]
-    fn invariant_score_non_negative() {
-        let (_env, _loan_manager_client, nft_client, _lending_pool_client) = setup();
-        let user = Address::generate(&_env);
-        let initial_score = 500u32;
-
-        // Mint NFT
-        let history_hash = BytesN::from_array(&_env, &[0u8; 32]);
-        nft_client.mint(
-            &user,
-            &initial_score,
-            &history_hash,
-            &String::from_str(&_env, "ipfs://test"),
-            &BytesN::from_array(&_env, &[0u8; 32]),
-            &None,
-        );
-
-        // Retrieve score
-        let score = nft_client.get_score(&user);
-
-        // Invariant: Score must always be non-negative
-        assert!(score >= 0, "Score must be non-negative");
-        assert_eq!(score, initial_score, "Score should match initial value");
-    }
+    // The boundary value is still accepted.
+    let ok = manager.request_loan(&borrower, &5_000, &TERM);
+    assert_eq!(manager.get_loan(&ok).amount, 5_000);
 }
