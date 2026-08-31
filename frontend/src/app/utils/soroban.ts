@@ -9,8 +9,10 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 
-const DEFAULT_RPC_URL = "https://soroban-testnet.stellar.org";
-const DEFAULT_NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
+import { DEFAULT_TESTNET_PASSPHRASE, DEFAULT_TESTNET_RPC_URL } from "./stellarNetwork";
+
+const DEFAULT_RPC_URL = DEFAULT_TESTNET_RPC_URL;
+const DEFAULT_NETWORK_PASSPHRASE = DEFAULT_TESTNET_PASSPHRASE;
 
 interface BuildLoanRequestXdrParams {
   borrower: string;

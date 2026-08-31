@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
-import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { ErrorFallback } from "./ErrorBoundary";
+import { showErrorFeedbackDialog } from "../../lib/observability";
 
 interface RouteErrorViewProps {
   error: Error & { digest?: string };
@@ -19,21 +19,21 @@ interface RouteErrorViewProps {
  * back to the page the user was on.
  */
 export function RouteErrorView({ error, reset, scope }: RouteErrorViewProps) {
-  const pathname = usePathname();
+  const [eventId, setEventId] = useState<string | undefined>();
 
   useEffect(() => {
     console.error(`Route error in ${scope}:`, error);
-    Sentry.withScope((sentryScope) => {
-      sentryScope.setTag("error_boundary", "route");
-      sentryScope.setTag("route_scope", scope);
-      sentryScope.setContext("route", {
-        scope,
-        pathname,
-        digest: error.digest ?? null,
-      });
-      Sentry.captureException(error);
-    });
-  }, [error, scope, pathname]);
+    const id = Sentry.captureException(error, { tags: { scope } });
+    setEventId(id);
+  }, [error, scope]);
 
-  return <ErrorFallback error={error} onRetry={reset} scope={scope} variant="page" />;
+  return (
+    <ErrorFallback
+      error={error}
+      onRetry={reset}
+      scope={scope}
+      variant="page"
+      onReportFeedback={() => void showErrorFeedbackDialog(eventId)}
+    />
+  );
 }
