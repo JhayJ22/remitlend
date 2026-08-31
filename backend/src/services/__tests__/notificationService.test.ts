@@ -2,17 +2,20 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 
 type QueryResult = { rows: Record<string, unknown>[]; rowCount: number };
 const mockQuery = jest.fn<(sql: string, params?: unknown[]) => Promise<QueryResult>>();
+const mockSendGridMail = { setApiKey: jest.fn(), send: jest.fn() };
+const mockTwilioMessagesCreate = jest.fn();
+const mockTwilioFactory = jest.fn(() => ({ messages: { create: mockTwilioMessagesCreate } }));
 
 jest.unstable_mockModule('../../db/connection.js', () => ({
   query: mockQuery,
 }));
 
 jest.unstable_mockModule('twilio', () => ({
-  default: jest.fn(() => ({ messages: { create: jest.fn() } })),
+  default: mockTwilioFactory,
 }));
 
 jest.unstable_mockModule('@sendgrid/mail', () => ({
-  default: { setApiKey: jest.fn(), send: jest.fn() },
+  default: mockSendGridMail,
 }));
 
 const { notificationService } = await import('../notificationService.js');
@@ -20,6 +23,19 @@ const { notificationService } = await import('../notificationService.js');
 describe('notificationService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.FROM_EMAIL = 'noreply@remitlend.test';
+    process.env.SENDGRID_API_KEY = 'test-sendgrid-key';
+    process.env.TWILIO_ACCOUNT_SID = 'ACtest123';
+    process.env.TWILIO_AUTH_TOKEN = 'token123';
+    process.env.TWILIO_PHONE_NUMBER = '+15551234567';
+  });
+
+  afterEach(() => {
+    delete process.env.FROM_EMAIL;
+    delete process.env.SENDGRID_API_KEY;
+    delete process.env.TWILIO_ACCOUNT_SID;
+    delete process.env.TWILIO_AUTH_TOKEN;
+    delete process.env.TWILIO_PHONE_NUMBER;
   });
 
   describe('createNotification', () => {
@@ -148,6 +164,195 @@ describe('notificationService', () => {
       });
 
       expect(notification.actionUrl).toBeUndefined();
+    });
+  });
+
+  describe('preferences and filtering', () => {
+    it('reads and updates notification preferences for a user', async () => {
+      mockQuery
+        .mockResolvedValueOnce({
+          rows: [{ email_enabled: true, sms_enabled: false, phone: '+14155552671' }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{ email_enabled: true, sms_enabled: true, phone: '+14155552671' }],
+          rowCount: 1,
+        });
+
+      const prefs = await notificationService.getNotificationPreferences('user-pref-1');
+      expect(prefs).toEqual({
+        emailEnabled: true,
+        smsEnabled: false,
+        phone: '+14155552671',
+        perTypeOverrides: {},
+      });
+
+      const updated = await notificationService.updateNotificationPreferences('user-pref-1', {
+        emailEnabled: true,
+        smsEnabled: true,
+        phone: '+14155552671',
+      });
+
+      expect(updated).toEqual({
+        emailEnabled: true,
+        smsEnabled: true,
+        phone: '+14155552671',
+        perTypeOverrides: {},
+      });
+      expect(mockQuery).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('UPDATE user_profiles'),
+        ['user-pref-1', true, true, '+14155552671'],
+      );
+    });
+
+    it('filters notifications by type, status, and date windows', async () => {
+      const from = '2026-05-01T00:00:00.000Z';
+      const to = '2026-05-31T23:59:59.999Z';
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 7,
+            user_id: 'user-filter-1',
+            type: 'repayment_due',
+            title: 'Repayment due',
+            message: 'Payment scheduled',
+            loan_id: null,
+            action_url: null,
+            read: false,
+            status: 'unread',
+            created_at: '2026-05-15T10:00:00.000Z',
+          },
+        ],
+        rowCount: 1,
+      });
+
+      const notifications = await notificationService.getNotificationsForUser(
+        'user-filter-1',
+        25,
+        'repayment_due',
+        'unread',
+        from,
+        to,
+      );
+
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]?.type).toBe('repayment_due');
+      expect(notifications[0]?.status).toBe('unread');
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('AND type = $2'),
+        ['user-filter-1', 'repayment_due', 'unread', from, to, 25],
+      );
+    });
+  });
+
+  describe('external delivery', () => {
+    it('sends email and SMS when delivery preferences are enabled for a due payment', async () => {
+      mockQuery
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 9,
+              user_id: 'user-delivery-1',
+              type: 'repayment_due',
+              title: 'Repayment due',
+              message: 'Your repayment is due tomorrow',
+              loan_id: 42,
+              action_url: '/loans/42',
+              read: false,
+              status: 'unread',
+              created_at: '2026-05-28T12:00:00.000Z',
+            },
+          ],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              email: 'user@example.com',
+              phone: '+15557654321',
+              email_enabled: true,
+              sms_enabled: true,
+            },
+          ],
+          rowCount: 1,
+        });
+
+      await notificationService.createNotification({
+        userId: 'user-delivery-1',
+        type: 'repayment_due',
+        title: 'Repayment due',
+        message: 'Your repayment is due tomorrow',
+        loanId: 42,
+      });
+
+      expect(mockSendGridMail.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'user@example.com',
+          from: 'noreply@remitlend.test',
+          subject: 'Repayment reminder — RemitLend',
+          html: expect.stringContaining('<h2>Repayment Due Soon</h2>'),
+        }),
+      );
+      expect(mockTwilioMessagesCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: 'Your repayment is due tomorrow',
+          from: '+15551234567',
+          to: '+15557654321',
+        }),
+      );
+    });
+
+    it('renders the expected email template for loan approval notifications', async () => {
+      mockQuery
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 11,
+              user_id: 'user-template-1',
+              type: 'loan_approved',
+              title: 'Loan approved',
+              message: 'Your loan has been approved',
+              loan_id: 7,
+              action_url: '/loans/7',
+              read: false,
+              status: 'unread',
+              created_at: '2026-05-28T12:00:00.000Z',
+            },
+          ],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              email: 'approved@example.com',
+              phone: null,
+              email_enabled: true,
+              sms_enabled: false,
+            },
+          ],
+          rowCount: 1,
+        });
+
+      await notificationService.createNotification({
+        userId: 'user-template-1',
+        type: 'loan_approved',
+        title: 'Loan approved',
+        message: 'Your loan has been approved',
+        loanId: 7,
+      });
+
+      expect(mockSendGridMail.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subject: 'Your loan has been approved — RemitLend',
+          html: expect.stringContaining('<h2>Loan Approved</h2>'),
+        }),
+      );
+      expect(mockSendGridMail.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          html: expect.stringContaining('Your loan has been approved'),
+        }),
+      );
     });
   });
 
