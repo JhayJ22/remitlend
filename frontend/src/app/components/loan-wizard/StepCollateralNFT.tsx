@@ -30,6 +30,8 @@ interface StepCollateralNFTProps {
 export function StepCollateralNFT({ data, onChange, onNext, onBack }: StepCollateralNFTProps) {
   const nftContractId =
     process.env.NEXT_PUBLIC_NFT_CONTRACT_ID ??
+    process.env.NEXT_PUBLIC_LENDING_POOL_CONTRACT_ID ??
+    // Deprecated alias, kept for backward compatibility.
     process.env.NEXT_PUBLIC_MANAGER_CONTRACT_ID ??
     "Not configured";
 

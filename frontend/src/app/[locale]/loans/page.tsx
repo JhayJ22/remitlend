@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { buildPageMetadata } from "../../lib/metadata";
+import { LoansListSkeleton } from "../../components/skeletons/LoansListSkeleton";
 import { LoansPageClient } from "./LoansPageClient";
 
 type PageProps = {
@@ -19,5 +21,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default function LoansPage() {
-  return <LoansPageClient />;
+  return (
+    <Suspense fallback={<LoansListSkeleton />}>
+      <LoansPageClient />
+    </Suspense>
+  );
 }

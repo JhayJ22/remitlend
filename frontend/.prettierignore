@@ -4,3 +4,8 @@ dist
 build
 package-lock.json
 npm-shrinkwrap.json
+storybook-static
+
+# Storybook config & stories are linted via eslint-plugin-storybook
+.storybook
+*.stories.tsx

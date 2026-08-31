@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname } from "next/navigation";
+import { OptimizedImage } from "../ui/OptimizedImage";
 import {
   LayoutDashboard,
   HandCoins,
@@ -79,7 +79,7 @@ export function Sidebar({ onClose, className }: SidebarProps) {
     >
       <div className="flex h-16 items-center justify-between px-6 border-b border-zinc-200 dark:border-zinc-800">
         <Link href={`/${locale}`} className="flex items-center gap-2">
-          <Image
+          <OptimizedImage
             src="/images/logo.png"
             alt="RemitLend"
             width={32}

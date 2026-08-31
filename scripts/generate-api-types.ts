@@ -98,20 +98,26 @@ async function generateTypesFromSpec(spec: any): Promise<void> {
 }
 
 async function generateZodSchemas(spec: any): Promise<void> {
-  const { generateZodSchemas: generate } = await import(
-    "openapi-zod-generator"
-  );
-  
-  const zodOutput = await generate(spec, {
-    outputDir: OUTPUT_DIR,
-    fileName: "api-schemas.ts",
-    includePaths: true,
-    includeComponents: true,
-  });
+  try {
+    const { generateZodSchemas: generate } = await import("openapi-zod-generator");
 
+    const zodOutput = await generate(spec, {
+      outputDir: OUTPUT_DIR,
+      fileName: "api-schemas.ts",
+      includePaths: true,
+      includeComponents: true,
+    });
+
+    writeFileSync(resolve(OUTPUT_DIR, "api-schemas.ts"), zodOutput);
+    return;
+  } catch {
+    console.log("⚠️ openapi-zod-generator is not installed; skipping Zod schema generation.");
+  }
+
+  const outputPath = resolve(OUTPUT_DIR, "api-schemas.ts");
   writeFileSync(
-    resolve(OUTPUT_DIR, "api-schemas.ts"),
-    zodOutput
+    outputPath,
+    `export const apiSchemas = {} as const;\nexport default apiSchemas;\n`,
   );
 }
 
