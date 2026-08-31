@@ -24,6 +24,8 @@ import { LanguageSwitcher } from "./LanguageSwitcher";
 import { useTranslations, useLocale } from "next-intl";
 import { useKeyboardShortcuts, createGlobalShortcuts, createNavigationShortcuts, createWalletShortcuts, createSearchShortcut } from "../../hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsHelp } from "../ui/KeyboardShortcutsHelp";
+import { DisconnectWalletDialog } from "./DisconnectWalletDialog";
+import { useDisconnectWallet } from "../../hooks/useDisconnectWallet";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -49,6 +51,8 @@ export function Header({ onMenuClick, className }: HeaderProps) {
   const isConnected = useWalletStore((state) => state.status === "connected");
   const walletAddress = useWalletStore((state) => state.address);
   const { connectWallet, disconnectWallet } = useWallet();
+  const { isConfirmOpen, requestDisconnect, cancelDisconnect, confirmDisconnect } =
+    useDisconnectWallet(`/${locale}`);
   const user = useUserStore((state) => state.user);
   const gamificationStore = useGamificationStore();
   const toast = useContractToast();
@@ -240,8 +244,9 @@ export function Header({ onMenuClick, className }: HeaderProps) {
 
   const handleWalletToggle = async () => {
     if (isConnected) {
-      disconnectWallet();
-      toast.info("Wallet disconnected", "Reconnect anytime to continue borrowing and lending.");
+      // Ask for confirmation first; the actual teardown happens in
+      // handleConfirmDisconnect once the user accepts.
+      requestDisconnect();
       return;
     }
 
@@ -255,6 +260,14 @@ export function Header({ onMenuClick, className }: HeaderProps) {
         error instanceof Error ? error.message : "Unable to connect to Freighter.",
       );
     }
+  };
+
+  const handleConfirmDisconnect = async () => {
+    // Tear down the wallet provider session, then clear client state,
+    // cancel in-flight requests and redirect home.
+    disconnectWallet();
+    await confirmDisconnect();
+    toast.info("Wallet disconnected", "Reconnect anytime to continue borrowing and lending.");
   };
 
   const profileLabel = user?.email
@@ -428,13 +441,20 @@ export function Header({ onMenuClick, className }: HeaderProps) {
           </div>
         </button>
       </div>
-    </header>
-    {shortcutsHelpOpen && (
-      <KeyboardShortcutsHelp
-        isOpen={shortcutsHelpOpen}
-        onClose={() => setShortcutsHelpOpen(false)}
-        shortcuts={allShortcuts}
+
+      {shortcutsHelpOpen && (
+        <KeyboardShortcutsHelp
+          isOpen={shortcutsHelpOpen}
+          onClose={() => setShortcutsHelpOpen(false)}
+          shortcuts={allShortcuts}
+        />
+      )}
+
+      <DisconnectWalletDialog
+        isOpen={isConfirmOpen}
+        onCancel={cancelDisconnect}
+        onConfirm={handleConfirmDisconnect}
       />
-    )}
+    </header>
   );
 }
