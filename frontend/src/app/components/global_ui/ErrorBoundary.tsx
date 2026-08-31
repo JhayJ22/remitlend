@@ -2,7 +2,7 @@
 
 import React, { Component, type ErrorInfo, type ReactNode } from "react";
 import Link from "next/link";
-import { RefreshCcw, Siren, TriangleAlert } from "lucide-react";
+import { Home, RefreshCcw, Siren, TriangleAlert } from "lucide-react";
 import * as Sentry from "@sentry/nextjs";
 
 interface ErrorBoundaryProps {

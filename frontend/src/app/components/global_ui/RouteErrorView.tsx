@@ -11,6 +11,13 @@ interface RouteErrorViewProps {
   scope: string;
 }
 
+/**
+ * Shared recovery UI rendered by every route-segment `error.tsx`.
+ *
+ * Renders the standard fallback (Retry + Go Home) and reports the error to
+ * Sentry tagged with the route segment and pathname so crashes can be traced
+ * back to the page the user was on.
+ */
 export function RouteErrorView({ error, reset, scope }: RouteErrorViewProps) {
   const [eventId, setEventId] = useState<string | undefined>();
 

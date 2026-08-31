@@ -22,6 +22,7 @@ import { useUserStore } from "../stores/useUserStore";
 import { isJwtExpired, logoutUser, SessionExpiredError } from "../lib/session";
 import { useWallet } from "../components/providers/WalletProvider";
 import { useContractToast } from "./useContractToast";
+import { toast } from "sonner";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -867,27 +868,65 @@ export function useMinimumScore(
   });
 }
 
+interface CreateLoanContext {
+  previousLoans?: Loan[];
+  tempId: string;
+}
+
 /**
  * Creates a new loan application.
- * Automatically invalidates the loans list cache on success.
- * Returns mutation with txHash in the response for toast integration.
+ *
+ * Optimistically inserts a `pending` row into the loans list cache so the UI
+ * updates instantly, then rolls the insert back (with an error toast) if the
+ * request fails. The cache is always invalidated on settle so the real record
+ * replaces the optimistic one.
  */
 export function useCreateLoan(
   options?: UseMutationOptions<
     Loan & { txHash?: string },
     Error,
-    Omit<Loan, "id" | "createdAt" | "status">
+    Omit<Loan, "id" | "createdAt" | "status">,
+    CreateLoanContext
   >,
 ) {
   const queryClient = useQueryClient();
   const walletAddress = useUserStore((s) => s.user?.walletAddress);
 
-  return useMutation<Loan & { txHash?: string }, Error, Omit<Loan, "id" | "createdAt" | "status">>({
+  return useMutation<
+    Loan & { txHash?: string },
+    Error,
+    Omit<Loan, "id" | "createdAt" | "status">,
+    CreateLoanContext
+  >({
     mutationFn: (data) =>
       apiFetch<Loan & { txHash?: string }>("/loans", {
         method: "POST",
         body: JSON.stringify(data),
       }),
+    onMutate: async (data): Promise<CreateLoanContext> => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.loans.all() });
+      const previousLoans = queryClient.getQueryData<Loan[]>(queryKeys.loans.all());
+      const tempId = `optimistic-${Date.now()}`;
+      const optimisticLoan: Loan = {
+        ...(data as Omit<Loan, "id" | "createdAt" | "status">),
+        id: tempId,
+        status: "pending" as LoanStatus,
+        createdAt: new Date().toISOString(),
+      };
+      queryClient.setQueryData<Loan[]>(queryKeys.loans.all(), (old) => [
+        optimisticLoan,
+        ...(old ?? []),
+      ]);
+      return { previousLoans, tempId };
+    },
+    onError: (error, _data, context) => {
+      if (context?.previousLoans) {
+        queryClient.setQueryData(queryKeys.loans.all(), context.previousLoans);
+      }
+      toast.error("Loan request failed", {
+        description: error.message || "Your loan request could not be submitted. Please try again.",
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.loans.all() });
       // Also invalidate borrowerLoans.byAddress so both borrower-loan lists stay consistent (#1219)
@@ -896,6 +935,9 @@ export function useCreateLoan(
           queryKey: queryKeys.borrowerLoans.byAddress(walletAddress),
         });
       }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.loans.all() });
     },
     ...options,
   });
@@ -944,16 +986,25 @@ export function useRemittance(
   });
 }
 
+interface CreateRemittanceContext {
+  previousRemittances?: Remittance[];
+  tempId: string;
+}
+
 /**
  * Creates a new remittance.
- * Invalidates the remittances list cache on success.
- * Returns mutation with txHash in the response for toast integration.
+ *
+ * Optimistically prepends a `pending` remittance to the list cache for an
+ * instant UI response, and rolls the change back with an error toast if the
+ * submission fails. The list is invalidated on settle to reconcile with the
+ * server record.
  */
 export function useCreateRemittance(
   options?: UseMutationOptions<
     Remittance & { txHash?: string },
     Error,
-    Omit<Remittance, "id" | "createdAt" | "status">
+    Omit<Remittance, "id" | "createdAt" | "status">,
+    CreateRemittanceContext
   >,
 ) {
   const queryClient = useQueryClient();
@@ -961,14 +1012,44 @@ export function useCreateRemittance(
   return useMutation<
     Remittance & { txHash?: string },
     Error,
-    Omit<Remittance, "id" | "createdAt" | "status">
+    Omit<Remittance, "id" | "createdAt" | "status">,
+    CreateRemittanceContext
   >({
     mutationFn: (data) =>
       apiFetch<Remittance & { txHash?: string }>("/remittances", {
         method: "POST",
         body: JSON.stringify(data),
       }),
+    onMutate: async (data): Promise<CreateRemittanceContext> => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.remittances.all() });
+      const previousRemittances = queryClient.getQueryData<Remittance[]>(
+        queryKeys.remittances.all(),
+      );
+      const tempId = `optimistic-${Date.now()}`;
+      const optimisticRemittance: Remittance = {
+        ...(data as Omit<Remittance, "id" | "createdAt" | "status">),
+        id: tempId,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      };
+      queryClient.setQueryData<Remittance[]>(queryKeys.remittances.all(), (old) => [
+        optimisticRemittance,
+        ...(old ?? []),
+      ]);
+      return { previousRemittances, tempId };
+    },
+    onError: (error, _data, context) => {
+      if (context?.previousRemittances) {
+        queryClient.setQueryData(queryKeys.remittances.all(), context.previousRemittances);
+      }
+      toast.error("Remittance failed", {
+        description: error.message || "Your remittance could not be submitted. Please try again.",
+      });
+    },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.remittances.all() });
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.remittances.all() });
     },
     ...options,
