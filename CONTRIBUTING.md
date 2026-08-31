@@ -128,6 +128,43 @@ For consensus-critical changes to smart contracts, fuzz testing is an expected p
 
 Refer to [`contracts/FUZZING_README.md`](contracts/FUZZING_README.md) for full setup instructions, invariant definitions, and running fuzz campaign scripts (`./fuzz_campaign.sh`).
 
+## Accessibility Requirements
+
+RemitLend serves migrant workers on a wide range of devices and assistive
+technologies, so accessibility is a correctness requirement, not a nice-to-have.
+
+**Baseline expectations for every frontend change:**
+
+- Meet **WCAG 2.1 Level AA**. Every interactive element must be reachable and
+  operable by keyboard, expose an accessible name, and show a visible focus ring.
+- Respect the existing focus-management and `prefers-reduced-motion` conventions
+  in `src/app/[locale]/globals.css`.
+- Provide text alternatives for icons and charts; never encode meaning in colour
+  alone.
+- Reuse the shared primitives (`components/ui/floating` for tooltips/popovers,
+  `components/ui/Modal`, etc.) rather than re-implementing focus traps and ARIA
+  wiring.
+
+**Automated checks:**
+
+- The **Accessibility** GitHub Actions workflow (`.github/workflows/a11y.yml`)
+  runs axe-core against critical pages via `e2e/a11y.spec.ts` and **fails the PR
+  on any new WCAG A/AA violation**. Run it locally with:
+
+  ```bash
+  cd frontend
+  npm run build
+  npx playwright test e2e/a11y.spec.ts --project=chromium
+  ```
+
+- When adding a new top-level page, add its route to `CRITICAL_PAGES` in
+  `e2e/a11y.spec.ts`.
+- Storybook ships the **@storybook/addon-a11y** panel; check it while developing
+  components in isolation (`npm run storybook`).
+- For live feedback while running the dev server, enable the in-browser axe
+  overlay by rendering `@axe-core/react` from a client component in development
+  only (dependency already declared in `frontend/package.json`).
+
 ## Style Guides
 
 - **TypeScript**: Use functional components and hooks. Prefer `interface` over `type`. Ensure strict typing.

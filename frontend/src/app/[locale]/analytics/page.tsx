@@ -4,6 +4,7 @@ import { useState } from "react";
 import { FinancialPerformanceDashboard } from "../../components/dashboards/FinancialPerformanceDashboard";
 import { ErrorBoundary } from "../../components/global_ui/ErrorBoundary";
 import { useWalletStore, selectWalletAddress } from "../../stores/useWalletStore";
+import { PrintButton } from "../../components/ui/PrintButton";
 
 type ViewType = "borrower" | "lender";
 
@@ -14,11 +15,16 @@ export default function AnalyticsPage() {
 
   return (
     <main className="min-h-screen p-8 lg:p-12 max-w-7xl mx-auto space-y-8">
-      <header>
-        <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-50">Analytics Dashboard</h1>
-        <p className="text-zinc-500 dark:text-zinc-400 mt-2">
-          Visualize your financial performance with interactive charts
-        </p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-50">
+            Analytics Dashboard
+          </h1>
+          <p className="text-zinc-500 dark:text-zinc-400 mt-2">
+            Visualize your financial performance with interactive charts
+          </p>
+        </div>
+        <PrintButton label="Print report" documentTitle="RemitLend - Yield Report" />
       </header>
 
       <div className="flex gap-2" role="group" aria-label="Analytics view selector">

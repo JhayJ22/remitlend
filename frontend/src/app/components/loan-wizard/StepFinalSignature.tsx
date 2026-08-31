@@ -79,9 +79,13 @@ export function StepFinalSignature({
     let cancelled = false;
 
     void (async () => {
-      const managerContractId = process.env.NEXT_PUBLIC_MANAGER_CONTRACT_ID;
+      const managerContractId =
+        process.env.NEXT_PUBLIC_LENDING_POOL_CONTRACT_ID ??
+        // Deprecated alias, kept for backward compatibility.
+        process.env.NEXT_PUBLIC_MANAGER_CONTRACT_ID;
       if (!managerContractId) {
-        if (!cancelled) setXdrError("Missing NEXT_PUBLIC_MANAGER_CONTRACT_ID configuration.");
+        if (!cancelled)
+          setXdrError("Missing NEXT_PUBLIC_LENDING_POOL_CONTRACT_ID configuration.");
         return;
       }
 
@@ -137,9 +141,12 @@ export function StepFinalSignature({
   };
 
   const handleSignAndSubmit = () => {
-    const managerContractId = process.env.NEXT_PUBLIC_MANAGER_CONTRACT_ID;
+    const managerContractId =
+      process.env.NEXT_PUBLIC_LENDING_POOL_CONTRACT_ID ??
+      // Deprecated alias, kept for backward compatibility.
+      process.env.NEXT_PUBLIC_MANAGER_CONTRACT_ID;
     if (!managerContractId) {
-      setXdrError("Missing NEXT_PUBLIC_MANAGER_CONTRACT_ID configuration.");
+      setXdrError("Missing NEXT_PUBLIC_LENDING_POOL_CONTRACT_ID configuration.");
       return;
     }
 
