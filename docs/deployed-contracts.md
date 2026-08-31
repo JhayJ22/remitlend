@@ -36,7 +36,15 @@ Explorer: `https://stellar.expert/explorer/testnet`
 
 #### Frontend (`frontend/.env`)
 
-The frontend does not currently read contract IDs directly from env. It calls the backend API, which resolves contract addresses at runtime using the backend vars above.
+Most contract addresses are resolved at runtime by the backend API. The loan
+wizard is the exception — it reads the lending pool address directly from env:
+
+| Contract | Env var |
+|---|---|
+| `lending_pool` | `NEXT_PUBLIC_LENDING_POOL_CONTRACT_ID` (canonical; mirrors the backend's `LENDING_POOL_CONTRACT_ID`) |
+
+The legacy name `NEXT_PUBLIC_MANAGER_CONTRACT_ID` is still accepted as a fallback
+for existing deployments, but new configs should use the canonical name.
 
 ---
 

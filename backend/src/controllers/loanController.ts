@@ -255,14 +255,30 @@ export const getLoanDetails = asyncHandler(async (req: Request, res: Response) =
   const approvalEvents = events.filter(
     (event: Record<string, unknown>) => event.event_type === 'LoanApproved',
   );
-  if (approvalEvents.length > 1) {
-    logger.withContext().warn('Duplicate LoanApproved events detected for loan', {
+  // A re-indexed or re-emitted LoanApproved produces several rows for the same
+  // on-chain event. Collapse them by transaction hash so downstream logic — and
+  // the logs — only ever see one approval per transaction. This makes duplicate
+  // handling idempotent instead of just noisy.
+  const dedupedApprovalEvents = Array.from(
+    new Map(
+      approvalEvents.map((event: Record<string, unknown>) => [
+        (event.tx_hash as string | null) ?? `${String(event.ledger)}:${String(event.id)}`,
+        event,
+      ]),
+    ).values(),
+  );
+  // Only genuinely distinct approval transactions are worth a warning; a plain
+  // duplicate from re-indexing is expected and handled silently above.
+  if (dedupedApprovalEvents.length > 1) {
+    logger.withContext().warn('Multiple distinct LoanApproved transactions for loan', {
       loanId,
-      duplicateCount: approvalEvents.length,
+      approvalTxCount: dedupedApprovalEvents.length,
     });
   }
   const approvalEvent =
-    approvalEvents.length > 0 ? approvalEvents[approvalEvents.length - 1] : undefined;
+    dedupedApprovalEvents.length > 0
+      ? dedupedApprovalEvents[dedupedApprovalEvents.length - 1]
+      : undefined;
   const repaymentEvents = events.filter(
     (event: Record<string, unknown>) => event.event_type === 'LoanRepaid',
   );

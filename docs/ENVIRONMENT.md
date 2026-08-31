@@ -114,7 +114,7 @@ stricter rate limit (10 requests/minute/IP) to prevent abuse.
 | `NEXT_PUBLIC_STELLAR_RPC_URL`       | ✓   | ✓       | ✓    | `https://soroban-testnet.stellar.org`     | Soroban RPC endpoint for simulating and submitting contract calls | `frontend/.env.example` |
 | `NEXT_PUBLIC_HORIZON_URL`           | ✓   | ✓       | ✓    | `https://horizon-testnet.stellar.org`     | Horizon endpoint for resolving transaction error details        | `frontend/.env.example` |
 | `NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE` | ✓ | ✓ | ✓ | `Test SDF Network ; September 2015` | Network passphrase the wallet signs against                    | `frontend/.env.example` |
-| `NEXT_PUBLIC_MANAGER_CONTRACT_ID`   | ✓   | ✓       | ✓    | —                                        | Lending pool manager contract address                           | `frontend/.env.example` |
+| `NEXT_PUBLIC_LENDING_POOL_CONTRACT_ID` | ✓ | ✓ | ✓ | —                                        | Lending pool manager contract address (frontend mirror of the backend's `LENDING_POOL_CONTRACT_ID`). Canonical name — the legacy `NEXT_PUBLIC_MANAGER_CONTRACT_ID` is still read as a fallback. | `frontend/.env.example` |
 | `NEXT_PUBLIC_LOAN_MANAGER_CONTRACT_ID` | ✓ | ✓ | ✓ | —                                        | Loan manager contract address                                   | `frontend/.env.example` |
 | `NEXT_PUBLIC_NFT_CONTRACT_ID`       | ✓   | ✓       | ✓    | —                                        | Remittance NFT contract address                                 | `frontend/.env.example` |
 | `NEXT_PUBLIC_STELLAR_EXPLORER_URL` | ✓   | ✓       | ✓    | `https://stellar.expert/explorer/testnet` | Stellar explorer base URL for transaction links        | `frontend/src/components/ui/TxHashLink.tsx` |
