@@ -10,7 +10,7 @@ jobs:
   supply-chain-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Block compromised packages
         run: |
           echo "Scanning lockfiles for known malicious packages..."
@@ -38,7 +38,7 @@ jobs:
     needs: supply-chain-audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Use Node.js 20
         uses: actions/setup-node@v7
         with:
@@ -56,7 +56,7 @@ jobs:
     needs: [supply-chain-audit, money-policy]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Use Node.js 20
         uses: actions/setup-node@v7
         with:
@@ -120,7 +120,7 @@ jobs:
     outputs:
       migrations: ${{ steps.filter.outputs.migrations }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -148,7 +148,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Use Node.js 20
         uses: actions/setup-node@v7
         with:
@@ -210,7 +210,7 @@ jobs:
     needs: [supply-chain-audit, money-policy]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Use Node.js 20
         uses: actions/setup-node@v7
         with:
@@ -246,7 +246,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Use Node.js 20
         uses: actions/setup-node@v7
@@ -268,7 +268,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || contains(github.event.pull_request.changed_files, 'frontend/')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Use Node.js 20
         uses: actions/setup-node@v7
         with:
@@ -298,7 +298,7 @@ jobs:
   env-docs-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Use Node.js 20
         uses: actions/setup-node@v7
         with:
@@ -309,7 +309,7 @@ jobs:
   error-code-mapping-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Use Node.js 20
         uses: actions/setup-node@v7
         with:
@@ -321,7 +321,7 @@ jobs:
     needs: money-policy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
