@@ -12,6 +12,13 @@ This folder is a GitHub Wiki-style set of documents that live in the repo so the
 - [API Idempotency](./api-idempotency.md)
 - [Webhook Signatures](./webhook-signatures.md)
 
+## Protocol governance and risk
+
+- [Protocol Parameter Governance](../protocol-parameter-governance.md) — Authoritative parameters, change lifecycle, failure paths, and change-communication requirements.
+- [Architecture Decision Records](../adr/README.md) — ADR process and index for cross-layer financial changes.
+- [Risk Disclosure and Financial Terminology](../risk-disclosure.md) — User-facing risks and definition of terms used across the protocol.
+- [Network and Contract Version Matrix](../network-contract-matrix.md) — Supported networks, deployed contract versions, SDK compatibility, and rollback reference.
+
 ## Runbooks
 
 - [Troubleshooting Guide](../runbooks/troubleshooting.md) — Comprehensive troubleshooting for development and production issues.
