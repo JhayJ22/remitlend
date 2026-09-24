@@ -427,3 +427,126 @@ jobs:
       - name: Check fuzz targets compile
         run: cargo check
         working-directory: contracts/fuzz
+
+  # Issue #410 — Reproducible WASM artifact verification.
+  # On the first run after this job is merged the wasm-hashes.sha256 file will
+  # be empty (only comments), so the verify step is skipped and a new baseline
+  # is generated and uploaded as a CI artifact instead.  A maintainer then
+  # commits that artifact to update the baseline.  On all subsequent runs the
+  # committed hashes are verified against the freshly-built artifacts.
+  wasm-verify:
+    needs: contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download WASM artifacts from contracts job
+        uses: actions/download-artifact@v7
+        with:
+          name: contracts-wasm
+          path: contracts/target/wasm32-unknown-unknown/release
+
+      - name: Verify WASM hashes against committed baseline
+        id: verify
+        run: |
+          set -euo pipefail
+          HASH_FILE="contracts/wasm-hashes.sha256"
+          WASM_DIR="contracts/target/wasm32-unknown-unknown/release"
+
+          # Count non-comment, non-empty lines to detect an empty baseline.
+          BASELINE_LINES=$(grep -cE '^[^#]' "$HASH_FILE" 2>/dev/null || echo 0)
+
+          if [ "$BASELINE_LINES" -eq 0 ]; then
+            echo "::notice::No committed WASM hashes found in $HASH_FILE."
+            echo "::notice::Generating a new baseline -- commit contracts/wasm-hashes.sha256 to activate verification."
+            bash scripts/verify-wasm-hashes.sh --generate "$WASM_DIR" "$HASH_FILE"
+            echo "baseline_generated=true" >> "$GITHUB_OUTPUT"
+          else
+            bash scripts/verify-wasm-hashes.sh "$WASM_DIR" "$HASH_FILE"
+            echo "baseline_generated=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload updated hash baseline (first-run bootstrap)
+        if: steps.verify.outputs.baseline_generated == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasm-hashes-baseline
+          path: contracts/wasm-hashes.sha256
+          retention-days: 30
+
+  # Issue #413 — Environment configuration schema validation.
+  # Runs the backend test suite which now includes envSchema.test.ts, giving
+  # Zod schema coverage in CI without requiring a running database.
+  env-schema-check:
+    needs: [supply-chain-audit, money-policy]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Type-check env schema
+        run: npm run typecheck
+        working-directory: backend
+
+      - name: Run env schema unit tests
+        run: npx jest src/config/__tests__/envSchema.test.ts --no-coverage
+        working-directory: backend
+        env:
+          NODE_ENV: test
+
+  # Issue #412 — Black-box synthetic monitoring.
+  # This job is intentionally gated on a repository variable
+  # (SYNTHETIC_MONITORING_ENABLED) so it only runs when a target environment
+  # is available.  Set the variable and the two secrets in repo settings to
+  # activate.  When the variable is absent the job is skipped gracefully.
+  synthetic-monitoring:
+    needs: [frontend, backend]
+    runs-on: ubuntu-latest
+    if: vars.SYNTHETIC_MONITORING_ENABLED == 'true'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      - name: Run synthetic monitoring probes
+        run: |
+          npx playwright test --project=chromium \
+            e2e/synthetic-monitoring.spec.ts
+        working-directory: frontend
+        env:
+          CI: true
+          # Override these via repository secrets to point at staging/production.
+          # Falls back to localhost when unset (useful for local smoke tests).
+          SYNTHETIC_BASE_URL: ${{ secrets.SYNTHETIC_BASE_URL }}
+          SYNTHETIC_FRONTEND_URL: ${{ secrets.SYNTHETIC_FRONTEND_URL }}
+
+      - name: Upload synthetic monitoring report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: synthetic-monitoring-report
+          path: frontend/playwright-report/
+          retention-days: 14
