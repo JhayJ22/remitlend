@@ -188,7 +188,7 @@ jobs:
       actions: read
       id-token: write
       packages: write
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.0.0
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
     with:
       image: ghcr.io/${{ needs.build-images.outputs.owner-lc }}/remitlend-backend
       digest: ${{ needs.build-images.outputs.backend-digest }}
@@ -202,7 +202,7 @@ jobs:
       actions: read
       id-token: write
       packages: write
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.0.0
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
     with:
       image: ghcr.io/${{ needs.build-images.outputs.owner-lc }}/remitlend-frontend
       digest: ${{ needs.build-images.outputs.frontend-digest }}
