@@ -12,6 +12,13 @@ This folder is a GitHub Wiki-style set of documents that live in the repo so the
 - [API Idempotency](./api-idempotency.md)
 - [Webhook Signatures](./webhook-signatures.md)
 
+## Reference Docs
+
+- [Data Lineage — Score Inputs](../data-lineage.md) — Authoritative mapping of every source that feeds the credit score, the transformation pipeline, and staleness behaviour.
+- [Webhook Consumer Certification](../webhook-consumer-certification.md) — Connectivity, security, reliability, and observability requirements for webhook endpoints before they go to production.
+- [Production Readiness Rubric](../production-readiness-rubric.md) — Thirteen-dimension scored checklist for assessing whether a new integration is production-ready.
+- [Contributor Troubleshooting Decision Tree](../contributor-troubleshooting.md) — Step-by-step branches for diagnosing local setup, test, database, contract, score, webhook, and CI failures.
+
 ## Runbooks
 
 - [Troubleshooting Guide](../runbooks/troubleshooting.md) — Comprehensive troubleshooting for development and production issues.
