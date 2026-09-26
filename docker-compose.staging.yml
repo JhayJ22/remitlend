@@ -10,10 +10,25 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
 
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
 
   backend:
     image: ghcr.io/${OWNER}/remitlend-backend:${TAG:-staging-latest}
@@ -32,17 +47,32 @@ services:
       - db
       - redis
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run
 
   frontend:
     image: ghcr.io/${OWNER}/remitlend-frontend:${TAG:-staging-latest}
     ports:
       - "3000:3000"
     environment:
-      
       - API_URL=http://backend:3001
     depends_on:
       - backend
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run
 
 volumes:
   postgres_data:

@@ -35,10 +35,11 @@ The repository is organized as a monorepo containing three core packages:
 *For a detailed look at how these components interact, see our [Architecture Diagram](ARCHITECTURE.md).*
 *New contributor? Start with the in-repo wiki: [docs/wiki/README.md](docs/wiki/README.md).*
 *Looking for deployed contract IDs? See [docs/deployed-contracts.md](docs/deployed-contracts.md).*
-*Protocol parameters and governance process: [docs/protocol-parameter-governance.md](docs/protocol-parameter-governance.md).*
-*Supported networks and contract versions: [docs/network-contract-matrix.md](docs/network-contract-matrix.md).*
-*Risk disclosure and financial terminology: [docs/risk-disclosure.md](docs/risk-disclosure.md).*
-*Architecture Decision Records (ADRs): [docs/adr/README.md](docs/adr/README.md).*
+*Need the canonical state machine for loans, transactions, remittances, and
+webhooks? See [docs/domain-state-machines.md](docs/domain-state-machines.md).*
+*Reviewing a security-sensitive change? Start from
+[docs/SECURITY-ASSUMPTIONS.md](docs/SECURITY-ASSUMPTIONS.md) (assumptions,
+limitations, and compensating controls).*
 
 ### API Reference
 
@@ -237,3 +238,8 @@ See [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) for a full reference of all envir
 ## 📄 License
 
 This project is licensed under the ISC License. See the `LICENSE` file for details.
+
+## Handsoff notes
+
+<!-- handsoff-issue-340 -->
+- #340: frontend: add deterministic wallet and RPC test doubles
