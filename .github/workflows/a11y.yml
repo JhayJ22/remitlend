@@ -37,7 +37,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Run accessibility snapshots
+      - name: Run accessibility snapshots (public routes)
         run: npx playwright test e2e/a11y.spec.ts --project=chromium
 
   rtl-layout:
