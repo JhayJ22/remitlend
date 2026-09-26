@@ -9,6 +9,10 @@ Operational runbooks for on-call engineers working on the RemitLend platform.
 - [Indexer Recovery](indexer-recovery.md) — Quick-reference procedures for indexer lag, RPC outages, and quarantined events.
 - [PII Handling and Data Subject Request Runbook](pii-handling-runbook.md) — Encryption key management, DSAR fulfilment, deletion/anonymisation, and breach response.
 - [Troubleshooting Guide](troubleshooting.md) — Comprehensive troubleshooting for development and production issues.
+- [Database Backup & PITR](DATABASE_BACKUP_RECOVERY.md) — Logical backups, WAL archiving, and point-in-time recovery.
+- [Multi-Region Disaster Recovery](MULTI_REGION_DISASTER_RECOVERY.md) — Planned and unplanned failover for PostgreSQL, Redis, and Soroban contracts across regions (#411).
+- [Contract Verification](contract-verification.md) — Verifying on-chain contract state after deployments.
+- [Graceful Shutdown](graceful-shutdown.md) — Safe rolling restarts and zero-downtime deploys.
 
 ## Purpose
 
