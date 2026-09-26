@@ -73,6 +73,8 @@ jobs:
             NEXT_PUBLIC_POOL_CONTRACT_ID=${{ vars.NEXT_PUBLIC_POOL_CONTRACT_ID }}
             NEXT_PUBLIC_GOVERNANCE_CONTRACT_ID=${{ vars.NEXT_PUBLIC_GOVERNANCE_CONTRACT_ID }}
             NEXT_PUBLIC_NFT_CONTRACT_ID=${{ vars.NEXT_PUBLIC_NFT_CONTRACT_ID }}
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
 
       - name: Run Trivy vulnerability scanner (HIGH - warn)
         uses: aquasecurity/trivy-action@master
@@ -130,6 +132,27 @@ jobs:
         if: always()
         with:
           sarif_file: 'frontend-trivy-results.sarif'
+
+      # Sign the staging images with cosign keyless signing (Sigstore / Fulcio).
+      # This ensures that only images built by this workflow are accepted as
+      # valid staging artifacts, providing supply-chain traceability even for
+      # non-release builds.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign staging backend image
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign sign --yes \
+            "ghcr.io/${{ env.OWNER_LC }}/remitlend-backend@${{ steps.push-backend.outputs.digest }}"
+
+      - name: Sign staging frontend image
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign sign --yes \
+            "ghcr.io/${{ env.OWNER_LC }}/remitlend-frontend@${{ steps.push-frontend.outputs.digest }}"
 
       - name: Smoke-test the backend staging image
         run: |
