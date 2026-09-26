@@ -29,6 +29,18 @@ services:
           memory: 256M
     security_opt:
       - no-new-privileges:true
+    # Drop all Linux capabilities; PostgreSQL only needs DAC_OVERRIDE and
+    # CHOWN for its data directory and socket — both are covered by the
+    # postgres user owning those paths before the process starts.
+    cap_drop:
+      - ALL
+    # PostgreSQL needs to open its socket and write to /var/run/postgresql;
+    # no extra write surface required on the root filesystem.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+
   redis:
     image: redis:7.4-alpine
     command:
@@ -56,6 +68,14 @@ services:
           memory: 128M
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Redis only writes to /data (volume-mounted) and /tmp; the rest of the
+    # root filesystem is read-only.
+    read_only: true
+    tmpfs:
+      - /tmp
+
   backend:
     image: ghcr.io/${OWNER}/remitlend-backend:${TAG}
     environment:
@@ -92,6 +112,18 @@ services:
           memory: 256M
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # The Node.js backend serves only HTTP; it does not bind to privileged
+    # ports or manipulate network interfaces directly. All writes are to
+    # the database or Redis; the container root FS is read-only.
+    read_only: true
+    tmpfs:
+      # Node/npm needs a writable /tmp for transient scratch space.
+      - /tmp
+      # Node's cluster/child_process IPC sockets land in /var/run.
+      - /var/run
+
   frontend:
     image: ghcr.io/${OWNER}/remitlend-frontend:${TAG}
     environment:
@@ -120,17 +152,31 @@ services:
           memory: 128M
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Next.js (standalone) writes its cache to .next/cache inside the image;
+    # that directory is owned by appuser and can remain on the root FS, but we
+    # mount a tmpfs over /tmp for any transient scratch usage.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run
+
 volumes:
   postgres_data:
     driver: local
   redis_data:
     driver: local
+
 networks:
   frontend:
     driver: bridge
   backend:
     driver: bridge
+    # Isolates the db + redis tier from direct external access.
+    # Only the backend service bridges frontend ↔ backend networks.
     internal: true
+
 secrets:
   postgres_password:
     file: ./secrets/postgres_password.txt

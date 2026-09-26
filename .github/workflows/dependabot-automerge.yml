@@ -1,0 +1,52 @@
+name: Dependabot Auto-merge
+
+# Auto-merges Dependabot PRs for minor/patch version bumps and security
+# updates once all required status checks pass.
+#
+# Policy (issue #362):
+#   - Security updates (any severity): auto-merge after CI passes.
+#   - Minor and patch version bumps: auto-merge after CI passes.
+#   - Major version bumps: NOT auto-merged; require explicit human review.
+#
+# The merge is performed by the built-in GITHUB_TOKEN using the
+# `gh pr merge --auto` command, so no extra secrets are required.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    # Only run for Dependabot PRs.
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Auto-merge minor/patch routine version updates.
+      - name: Enable auto-merge for minor/patch updates
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-minor' ||
+          steps.meta.outputs.update-type == 'version-update:semver-patch'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Auto-merge security advisories regardless of semver bump level.
+      # A major security fix is still worth auto-merging quickly; the PR body
+      # will contain the advisory details for post-merge review.
+      - name: Enable auto-merge for security updates
+        if: steps.meta.outputs.dependency-type == 'direct:production' && steps.meta.outputs.alert-state == 'auto_dismissed' || steps.meta.outputs.ghsa-id != ''
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

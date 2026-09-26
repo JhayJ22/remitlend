@@ -1,0 +1,263 @@
+name: Release Provenance
+
+# Generates SLSA Level 3 build provenance and SBOM for every tagged release,
+# and signs the published container images with Sigstore/cosign.
+#
+# Threat model:
+#   - A tampered image pushed to GHCR cannot be mistaken for an official
+#     release because the signature produced here is the only valid one for
+#     this repository's OIDC identity.
+#   - Provenance attestations let consumers verify the exact Git commit, build
+#     inputs, and GitHub Actions workflow that produced each artifact.
+#   - SBOMs expose the full transitive dependency graph so downstream users
+#     can audit third-party components independently.
+#
+# This workflow is intentionally separate from the main CI so that provenance
+# steps only execute on real releases, not on every PR.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read   # checkout
+  packages: write  # push to GHCR
+  id-token: write  # OIDC token for cosign keyless signing and SLSA provenance
+
+jobs:
+  # ── Build and push images ──────────────────────────────────────────────────
+  build-images:
+    runs-on: ubuntu-latest
+    outputs:
+      backend-digest: ${{ steps.push-backend.outputs.digest }}
+      frontend-digest: ${{ steps.push-frontend.outputs.digest }}
+      owner-lc: ${{ steps.meta.outputs.owner-lc }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set lowercase owner and tag
+        id: meta
+        run: |
+          echo "owner-lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend
+        id: push-backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          target: production
+          tags: |
+            ghcr.io/${{ steps.meta.outputs.owner-lc }}/remitlend-backend:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ steps.meta.outputs.owner-lc }}/remitlend-backend:latest
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+          # Output the image digest for provenance attestation
+          outputs: type=image,name=ghcr.io/${{ steps.meta.outputs.owner-lc }}/remitlend-backend,push-by-digest=false,name-canonical=true
+
+      - name: Build and push frontend
+        id: push-frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          target: runner
+          tags: |
+            ghcr.io/${{ steps.meta.outputs.owner-lc }}/remitlend-frontend:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ steps.meta.outputs.owner-lc }}/remitlend-frontend:latest
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+          outputs: type=image,name=ghcr.io/${{ steps.meta.outputs.owner-lc }}/remitlend-frontend,push-by-digest=false,name-canonical=true
+
+  # ── Sign container images with cosign (keyless / Sigstore) ────────────────
+  sign-images:
+    needs: build-images
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Keyless signing: cosign obtains an ephemeral key from Fulcio backed by
+      # the GitHub Actions OIDC token, then records the signature in the
+      # public Rekor transparency log. No long-lived signing key to manage.
+      - name: Sign backend image
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign sign --yes \
+            "ghcr.io/${{ needs.build-images.outputs.owner-lc }}/remitlend-backend@${{ needs.build-images.outputs.backend-digest }}"
+
+      - name: Sign frontend image
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign sign --yes \
+            "ghcr.io/${{ needs.build-images.outputs.owner-lc }}/remitlend-frontend@${{ needs.build-images.outputs.frontend-digest }}"
+
+  # ── Generate SBOM (Software Bill of Materials) ────────────────────────────
+  generate-sbom:
+    needs: build-images
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft (SBOM generator)
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate and attest SBOM for backend
+        uses: anchore/sbom-action@v0
+        with:
+          image: "ghcr.io/${{ needs.build-images.outputs.owner-lc }}/remitlend-backend@${{ needs.build-images.outputs.backend-digest }}"
+          format: spdx-json
+          output-file: backend-sbom.spdx.json
+          upload-artifact: true
+          artifact-name: backend-sbom-${{ github.ref_name }}
+
+      - name: Generate and attest SBOM for frontend
+        uses: anchore/sbom-action@v0
+        with:
+          image: "ghcr.io/${{ needs.build-images.outputs.owner-lc }}/remitlend-frontend@${{ needs.build-images.outputs.frontend-digest }}"
+          format: spdx-json
+          output-file: frontend-sbom.spdx.json
+          upload-artifact: true
+          artifact-name: frontend-sbom-${{ github.ref_name }}
+
+      # Attach the SBOMs as cosign attestations so they travel with the image.
+      - name: Attest SBOM for backend
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign attest --yes \
+            --predicate backend-sbom.spdx.json \
+            --type spdxjson \
+            "ghcr.io/${{ needs.build-images.outputs.owner-lc }}/remitlend-backend@${{ needs.build-images.outputs.backend-digest }}"
+
+      - name: Attest SBOM for frontend
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign attest --yes \
+            --predicate frontend-sbom.spdx.json \
+            --type spdxjson \
+            "ghcr.io/${{ needs.build-images.outputs.owner-lc }}/remitlend-frontend@${{ needs.build-images.outputs.frontend-digest }}"
+
+  # ── SLSA provenance (Level 3) ─────────────────────────────────────────────
+  # The slsa-github-generator runs the build in an isolated VM and generates
+  # a provenance document signed by the GitHub Actions OIDC identity. This
+  # satisfies SLSA Build Level 3 requirements: isolated builds, verifiable
+  # provenance, and a public transparency log entry.
+  provenance-backend:
+    needs: build-images
+    permissions:
+      actions: read
+      id-token: write
+      packages: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ghcr.io/${{ needs.build-images.outputs.owner-lc }}/remitlend-backend
+      digest: ${{ needs.build-images.outputs.backend-digest }}
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+  provenance-frontend:
+    needs: build-images
+    permissions:
+      actions: read
+      id-token: write
+      packages: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ghcr.io/${{ needs.build-images.outputs.owner-lc }}/remitlend-frontend
+      digest: ${{ needs.build-images.outputs.frontend-digest }}
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Create GitHub Release with provenance summary ─────────────────────────
+  create-release:
+    needs: [sign-images, generate-sbom, provenance-backend, provenance-frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-sbom-*"
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            *-sbom-*.spdx.json
+          body: |
+            ## Supply-chain provenance
+
+            All container images for this release are:
+            - **Signed** with [Sigstore/cosign](https://docs.sigstore.dev/) keyless signing
+            - **Attested** with SLSA Level 3 provenance generated by [slsa-github-generator](https://github.com/slsa-framework/slsa-github-generator)
+            - **SBOM** attached as cosign attestations (SPDX JSON format)
+
+            ### Verification
+
+            ```bash
+            # Verify image signature (requires cosign >= v2)
+            cosign verify \
+              --certificate-identity-regexp "https://github.com/JhayJ22/remitlend/.github/workflows/release-provenance.yml" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              ghcr.io/jhayj22/remitlend-backend:${{ github.ref_name }}
+
+            # Verify SLSA provenance attestation
+            cosign verify-attestation \
+              --type slsaprovenance \
+              --certificate-identity-regexp "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              ghcr.io/jhayj22/remitlend-backend:${{ github.ref_name }}
+
+            # Download and inspect the SBOM attestation
+            cosign download attestation \
+              ghcr.io/jhayj22/remitlend-backend:${{ github.ref_name }} | \
+              jq -r '.payload' | base64 -d | jq .
+            ```
