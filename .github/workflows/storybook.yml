@@ -61,7 +61,7 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Download static Storybook
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: storybook-static
           path: frontend/storybook-static
