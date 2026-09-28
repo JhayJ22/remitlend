@@ -10,6 +10,7 @@ import {
 } from "@stellar/stellar-sdk";
 
 import { DEFAULT_TESTNET_PASSPHRASE, DEFAULT_TESTNET_RPC_URL } from "./stellarNetwork";
+import { LOAN_REQUEST_FUNCTION, LOAN_REPAY_FUNCTION } from "./contractVersion";
 
 const DEFAULT_RPC_URL = DEFAULT_TESTNET_RPC_URL;
 const DEFAULT_NETWORK_PASSPHRASE = DEFAULT_TESTNET_PASSPHRASE;
@@ -56,7 +57,7 @@ export async function buildUnsignedLoanRequestXdr({
         func: xdr.HostFunction.hostFunctionTypeInvokeContract(
           new xdr.InvokeContractArgs({
             contractAddress: Address.fromString(contractId).toScAddress(),
-            functionName: "request_loan",
+            functionName: LOAN_REQUEST_FUNCTION,
             args: [borrowerScVal, amountScVal, termScVal],
           }),
         ),
@@ -94,7 +95,7 @@ export async function buildUnsignedRepaymentXdr({
         func: xdr.HostFunction.hostFunctionTypeInvokeContract(
           new xdr.InvokeContractArgs({
             contractAddress: Address.fromString(contractId).toScAddress(),
-            functionName: "repay",
+            functionName: LOAN_REPAY_FUNCTION,
             args: [borrowerScVal, loanIdScVal, amountScVal],
           }),
         ),
