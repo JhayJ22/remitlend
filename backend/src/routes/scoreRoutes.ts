@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import {
-  getScore,
   updateScore,
-  getScoreBreakdown,
+  computeScoreResponse,
+  computeScoreBreakdownResponse,
   getOnChainScoreHistory,
   getRemittanceNft,
 } from '../controllers/scoreController.js';
@@ -22,8 +22,32 @@ import {
   requireWalletParamMatchesJwt,
   requireLender,
 } from '../middleware/jwtAuth.js';
+import { createSwrCacheMiddleware } from '../middleware/swrCacheMiddleware.js';
+import { CacheKeys } from '../utils/cacheKeys.js';
 
 const router = Router();
+
+/**
+ * Stale-while-revalidate caches for the read-heavy score endpoints. The cache
+ * key encodes the subject id and the payload schema version, so bumping
+ * `SCORE_CACHE_VERSION` retires every entry at once. Mounted after auth and
+ * validation so unauthenticated/invalid requests never touch the cache.
+ */
+const scoreCache = createSwrCacheMiddleware({
+  key: (req) => {
+    const userId = (req.params as { userId?: string }).userId;
+    return userId ? CacheKeys.scoreResponse(userId) : null;
+  },
+  compute: (req) => computeScoreResponse((req.params as { userId: string }).userId),
+});
+
+const scoreBreakdownCache = createSwrCacheMiddleware({
+  key: (req) => {
+    const userId = (req.params as { userId?: string }).userId;
+    return userId ? CacheKeys.scoreBreakdown(userId) : null;
+  },
+  compute: (req) => computeScoreBreakdownResponse((req.params as { userId: string }).userId),
+});
 
 /**
  * @swagger
@@ -67,7 +91,7 @@ router.get(
   requireScopes('read:score'),
   requireWalletParamMatchesJwt('userId'),
   validate(getScoreSchema),
-  getScore,
+  scoreCache,
 );
 
 /**
@@ -153,7 +177,7 @@ router.get(
   requireScopes('read:score'),
   requireWalletParamMatchesJwt('userId'),
   validate(getScoreSchema),
-  getScoreBreakdown,
+  scoreBreakdownCache,
 );
 
 /**
