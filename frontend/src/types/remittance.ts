@@ -167,7 +167,7 @@ export interface DepositPoolResult {
  * keeps resource usage predictable.
  */
 export const DEPOSIT_MAX_POOLS = 10;
-exexport const DEPOSIT_MAX_RETRIES = 3;
+export const DEPOSIT_MAX_RETRIES = 3;
 
 /**
  * Structured error codes for the deposit workflow. Kept as a closed union so
