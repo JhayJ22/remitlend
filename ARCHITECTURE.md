@@ -58,12 +58,44 @@ Offline state is tracked centrally and surfaced through a banner. Data fetching 
 
 The wallet SDK is loaded lazily to keep the initial bundle small and to avoid blocking first paint. Route-level budgets account for the deferred load so that wallet-dependent routes still meet their thresholds.
 
+## Loan Cost Disclosure
+
+All borrower-facing money is computed by one exact-arithmetic engine
+(`frontend/src/app/utils/loanCostDisclosure.ts`) and rendered by one component
+(`LoanCostDisclosurePanel`). Amounts are `bigint` minor units and rates are
+integer basis points, so the disclosed total is always the sum of the disclosed
+components. The lending pool amortization returned by the backend is the
+settlement source of record; the local computation is an estimate that is
+reconciled against it, and any divergence is surfaced rather than absorbed. A
+borrower is never asked to sign a request whose cost cannot be computed.
+
+See [docs/loan-cost-disclosure.md](docs/loan-cost-disclosure.md).
+
+## Transaction Recovery
+
+Every wallet-connected failure is classified into a typed failure state
+(`rejected`, `expired`, `failed`, `unknown`) and turned into a recovery plan by
+a pure function (`planTransactionRecovery`). The plan always states whether
+resubmission is safe. **Once a signed transaction has been handed to the
+network, the plan contains no action that can create a second one** — the only
+safe actions are re-polling the same hash, inspecting the explorer, copying the
+transaction id, reloading, or contacting support. Status polling is bounded
+(`maxAttempts`, `requestTimeoutMs`, overall `timeoutMs`) and abort-aware, and it
+reports a dependency failure separately from a settled failure so an unreachable
+node is never presented as a failed transaction.
+
+See [docs/transaction-recovery-ux.md](docs/transaction-recovery-ux.md).
+
 ## Observability
 
 - Structured errors are emitted for budget violations and dependency failures.
 - Metrics are recorded for route load, render, and bundle dimensions.
 - Operational diagnostics distinguish between unsupported environments and genuine regressions.
+- Transaction failures are classified before they reach the UI, and carry a
+  non-identifying support code (failure category, truncated transaction hash,
+  attempt counter) so a support ticket can be correlated without exposing user
+  data.
 
 ## Testing
 
-Focused automated tests cover success, boundary values, invalid configuration, unsupported environments, and dependency failure paths for route budgets, alongside existing routing and offline tests.
+Focused automated tests cover success, boundary values, invalid configuration, unsupported environments, and dependency failure paths for route budgets, alongside existing routing and offline tests. Loan cost disclosure and transaction recovery have dedicated unit and component suites covering rounding boundaries, every typed error and failure state, hostile input, stale and unavailable authoritative data, retry safety, and the double-submission invariant.

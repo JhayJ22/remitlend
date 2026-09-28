@@ -21,6 +21,11 @@ Read it before depositing funds or taking a loan.
 | **Lending pool** | A smart contract that holds deposited funds and issues loans.  Depositors receive pool tokens representing their proportional share. |
 | **Pool token** | A fungible token issued to lenders when they deposit into the lending pool.  Redeemable for the underlying asset plus accrued interest. |
 | **Interest rate** | Annual rate expressed in basis points, stored in the `lending_pool` contract's `interest_rate_bps` parameter.  See [protocol parameter governance](./protocol-parameter-governance.md) for how this is changed. |
+| **Nominal APR** | The annual interest rate charged on the principal, before any fees.  This is the rate a loan is actually issued at. |
+| **Effective APR** | The nominal APR with every borrower-borne fee (origination, service, and the annualised cost of any other charge) expressed as an annual rate over the actual term.  It is always greater than or equal to the nominal APR.  See [loan cost disclosure](./loan-cost-disclosure.md). |
+| **Total cost of credit** | Interest over the full term plus all upfront fees.  The frontend always displays it itemised, with exact arithmetic, so it can never disagree with the displayed total repayment. |
+| **Amount financed** | The principal actually disbursed, i.e. the requested amount minus any upfront fees deducted at disbursement.  It can be lower than the requested principal. |
+| **Network fee** | The Stellar transaction fee, paid in XLM.  It is disclosed separately and is **not** part of the repayment total. |
 | **Liquidation threshold** | The collateral-to-loan ratio below which a position can be liquidated.  Stored as `liquidation_threshold` in the `lending_pool` contract. |
 | **Timelock** | A mandatory waiting period enforced on-chain before a governance decision or contract upgrade takes effect.  Cannot be bypassed by any party. |
 | **APY (Annual Percentage Yield)** | The effective annual return including compounding.  Displayed in the UI as an estimate; actual yield depends on pool utilisation. |

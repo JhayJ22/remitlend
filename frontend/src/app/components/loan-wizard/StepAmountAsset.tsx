@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { HandCoins, CircleAlert } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
@@ -12,6 +13,13 @@ import {
   formatAmountOnBlur,
   getAssetDecimals,
 } from "../../utils/amount";
+import {
+  computeLoanCostDisclosure,
+  DEFAULT_LOAN_ANNUAL_RATE_BPS,
+  formatBps,
+  formatDisclosureAmount,
+  isZeroAmount,
+} from "../../utils/loanCostDisclosure";
 
 const TERM_OPTIONS = [
   { label: "30 days", days: 30 as const },
@@ -55,6 +63,25 @@ export function StepAmountAsset({ data, onChange, onNext, error, onError }: Step
   const precisionError = getPrecisionError(data.amount, asset);
   const helperText = buildAmountHelperText(data.amount, asset, decimals);
 
+  /**
+   * Live cost preview. It uses the same disclosure engine as the signature
+   * step, so the number the borrower sees while choosing an amount is the same
+   * arithmetic that will appear before signing.
+   */
+  const cost = useMemo(
+    () =>
+      computeLoanCostDisclosure({
+        principal: data.amount,
+        asset,
+        termDays: data.termDays,
+        annualRateBps: Number(DEFAULT_LOAN_ANNUAL_RATE_BPS),
+        lateFeeBps: 50,
+        networkFee: { amount: "0.00001", asset: "XLM" },
+      }),
+    [data.amount, asset, data.termDays],
+  );
+  const preview = cost.ok ? cost.disclosure : null;
+
   const validate = (): boolean => {
     if (!data.amount || Number.isNaN(amountNumber) || amountNumber <= 0) {
       onError("Enter a valid loan amount.");
@@ -74,6 +101,10 @@ export function StepAmountAsset({ data, onChange, onNext, error, onError }: Step
     }
     if (amountNumber > data.maxAmount) {
       onError(`Maximum eligible amount for your score is ${formatMoney(data.maxAmount)}.`);
+      return false;
+    }
+    if (!cost.ok) {
+      onError(cost.error.message);
       return false;
     }
     onError(null);
@@ -227,9 +258,55 @@ export function StepAmountAsset({ data, onChange, onNext, error, onError }: Step
               </div>
               <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
                 <p className="text-zinc-500 dark:text-zinc-400">APR</p>
-                <p className="font-semibold text-zinc-900 dark:text-zinc-50">12%</p>
+                <p className="font-semibold text-zinc-900 dark:text-zinc-50">
+                  {formatBps(Number(DEFAULT_LOAN_ANNUAL_RATE_BPS))}
+                </p>
+                {preview && (
+                  <p
+                    data-testid="step-amount-asset-effective-apr"
+                    className="text-[11px] text-zinc-500 dark:text-zinc-400"
+                  >
+                    {formatBps(preview.effectiveAprBps)} once fees are included
+                  </p>
+                )}
               </div>
             </div>
+
+            {preview && (
+              <div
+                data-testid="step-amount-asset-cost-preview"
+                className="space-y-2 rounded-lg border border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-900/50 dark:bg-indigo-950/30"
+              >
+                <p className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">
+                  Cost preview for {data.termDays} days
+                </p>
+                <dl className="space-y-1 text-xs text-indigo-900 dark:text-indigo-200">
+                  <div className="flex justify-between">
+                    <dt>Interest over the term</dt>
+                    <dd className="font-medium">
+                      {formatDisclosureAmount(preview.interest, preview.asset)}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt>Upfront fees</dt>
+                    <dd className="font-medium">
+                      {isZeroAmount(preview.upfrontFees, preview.decimals)
+                        ? "None"
+                        : formatDisclosureAmount(preview.upfrontFees, preview.asset)}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between border-t border-indigo-200 pt-1 dark:border-indigo-900/50">
+                    <dt className="font-semibold">Total you repay</dt>
+                    <dd data-testid="step-amount-asset-total-repayment" className="font-bold">
+                      {formatDisclosureAmount(preview.totalRepayment, preview.asset)}
+                    </dd>
+                  </div>
+                </dl>
+                <p className="text-[11px] text-indigo-800/80 dark:text-indigo-300/80">
+                  A full itemised disclosure is shown before you sign.
+                </p>
+              </div>
+            )}
 
             <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
               <p className="font-medium text-zinc-700 dark:text-zinc-300">How eligibility works</p>

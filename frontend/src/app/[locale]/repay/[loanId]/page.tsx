@@ -9,10 +9,16 @@ import {
   TransactionStatusTracker,
   type TransactionStatusState,
 } from "../../../components/ui/TransactionStatusTracker";
+import { TransactionRecoveryPanel } from "../../../components/transaction/TransactionRecoveryPanel";
 import {
   mapTransactionError,
   type TransactionErrorDetails,
 } from "../../../utils/transactionErrors";
+import {
+  planRecoveryFromDetails,
+  type RecoveryActionId,
+  type TransactionRecoveryPlan,
+} from "../../../utils/transactionRecovery";
 import {
   selectIsWalletConnected,
   selectWalletAddress,
@@ -29,10 +35,7 @@ import {
   formatAmountOnBlur,
   getAssetDecimals,
 } from "../../../utils/amount";
-import {
-  STELLAR_NETWORK_LABEL,
-  STELLAR_NETWORK_PASSPHRASE,
-} from "../../../utils/stellarNetwork";
+import { STELLAR_NETWORK_LABEL, STELLAR_NETWORK_PASSPHRASE } from "../../../utils/stellarNetwork";
 
 export default function RepayLoanPage() {
   const params = useParams<{ loanId: string }>();
@@ -54,6 +57,7 @@ export default function RepayLoanPage() {
   const [trackerGuidance, setTrackerGuidance] = useState<string | undefined>(undefined);
   const [trackerTxHash, setTrackerTxHash] = useState<string | null>(null);
   const [lastError, setLastError] = useState<TransactionErrorDetails | null>(null);
+  const [recoveryPlan, setRecoveryPlan] = useState<TransactionRecoveryPlan | null>(null);
 
   const amountNumber = useMemo(() => Number(amount || "0"), [amount]);
   const decimals = getAssetDecimals("USDC");
@@ -76,6 +80,39 @@ export default function RepayLoanPage() {
     setTrackerMessage("You cancelled the repayment flow.");
     setTrackerGuidance("No payment was submitted. Update the amount and try again.");
     setIsSubmitting(false);
+  };
+
+  const handleRecoveryAction = (actionId: RecoveryActionId) => {
+    switch (actionId) {
+      case "retry_signing":
+      case "resubmit": {
+        // A repayment that reached the network is never resubmitted from here;
+        // the plan only offers these when nothing was sent.
+        setRecoveryPlan(null);
+        setLastError(null);
+        setTrackerState("idle");
+        setTrackerTitle("Ready to repay");
+        setTrackerMessage("");
+        setIsSubmitting(false);
+        break;
+      }
+      case "reconnect_wallet":
+      case "reload_page":
+        window.location.reload();
+        break;
+      case "contact_support":
+        window.open(
+          "https://github.com/JhayJ22/remitlend/issues/new",
+          "_blank",
+          "noopener,noreferrer",
+        );
+        break;
+      case "copy_tx_hash":
+      case "resume_tracking":
+      case "check_explorer":
+        // Handled inside the panel (clipboard / anchor / dashboard refresh).
+        break;
+    }
   };
 
   const handleRepayClick = async (event: FormEvent) => {
@@ -137,6 +174,7 @@ export default function RepayLoanPage() {
     } catch (error) {
       const mapped = mapTransactionError(error);
       setLastError(mapped);
+      setRecoveryPlan(planRecoveryFromDetails(mapped));
       toast.error(mapped.title, mapped.message);
     } finally {
       setIsSubmitting(false);
@@ -186,17 +224,23 @@ export default function RepayLoanPage() {
       }
     } catch (error) {
       const mapped = mapTransactionError(error);
+      const plan = planRecoveryFromDetails(mapped, {
+        txHash: trackerTxHash,
+        submitted: trackerTxHash !== null,
+      });
       setLastError(mapped);
+      setRecoveryPlan(plan);
       setTrackerState(mapped.cancelledByUser ? "cancelled" : "error");
-      setTrackerTitle(mapped.title);
+      setTrackerTitle(plan.headline);
       setTrackerMessage(mapped.message);
+      setTrackerGuidance(mapped.guidance);
 
       if (toastId) {
         toast.showError(toastId, {
-          errorMessage: mapped.title,
+          errorMessage: plan.headline,
         });
       } else {
-        toast.error(mapped.title, mapped.message);
+        toast.error(plan.headline, mapped.message);
       }
     }
   };
@@ -273,6 +317,15 @@ export default function RepayLoanPage() {
         }
         disabled={isSubmitting}
       />
+
+      {recoveryPlan && trackerState !== "success" && (
+        <TransactionRecoveryPanel
+          plan={recoveryPlan}
+          txHash={trackerTxHash}
+          onAction={handleRecoveryAction}
+          busy={isSubmitting}
+        />
+      )}
 
       {txPreview.data && (
         <TransactionPreviewModal

@@ -1,9 +1,16 @@
 "use client";
 
+import { useMemo } from "react";
 import { CalendarDays } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
 import type { LoanAmortization, LoanAmortizationScheduleRow } from "../../hooks/useApi";
 import { EmptyState } from "../ui/EmptyState";
+import {
+  computeLoanCostDisclosure,
+  formatBps,
+  formatDisclosureAmount,
+  reconcileWithAmortization,
+} from "../../utils/loanCostDisclosure";
 
 function formatMoney(value: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -59,6 +66,28 @@ export function RepaymentScheduleTable({
 }: RepaymentScheduleTableProps) {
   const schedule = mapScheduleRows(amortization.schedule);
 
+  /**
+   * The cost of credit is derived from the *authoritative* schedule totals via
+   * the shared disclosure engine, so the effective APR shown here is the same
+   * arithmetic used on the signature step rather than a second implementation.
+   */
+  const costDisclosure = useMemo(() => {
+    const termDays = Math.max(1, Math.round(amortization.termLedgers / 17280));
+    const result = computeLoanCostDisclosure({
+      principal: String(amortization.principal ?? 0),
+      asset: "USDC",
+      termDays,
+      annualRateBps: amortization.interestRateBps ?? 0,
+    });
+    if (!result.ok) return null;
+    return result.disclosure;
+  }, [amortization.principal, amortization.termLedgers, amortization.interestRateBps]);
+
+  const reconciliation = useMemo(
+    () => (costDisclosure ? reconcileWithAmortization(costDisclosure, amortization) : undefined),
+    [costDisclosure, amortization],
+  );
+
   return (
     <Card>
       <CardHeader className={compact ? "pb-4" : undefined}>
@@ -88,8 +117,28 @@ export function RepaymentScheduleTable({
               <p className="mt-0.5 font-semibold text-indigo-700 dark:text-indigo-300">
                 {formatMoney(amortization.totalDue)}
               </p>
+              {costDisclosure && (
+                <p
+                  data-testid="repayment-schedule-effective-apr"
+                  className="mt-1 text-[11px] text-indigo-700 dark:text-indigo-300"
+                >
+                  Effective APR {formatBps(costDisclosure.effectiveAprBps)} (
+                  {formatDisclosureAmount(costDisclosure.totalCostOfCredit, costDisclosure.asset)}{" "}
+                  of interest and fees)
+                </p>
+              )}
             </div>
           </div>
+        )}
+
+        {reconciliation && reconciliation.status === "divergent" && (
+          <p
+            role="status"
+            data-testid="repayment-schedule-reconciliation-warning"
+            className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
+          >
+            {reconciliation.explanation} The on-chain schedule above is the binding amount.
+          </p>
         )}
 
         {schedule.length === 0 ? (
