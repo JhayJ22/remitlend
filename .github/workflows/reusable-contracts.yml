@@ -72,7 +72,7 @@ jobs:
         working-directory: contracts
         continue-on-error: true
       - name: Upload size analysis and optimization report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: wasm-optimization-report
@@ -81,7 +81,7 @@ jobs:
             contracts/size-budgets.json
           retention-days: 30
       - name: Upload wasm artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: contracts-wasm
           path: contracts/target/wasm32-unknown-unknown/release/*.wasm
@@ -94,7 +94,7 @@ jobs:
         run: cargo tarpaulin --out Xml
         working-directory: contracts
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: contracts-coverage
           path: contracts/cobertura.xml
