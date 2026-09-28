@@ -17,6 +17,7 @@
 import { create } from "zustand";
 import { createJSONStorage, devtools, persist } from "zustand/middleware";
 import type { QueryClient } from "@tanstack/react-query";
+import { useUserStore } from "./useUserStore";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -63,6 +64,8 @@ interface WalletActions {
   disconnect: () => void;
   /** Enhanced disconnect that also cancels pending queries and clears cache */
   disconnectAndCleanup: () => void;
+  /** Reconcile state after wallet account switch: invalidate old account queries, update user store */
+  reconcileAccountSwitch: (oldAddress: string, newAddress: string) => void;
   /** Set the query client for cancelling pending requests */
   setQueryClient: (client: QueryClient) => void;
   /** Update balances after fetching from the chain */
@@ -147,6 +150,43 @@ export const useWalletStore = create<WalletStore>()(
             false,
             "wallet/disconnectAndCleanup",
           );
+        },
+
+        reconcileAccountSwitch: (oldAddress: string, newAddress: string) => {
+          const { queryClient } = get();
+          
+          if (!queryClient) return;
+          
+          // Invalidate all account-specific queries for the old address
+          const accountQueryKeys = [
+            ["loans", "borrower", oldAddress],
+            ["borrowerLoans", oldAddress],
+            ["creditScore", oldAddress],
+            ["creditScoreHistory", oldAddress],
+            ["yieldHistory", oldAddress],
+            ["remittanceNft", oldAddress],
+            ["pool", "depositor", oldAddress],
+          ];
+          
+          for (const key of accountQueryKeys) {
+            queryClient.removeQueries({ queryKey: key });
+          }
+          
+          // Also invalidate user profile and balance as they may be tied to the account
+          queryClient.invalidateQueries({ queryKey: ["user", "profile"] });
+          queryClient.invalidateQueries({ queryKey: ["user", "balance"] });
+          
+          // Invalidate transactions for the old account
+          queryClient.invalidateQueries({ queryKey: ["transactions", "me"] });
+          
+          // Invalidate remittances as they may be account-specific
+          queryClient.invalidateQueries({ queryKey: ["remittances"] });
+          
+          // Update user store's walletAddress if it matches the old address
+          const userStore = useUserStore.getState();
+          if (userStore.user?.walletAddress === oldAddress) {
+            userStore.updateUser({ walletAddress: newAddress });
+          }
         },
 
         setQueryClient: (client: QueryClient) =>

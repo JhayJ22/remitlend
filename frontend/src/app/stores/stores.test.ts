@@ -143,6 +143,110 @@ describe("useWalletStore", () => {
     expect(error).toBe("User rejected connection");
     expect(status).toBe("error");
   });
+
+  describe("reconcileAccountSwitch", () => {
+    const mockQueryClient = {
+      removeQueries: jest.fn(),
+      invalidateQueries: jest.fn(),
+      cancelQueries: jest.fn(),
+      cancelMutations: jest.fn(),
+    };
+
+    beforeEach(() => {
+      useWalletStore.getState().setQueryClient(mockQueryClient);
+      jest.clearAllMocks();
+    });
+
+    it("removes account-specific queries for old address", () => {
+      useWalletStore.getState().setConnected("GABC123456789012345678901234567890123456789012345678901234", mockNetwork);
+      useWalletStore.getState().reconcileAccountSwitch(
+        "GABC123456789012345678901234567890123456789012345678901234",
+        "GXYZ98765432109876543210987654321098765432109876543210987654",
+      );
+
+      // Should remove queries for old address
+      expect(mockQueryClient.removeQueries).toHaveBeenCalledWith({
+        queryKey: ["loans", "borrower", "GABC123456789012345678901234567890123456789012345678901234"],
+      });
+      expect(mockQueryClient.removeQueries).toHaveBeenCalledWith({
+        queryKey: ["borrowerLoans", "GABC123456789012345678901234567890123456789012345678901234"],
+      });
+      expect(mockQueryClient.removeQueries).toHaveBeenCalledWith({
+        queryKey: ["creditScore", "GABC123456789012345678901234567890123456789012345678901234"],
+      });
+      expect(mockQueryClient.removeQueries).toHaveBeenCalledWith({
+        queryKey: ["creditScoreHistory", "GABC123456789012345678901234567890123456789012345678901234"],
+      });
+      expect(mockQueryClient.removeQueries).toHaveBeenCalledWith({
+        queryKey: ["yieldHistory", "GABC123456789012345678901234567890123456789012345678901234"],
+      });
+      expect(mockQueryClient.removeQueries).toHaveBeenCalledWith({
+        queryKey: ["remittanceNft", "GABC123456789012345678901234567890123456789012345678901234"],
+      });
+      expect(mockQueryClient.removeQueries).toHaveBeenCalledWith({
+        queryKey: ["pool", "depositor", "GABC123456789012345678901234567890123456789012345678901234"],
+      });
+    });
+
+    it("invalidates user profile, balance, transactions, and remittances", () => {
+      useWalletStore.getState().reconcileAccountSwitch(
+        "GABC123456789012345678901234567890123456789012345678901234",
+        "GXYZ98765432109876543210987654321098765432109876543210987654",
+      );
+
+      expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["user", "profile"] });
+      expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["user", "balance"] });
+      expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["transactions", "me"] });
+      expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["remittances"] });
+    });
+
+    it("updates user store walletAddress when it matches old address", () => {
+      // Setup user store with matching wallet address
+      useUserStore.getState().setUser({
+        id: "user1",
+        email: "test@example.com",
+        walletAddress: "GABC123456789012345678901234567890123456789012345678901234",
+        kycVerified: true,
+      });
+
+      useWalletStore.getState().reconcileAccountSwitch(
+        "GABC123456789012345678901234567890123456789012345678901234",
+        "GXYZ98765432109876543210987654321098765432109876543210987654",
+      );
+
+      const user = useUserStore.getState().user;
+      expect(user?.walletAddress).toBe("GXYZ98765432109876543210987654321098765432109876543210987654");
+    });
+
+    it("does not update user store when walletAddress doesn't match old address", () => {
+      useUserStore.getState().setUser({
+        id: "user1",
+        email: "test@example.com",
+        walletAddress: "GDIFFERENT1234567890123456789012345678901234567890123456789012",
+        kycVerified: true,
+      });
+
+      useWalletStore.getState().reconcileAccountSwitch(
+        "GABC123456789012345678901234567890123456789012345678901234",
+        "GXYZ98765432109876543210987654321098765432109876543210987654",
+      );
+
+      const user = useUserStore.getState().user;
+      expect(user?.walletAddress).toBe("GDIFFERENT1234567890123456789012345678901234567890123456789012");
+    });
+
+    it("does nothing when queryClient is not set", () => {
+      useWalletStore.getState().setQueryClient(null);
+      
+      // Should not throw
+      expect(() => {
+        useWalletStore.getState().reconcileAccountSwitch(
+          "GABC123456789012345678901234567890123456789012345678901234",
+          "GXYZ98765432109876543210987654321098765432109876543210987654",
+        );
+      }).not.toThrow();
+    });
+  });
 });
 
 // ─── useUIStore ──────────────────────────────────────────────────────────────

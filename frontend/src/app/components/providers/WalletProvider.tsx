@@ -5,6 +5,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { TokenBalance, WalletNetwork, WalletStatus } from "../../stores/useWalletStore";
 import { useWalletStore } from "../../stores/useWalletStore";
 import { useWalletToasts } from "../../hooks/useWalletToasts";
+import { trackAction } from "../../lib/observability";
+import { isValidStellarAddress } from "../../utils/stellar";
 
 type FreighterApi = typeof import("@stellar/freighter-api");
 
@@ -322,8 +324,29 @@ export function WalletProvider({ children }: WalletProviderProps) {
       if (typeof api.watchAddress === "function") {
         unwatchAddress = api.watchAddress((newAddress: string) => {
           if (!newAddress && address) {
+            // Wallet disconnected entirely
             disconnectAndCleanup();
           } else if (newAddress && newAddress !== address) {
+            // Account switched - validate the new address
+            if (!isValidStellarAddress(newAddress)) {
+              trackAction("wallet_account_switch_invalid_address", { 
+                newAddress: newAddress.slice(0, 8) + "..." 
+              });
+              // Don't proceed with invalid address
+              return;
+            }
+            
+            // Track account switch for observability
+            trackAction("wallet_account_switch_detected", {
+              oldAddress: address ? address.slice(0, 8) + "..." : "none",
+              newAddress: newAddress.slice(0, 8) + "...",
+            });
+            
+            // Reconcile state: invalidate old account queries, update user store
+            const { reconcileAccountSwitch } = useWalletStore.getState();
+            reconcileAccountSwitch(address, newAddress);
+            
+            // Refresh wallet state with new address
             void refreshWallet();
           }
         });
