@@ -35,7 +35,7 @@ jobs:
       owner-lc: ${{ steps.meta.outputs.owner-lc }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set lowercase owner and tag
         id: meta
@@ -218,7 +218,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download SBOM artifacts
         uses: actions/download-artifact@v8
