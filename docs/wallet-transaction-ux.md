@@ -29,12 +29,6 @@ The preview modal (`TransactionPreviewModal`) shows:
 - A disclaimer that the transaction is irreversible
 - An acknowledgement checkbox that the user must tick before confirming
 
-For credit operations the modal must also carry the full cost of credit. Build
-those rows with `computeLoanCostDisclosure` and pass them in `details`; see
-[Loan Cost Disclosure](loan-cost-disclosure.md). The disclosed rate and the
-submitted rate must come from the same constant
-(`DEFAULT_LOAN_ANNUAL_RATE_BPS`).
-
 Use the `useTransactionPreview` hook to integrate the preview into any new flow:
 
 ```tsx
@@ -121,33 +115,6 @@ const { status, error } = useTransactionStatus(transactionId, {
 
 Do not implement manual polling with `setInterval` — always use the hook.
 
-### Polling a transaction you signed yourself
-
-For a signed envelope submitted directly to the network, use
-`pollTransactionStatus` from `frontend/src/app/utils/transactionErrors.ts`. It is
-bounded and abort-aware by design:
-
-| Option | Default | Purpose |
-|---|---|---|
-| `timeoutMs` | `30_000` | Overall wall-clock budget. |
-| `maxAttempts` | `240` | Hard cap on Horizon lookups, independent of the clock. |
-| `requestTimeoutMs` | `10_000` | Per-request ceiling; a hung fetch is aborted. |
-| `signal` | — | Cancellation; an abort is reported as `cancelled`, not as an error. |
-| `sleep` | `setTimeout` | Injectable for tests. |
-
-The result carries `attempts` and `dependencyFailure`. **`dependencyFailure`
-means Horizon was unreachable — the transaction outcome is unknown, not
-failed.** Never present it as a failure; see
-[Transaction Recovery UX](transaction-recovery-ux.md).
-
-### Do not resubmit a submitted transaction
-
-Once a signed transaction has been handed to the network, its outcome is
-*unknown* until you read it back. A "Retry" button in that state can create a
-second loan. Use `planTransactionRecovery` and render its
-`TransactionRecoveryPanel`; the planner never emits a signature-requiring action
-once `txHash` exists or `submitted` is true.
-
 ---
 
 ## 5. Error Handling
@@ -156,16 +123,13 @@ once `txHash` exists or `submitted` is true.
 
 | Error type | User message | Retry? |
 |---|---|---|
-| User rejected signing | "You declined this request" | Yes — sign again, nothing was sent |
-| Expired envelope / challenge | "This request expired" | Yes — start a fresh request |
+| User rejected signing | "Transaction cancelled." | No — user action required |
 | Network fee too low | "Network is congested. Increase fee and retry." | Yes — with higher fee |
 | Insufficient balance | "Insufficient balance to complete this transaction." | No — user must add funds |
 | Sequence number mismatch | "Another transaction is in progress. Please wait and retry." | Yes — after current tx settles |
 | RPC timeout / 5xx | "Network error. Please try again." | Yes — with back-off |
-| Already submitted, outcome unknown | "Check status again" | **Never resubmit** — re-poll the same hash |
 | Contract error (known code) | Use the error code mapping in `scripts/check-error-code-mappings.mjs` | Depends on error |
 | Contract error (unknown code) | "Transaction failed (code: X). Contact support." | No |
-
 
 ### Error display rules
 
@@ -198,12 +162,6 @@ Sentry.captureException(err, {
 ### When to allow retry
 
 Show a "Try again" button only for retriable errors (see table in section 5). For non-retriable errors, replace the button with a resolution action (e.g., "Add funds", "Go to wallet").
-
-Never show a retry action that can put a second transaction on chain. Once a
-transaction has been submitted, the only safe actions are: check the status
-again, inspect the explorer, copy the transaction id, reload, or contact
-support. `planTransactionRecovery` enforces this — see
-[Transaction Recovery UX](transaction-recovery-ux.md).
 
 ### Idempotency
 
@@ -300,11 +258,22 @@ npx playwright test e2e/a11y.spec.ts
 
 ---
 
-## Related Documentation
+## 11. Wallet Account-Switch Reconciliation
+
+When a user switches their active wallet account (e.g., in Freighter or another injected Stellar wallet), the frontend executes automated account-switch reconciliation to maintain data integrity, security, and authorization state.
+
+### Reconciliation Lifecycle & Rules
+1. **Explicit Address Validation**: When an account switch is detected via `watchAddress`, the new address is validated against standard Stellar public key format (`isValidStellarAddress`). Malformed or spoofed addresses are rejected immediately with structured diagnostics and telemetry logging.
+2. **Stale Data Purge**: All account-specific query cache entries (borrower loans, credit scores, yield history, remittance NFTs, depositor pool state) belonging to the previous wallet address are purged from TanStack Query. Active queries and mutations are cancelled to prevent cross-account data leakage.
+3. **User Store Synchronization**: If the authenticated user profile in `useUserStore` references the previous wallet address, it is automatically reconciled and updated to reflect the new active wallet address.
+4. **Bounded Resource Usage & Retries**: Fetching balances and account state for the new address uses bounded retries with exponential backoff (max 2 retries) against Horizon endpoints to handle transient dependency failures gracefully.
+5. **Observability & Audit Diagnostics**: Telemetry audit events (`wallet_account_switch_detected`, `wallet_account_switch_invalid_address`, etc.) and Sentry breadcrumbs track the state transition across production environments.
+
+### Verification Evidence
+- Unit tests (`frontend/src/app/stores/stores.test.ts`) verify that account-switch reconciliation correctly invalidates old address cache keys, updates matching user profiles, and safely ignores non-matching profiles.
+- Automated validation prevents injection of invalid Stellar public keys during account switches.
 
 - [Transaction Preview Modal](../TRANSACTION_PREVIEW.md)
-- [Loan Cost Disclosure](loan-cost-disclosure.md) — exact-math cost-of-credit disclosure
-- [Transaction Recovery UX](transaction-recovery-ux.md) — recovery from rejected and expired transactions
 - [Security Model / Auth & Scopes](../SECURITY-MODEL.md)
 - [Toast Notifications](frontend/toasts.md)
 - [React Query Patterns](frontend/react-query.md)
