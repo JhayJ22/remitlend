@@ -1,5 +1,6 @@
 export type TransactionErrorCategory =
   | "wallet_rejected"
+  | "expired"
   | "network_timeout"
   | "insufficient_balance"
   | "score_too_low"
@@ -21,11 +22,27 @@ export interface PollTransactionOptions {
   intervalMs?: number;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /**
+   * Maximum number of horizon lookups. Bounds resource usage independently of
+   * the wall-clock timeout so a fast-failing endpoint cannot be hammered.
+   */
+  maxAttempts?: number;
+  /**
+   * Per-request timeout in milliseconds. A hung fetch is aborted so the
+   * overall `timeoutMs` budget and the abort signal stay authoritative.
+   */
+  requestTimeoutMs?: number;
+  /** Injectable sleep so tests do not depend on wall-clock timers. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface PollTransactionResult {
   status: "success" | "failed" | "timeout" | "cancelled";
   message: string;
+  /** Number of horizon lookups performed before returning. */
+  attempts: number;
+  /** True when the status could not be determined because Horizon was unusable. */
+  dependencyFailure: boolean;
 }
 
 /**
@@ -66,6 +83,30 @@ export const ERROR_CODE_MESSAGES: Record<string, string> = {
 
 const DEFAULT_HORIZON_URL = "https://horizon-testnet.stellar.org";
 
+/** Hard ceiling on horizon lookups, applied when the caller sets no limit. */
+const DEFAULT_MAX_POLL_ATTEMPTS = 240;
+
+/** Per-request ceiling; keeps one slow Horizon call from consuming the budget. */
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+
+function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -74,7 +115,9 @@ function toErrorMessage(error: unknown): string {
     return error;
   }
   try {
-    return JSON.stringify(error);
+    // `JSON.stringify` returns `undefined` (not a string) for `undefined`,
+    // functions and symbols, so normalise before returning.
+    return JSON.stringify(error) ?? String(error);
   } catch {
     return "Unknown transaction error";
   }
@@ -97,6 +140,22 @@ export function mapTransactionError(error: unknown): TransactionErrorDetails {
       guidance: "No funds moved. You can review details and submit again when ready.",
       retryable: true,
       cancelledByUser: true,
+    };
+  }
+
+  if (
+    normalized.includes("expired") ||
+    normalized.includes("expiration") ||
+    normalized.includes("expiredsequence") ||
+    normalized.includes("has expired")
+  ) {
+    return {
+      category: "expired",
+      title: "Request expired",
+      message: "This request or session expired before it could be completed.",
+      guidance: "Start a fresh request — nothing was charged to your account.",
+      retryable: true,
+      cancelledByUser: false,
     };
   }
 
@@ -183,19 +242,42 @@ export function mapTransactionError(error: unknown): TransactionErrorDetails {
 async function fetchTransactionStatus(
   txHash: string,
   horizonUrl: string,
-): Promise<"pending" | "success" | "failed"> {
-  const response = await fetch(`${horizonUrl}/transactions/${txHash}`);
+  { requestTimeoutMs, signal }: { requestTimeoutMs: number; signal?: AbortSignal },
+): Promise<
+  { status: "pending" | "success" | "failed" } | { status: "aborted" } | { status: "unreachable" }
+> {
+  const controller = new AbortController();
+  const onOuterAbort = () => controller.abort();
+  signal?.addEventListener("abort", onOuterAbort, { once: true });
+  const timer =
+    requestTimeoutMs > 0 ? setTimeout(() => controller.abort(), requestTimeoutMs) : undefined;
 
-  if (response.status === 404) {
-    return "pending";
+  try {
+    const response = await fetch(`${horizonUrl}/transactions/${txHash}`, {
+      signal: controller.signal,
+    });
+
+    if (response.status === 404) {
+      return { status: "pending" };
+    }
+
+    if (!response.ok) {
+      return { status: "unreachable" };
+    }
+
+    const payload = (await response.json()) as { successful?: boolean };
+    return { status: payload.successful ? "success" : "failed" };
+  } catch {
+    // Distinguish "the user aborted" from "Horizon is unreachable" so the
+    // caller can offer a cancel path rather than a network error.
+    if (signal?.aborted) {
+      return { status: "aborted" };
+    }
+    return { status: "unreachable" };
+  } finally {
+    if (timer) clearTimeout(timer);
+    signal?.removeEventListener("abort", onOuterAbort);
   }
-
-  if (!response.ok) {
-    throw new Error(`Unable to fetch transaction status (${response.status})`);
-  }
-
-  const payload = (await response.json()) as { successful?: boolean };
-  return payload.successful ? "success" : "failed";
 }
 
 export async function pollTransactionStatus(
@@ -204,34 +286,80 @@ export async function pollTransactionStatus(
     horizonUrl = process.env.NEXT_PUBLIC_HORIZON_URL ?? DEFAULT_HORIZON_URL,
     intervalMs = 2500,
     timeoutMs = 30_000,
+    maxAttempts = DEFAULT_MAX_POLL_ATTEMPTS,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    sleep,
     signal,
   }: PollTransactionOptions = {},
 ): Promise<PollTransactionResult> {
   const startedAt = Date.now();
+  const attemptLimit = Number.isFinite(maxAttempts) && maxAttempts > 0 ? maxAttempts : 1;
+  let attempts = 0;
+  let dependencyFailure = false;
 
-  while (Date.now() - startedAt < timeoutMs) {
+  while (Date.now() - startedAt < timeoutMs && attempts < attemptLimit) {
     if (signal?.aborted) {
       return {
         status: "cancelled",
         message: "Status tracking cancelled by user.",
+        attempts,
+        dependencyFailure,
       };
     }
 
-    const status = await fetchTransactionStatus(txHash, horizonUrl);
+    attempts += 1;
+    const outcome = await fetchTransactionStatus(txHash, horizonUrl, { requestTimeoutMs, signal });
 
-    if (status === "success") {
-      return { status: "success", message: "Transaction confirmed on-chain." };
+    if (outcome.status === "aborted") {
+      return {
+        status: "cancelled",
+        message: "Status tracking cancelled by user.",
+        attempts,
+        dependencyFailure,
+      };
     }
 
-    if (status === "failed") {
-      return { status: "failed", message: "Transaction failed on-chain." };
+    if (outcome.status === "success") {
+      return {
+        status: "success",
+        message: "Transaction confirmed on-chain.",
+        attempts,
+        dependencyFailure,
+      };
     }
 
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    if (outcome.status === "failed") {
+      return {
+        status: "failed",
+        message: "Transaction failed on-chain.",
+        attempts,
+        dependencyFailure,
+      };
+    }
+
+    if (outcome.status === "unreachable") {
+      // Horizon could not answer. Keep polling within the remaining budget,
+      // but remember it so the UI can say the outcome is unknown rather than
+      // claiming the transaction failed.
+      dependencyFailure = true;
+    }
+
+    await (sleep ? sleep(intervalMs) : defaultSleep(intervalMs, signal));
+  }
+
+  if (dependencyFailure) {
+    return {
+      status: "timeout",
+      message: "Could not reach the network to confirm this transaction.",
+      attempts,
+      dependencyFailure: true,
+    };
   }
 
   return {
     status: "timeout",
     message: "Transaction is still pending. You can retry status tracking.",
+    attempts,
+    dependencyFailure,
   };
 }
