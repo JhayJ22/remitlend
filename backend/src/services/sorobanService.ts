@@ -21,6 +21,8 @@ import {
   getStellarNetworkPassphrase,
   getStellarRpcUrl,
 } from '../config/stellar.js';
+import { sorobanCircuitBreaker } from './sorobanCircuitBreaker.js';
+import { sorobanWriteQueue, type SorobanQueuedWrite } from './sorobanWriteQueue.js';
 
 /**
  * Service for building and submitting Soroban contract transactions.
@@ -198,6 +200,77 @@ class SorobanService {
       lower.includes('503') ||
       lower.includes('502')
     );
+  }
+
+  /**
+   * Runs a read-only Soroban call through the availability circuit. On a
+   * transient RPC failure the last known-good value for `snapshotKey` is
+   * served so read endpoints keep responding during an outage (#74).
+   */
+  private async withStaleRead<T>(snapshotKey: string, loader: () => Promise<T>): Promise<T> {
+    if (sorobanCircuitBreaker.shouldShortCircuit()) {
+      const shortCircuitSnapshot = sorobanCircuitBreaker.readSnapshot<T>(snapshotKey);
+      if (shortCircuitSnapshot) {
+        sorobanCircuitBreaker.recordStaleServed();
+        logger.withContext().warn('Serving stale Soroban read while RPC circuit is open', {
+          snapshotKey,
+        });
+        return shortCircuitSnapshot.value;
+      }
+      throw new Error(
+        'Stellar RPC is unavailable (circuit open) and no cached data is available',
+      );
+    }
+
+    try {
+      const value = await loader();
+      sorobanCircuitBreaker.recordSuccess();
+      sorobanCircuitBreaker.saveSnapshot(snapshotKey, value);
+      return value;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (this.isTransientRpcError(message)) {
+        sorobanCircuitBreaker.recordFailure(error);
+        const snapshot = sorobanCircuitBreaker.readSnapshot<T>(snapshotKey);
+        if (snapshot) {
+          sorobanCircuitBreaker.recordStaleServed();
+          logger.withContext().warn('Serving stale Soroban read after RPC failure', {
+            snapshotKey,
+            staleSince: new Date(snapshot.storedAt).toISOString(),
+            error: message,
+          });
+          return snapshot.value;
+        }
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Replays a previously queued write. Called by the replay processor once the
+   * RPC is reachable again; failures propagate so the queue can retry.
+   */
+  async replayQueuedWrite(write: SorobanQueuedWrite): Promise<{
+    txHash: string;
+    status: string;
+    resultXdr?: string;
+    queued?: boolean;
+  }> {
+    const signedTxXdr = write.payload.signedTxXdr;
+    if (typeof signedTxXdr !== 'string' || signedTxXdr.length === 0) {
+      throw AppError.internal(
+        `Queued Soroban write ${write.id} is missing payload.signedTxXdr`,
+      );
+    }
+    return this.submitSignedTx(signedTxXdr, { replay: true });
+  }
+
+  private async enqueueSignedTx(signedTxXdr: string, txHash: string): Promise<void> {
+    await sorobanWriteQueue.enqueue({
+      idempotencyKey: `submit:${txHash}`,
+      operation: 'submit_signed_tx',
+      payload: { signedTxXdr },
+    });
   }
 
   /**
@@ -741,10 +814,21 @@ class SorobanService {
 
     try {
       await this.getRpcServer().getHealth();
+      sorobanCircuitBreaker.recordSuccess();
     } catch (err) {
-      throw AppError.internal(
-        `Stellar RPC is unreachable at ${rpcUrl}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      sorobanCircuitBreaker.recordFailure(err);
+      const message = err instanceof Error ? err.message : String(err);
+      // Graceful degradation (#74): a temporary RPC outage must not stop the
+      // API from booting - reads fall back to last-known data and writes are
+      // queued until the RPC recovers. Deployments that prefer to fail fast
+      // on an unreachable RPC can set SOROBAN_REQUIRE_RPC_AT_STARTUP=true.
+      if (process.env.SOROBAN_REQUIRE_RPC_AT_STARTUP === 'true') {
+        throw AppError.internal(`Stellar RPC is unreachable at ${rpcUrl}: ${message}`);
+      }
+      logger.withContext().warn('Stellar RPC unreachable at startup - starting in degraded mode', {
+        rpcUrl,
+        error: message,
+      });
     }
 
     logger.withContext().info('Soroban configuration validated', {
@@ -758,12 +842,17 @@ class SorobanService {
    * Submits a signed transaction XDR to the Stellar network and polls
    * for the result.
    */
-  async submitSignedTx(signedTxXdr: string): Promise<{
+  async submitSignedTx(
+    signedTxXdr: string,
+    options: { replay?: boolean } = {},
+  ): Promise<{
     txHash: string;
     status: string;
     resultXdr?: string;
+    queued?: boolean;
   }> {
     const server = this.getRpcServer();
+    const isReplay = options.replay === true;
 
     // Chain confirmation is its own traced span (#414): it derives from the
     // caller's trace context (wallet → API request, or indexer pass) so the
@@ -778,15 +867,47 @@ class SorobanService {
     });
 
     const tx = TransactionBuilder.fromXDR(signedTxXdr, this.getNetworkPassphrase());
+    const txHash = tx.hash().toString('hex');
 
-    const sendResult = await server.sendTransaction(tx);
-    const txHash = sendResult.hash;
+    // Graceful degradation (#74): when the RPC circuit is open, persist the
+    // signed transaction instead of failing the request so the write is never
+    // lost. The replay processor drains the queue once the RPC recovers.
+    if (!isReplay && sorobanCircuitBreaker.shouldShortCircuit()) {
+      await this.enqueueSignedTx(signedTxXdr, txHash);
+      confirmationLogger.warn('Soroban RPC unavailable - queued transaction for replay', {
+        txHash,
+      });
+      return { txHash, status: 'QUEUED', queued: true };
+    }
 
-    if (!txHash) {
+    let sendResult: Awaited<ReturnType<typeof server.sendTransaction>> | null = null;
+    try {
+      sendResult = await server.sendTransaction(tx);
+    } catch (error) {
+      sorobanCircuitBreaker.recordFailure(error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isReplay && this.isTransientRpcError(message)) {
+        await this.enqueueSignedTx(signedTxXdr, txHash);
+        confirmationLogger.warn('Transaction submission failed - queued for replay', {
+          txHash,
+          error: message,
+        });
+        return { txHash, status: 'QUEUED', queued: true };
+      }
+      throw error;
+    }
+
+    if (!sendResult) {
+      throw AppError.internal('Transaction submission returned no response');
+    }
+
+    if (!sendResult.hash) {
       chainConfirmationCounter.inc({ status: 'error' });
       confirmationLogger.error('Transaction submission returned no hash');
       throw AppError.internal('Transaction submission returned no hash');
     }
+
+    sorobanCircuitBreaker.recordSuccess();
 
     confirmationLogger.info('Transaction submitted', {
       txHash,
@@ -794,6 +915,21 @@ class SorobanService {
       // Outbound hop header for the RPC call, for correlation with RPC-side logs.
       traceparent: formatTraceparent(confirmationTrace),
     });
+
+    if (sendResult.status === 'TRY_AGAIN_LATER' && !isReplay) {
+      await this.enqueueSignedTx(signedTxXdr, txHash);
+      confirmationLogger.warn('RPC asked the client to retry later - queued for replay', {
+        txHash,
+      });
+      return { txHash, status: 'QUEUED', queued: true };
+    }
+
+    if ((sendResult.status as string) === 'DUPLICATE') {
+      // Idempotent replay: the signed transaction is already known to the network.
+      this.recordChainConfirmation('success', confirmationStartedAt);
+      confirmationLogger.info('Transaction already known to the network', { txHash });
+      return { txHash, status: 'DUPLICATE' };
+    }
 
     if (sendResult.status === 'ERROR' || sendResult.status === 'TRY_AGAIN_LATER') {
       confirmationLogger.warn('Transaction rejected at submission', {
@@ -975,6 +1111,14 @@ class SorobanService {
   async getOnChainScoreHistory(
     userPublicKey: string,
   ): Promise<Array<{ score: number; timestamp: number; reason: string }>> {
+    return this.withStaleRead(`score-history:${userPublicKey}`, () =>
+      this.fetchOnChainScoreHistory(userPublicKey),
+    );
+  }
+
+  private async fetchOnChainScoreHistory(
+    userPublicKey: string,
+  ): Promise<Array<{ score: number; timestamp: number; reason: string }>> {
     const server = this.getRpcServer();
     const contractId = this.getRemittanceNftContractId();
     const passphrase = this.getNetworkPassphrase();
@@ -1101,6 +1245,31 @@ class SorobanService {
     transferCooldownRemaining: number;
     lastUpdateLedger: number;
   } | null> {
+    try {
+      return await this.withStaleRead(`nft-metadata:${userPublicKey}`, () =>
+        this.fetchRemittanceNftMetadata(userPublicKey),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (this.isTransientRpcError(message)) {
+        logger.withContext().warn('Returning empty NFT metadata after RPC failure', {
+          borrower: userPublicKey,
+          error: message,
+        });
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private async fetchRemittanceNftMetadata(userPublicKey: string): Promise<{
+    score: number;
+    historyHash: string;
+    metadataUri: string;
+    defaultCount: number;
+    transferCooldownRemaining: number;
+    lastUpdateLedger: number;
+  } | null> {
     const nativeMetadata = (await this.simulateRemittanceNftRead(
       'get_metadata',
       userPublicKey,
@@ -1162,6 +1331,11 @@ class SorobanService {
    * Returns the on-chain value scaled by SHARE_PRICE_SCALE (1_000_000 = 1.0).
    */
   async getSharePrice(tokenAddress?: string): Promise<number> {
+    const snapshotKey = `share-price:${tokenAddress ?? this.getPoolTokenAddress()}`;
+    return this.withStaleRead(snapshotKey, () => this.fetchSharePrice(tokenAddress));
+  }
+
+  private async fetchSharePrice(tokenAddress?: string): Promise<number> {
     const server = this.getRpcServer();
     const token = tokenAddress ?? this.getPoolTokenAddress();
     const poolId = this.getLendingPoolContractId();
@@ -1211,6 +1385,10 @@ class SorobanService {
    * This calls the token's balance function for the lending pool contract.
    */
   async getPoolBalance(): Promise<number> {
+    return this.withStaleRead('pool-balance', () => this.fetchPoolBalance());
+  }
+
+  private async fetchPoolBalance(): Promise<number> {
     const server = this.getRpcServer();
     const tokenAddress = this.getPoolTokenAddress();
     const poolId = this.getLendingPoolContractId();
@@ -1256,6 +1434,12 @@ class SorobanService {
   }
 
   async getWithdrawalCooldownLedgers(): Promise<number> {
+    return this.withStaleRead('withdrawal-cooldown', () =>
+      this.fetchWithdrawalCooldownLedgers(),
+    );
+  }
+
+  private async fetchWithdrawalCooldownLedgers(): Promise<number> {
     const server = this.getRpcServer();
     const poolId = this.getLendingPoolContractId();
     const passphrase = this.getNetworkPassphrase();
