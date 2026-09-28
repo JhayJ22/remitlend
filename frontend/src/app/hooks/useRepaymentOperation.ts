@@ -4,6 +4,11 @@
  * Complete repayment operation management with optimistic updates,
  * progress tracking, and automatic state rollback on failure.
  *
+ * Authoritative reconciliation (#350): after the transaction reaches
+ * "confirmed" status, useConfirmedReconciliation is called to refresh
+ * all affected query keys from the server so the UI shows authoritative
+ * on-chain numbers rather than optimistic estimates.
+ *
  * Usage Example:
  * ```tsx
  * const repayment = useRepaymentOperation();
@@ -24,6 +29,7 @@ import { useCallback, useId, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTransaction } from "./useOptimisticUI";
 import { useWallet } from "../components/providers/WalletProvider";
+import { useConfirmedReconciliation } from "./useConfirmedReconciliation";
 import {
   useDepositToPool,
   usePoolStats,
@@ -53,6 +59,7 @@ export function useRepaymentOperation(options?: {
   const transaction = useTransaction(transactionId);
   const [error, setError] = useState<string | null>(null);
   const repayLoan = useRepayLoan();
+  const { reconcile } = useConfirmedReconciliation();
 
   const executeRepayment = useCallback(
     async ({
@@ -74,6 +81,17 @@ export function useRepaymentOperation(options?: {
         transaction.confirm("Confirming transaction...");
         transaction.complete(txHash);
 
+        // Authoritative reconciliation (#350): replace optimistic estimates with
+        // the server's confirmed values for the loan, borrower list, and pool.
+        await reconcile({
+          keys: [
+            queryKeys.loans.detail(String(loanId)),
+            queryKeys.borrowerLoans.byAddress(borrowerAddress),
+            queryKeys.pool.stats(),
+          ],
+          txHash,
+        });
+
         const result = { txHash, status: "success" as const };
         options?.onSuccess?.(result);
         return result;
@@ -85,7 +103,7 @@ export function useRepaymentOperation(options?: {
         throw err;
       }
     },
-    [transaction, repayLoan, options],
+    [transaction, repayLoan, reconcile, options],
   );
 
   return {
@@ -107,6 +125,7 @@ export function useDepositOperation(options?: {
   const { signTransaction } = useWallet();
   const buildDeposit = useDepositToPool();
   const { data: poolStats } = usePoolStats();
+  const { reconcile } = useConfirmedReconciliation();
 
   const uid = useId();
   const transactionId = `deposit-${uid}`;
@@ -159,6 +178,15 @@ export function useDepositOperation(options?: {
         const txHash = submitResult.txHash;
         transaction.complete(txHash, "Deposit successful!");
 
+        // Authoritative reconciliation (#350): refresh pool and depositor data
+        // from the server now that the transaction is confirmed on-chain.
+        await reconcile({
+          keys: [queryKeys.pool.stats(), queryKeys.pool.depositor(depositorAddress)],
+          txHash,
+        });
+
+        // Legacy invalidations kept for backward compatibility with any
+        // components that subscribed before reconcile ran.
         queryClient.invalidateQueries({
           queryKey: queryKeys.pool.stats(),
         });
@@ -177,7 +205,7 @@ export function useDepositOperation(options?: {
         throw err;
       }
     },
-    [transaction, queryClient, options],
+    [transaction, queryClient, reconcile, options],
   );
 
   return {
@@ -199,6 +227,7 @@ export function useWithdrawalOperation(options?: {
   const { signTransaction } = useWallet();
   const buildWithdraw = useWithdrawFromPool();
   const { data: poolStats } = usePoolStats();
+  const { reconcile } = useConfirmedReconciliation();
 
   const uid = useId();
   const transactionId = `withdrawal-${uid}`;
@@ -251,6 +280,14 @@ export function useWithdrawalOperation(options?: {
         const txHash = submitResult.txHash;
         transaction.complete(txHash, "Withdrawal successful!");
 
+        // Authoritative reconciliation (#350): refresh pool and depositor data
+        // from the server now that the withdrawal is confirmed on-chain.
+        await reconcile({
+          keys: [queryKeys.pool.stats(), queryKeys.pool.depositor(depositorAddress)],
+          txHash,
+        });
+
+        // Legacy invalidations kept for backward compatibility.
         queryClient.invalidateQueries({
           queryKey: queryKeys.pool.stats(),
         });
@@ -269,7 +306,7 @@ export function useWithdrawalOperation(options?: {
         throw err;
       }
     },
-    [transaction, queryClient, options],
+    [transaction, queryClient, reconcile, options],
   );
 
   return {

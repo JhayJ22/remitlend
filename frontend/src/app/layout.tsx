@@ -3,7 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./[locale]/globals.css";
 import { QueryProvider } from "./components/providers/QueryProvider";
 import { WalletProvider } from "./components/providers/WalletProvider";
+import { ServiceStatusProvider } from "./components/providers/ServiceStatusProvider";
 import { DashboardShell } from "./components/global_ui/DashboardShell";
+import { DegradedServiceBanner } from "./components/global_ui/DegradedServiceBanner";
 import { Toaster } from "./components/ui/Toaster";
 import { LevelUpModal } from "./components/gamification/LevelUpModal";
 import { GlobalXPGain } from "./components/global_ui/GlobalXPGain";
@@ -55,13 +57,16 @@ export default async function RootLayout({
           <QueryProvider>
             <WebVitalsReporter />
             <ObservabilityProvider />
-            <WalletProvider>
-              <DashboardShell>
-                <ErrorBoundary scope="active page" variant="section">
-                  {children}
-                </ErrorBoundary>
-              </DashboardShell>
-            </WalletProvider>
+            <ServiceStatusProvider>
+              <WalletProvider>
+                <DegradedServiceBanner />
+                <DashboardShell>
+                  <ErrorBoundary scope="active page" variant="section">
+                    {children}
+                  </ErrorBoundary>
+                </DashboardShell>
+              </WalletProvider>
+            </ServiceStatusProvider>
             <CommandPalette />
             <Toaster />
             <PWAInstallPrompt />

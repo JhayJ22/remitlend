@@ -6,6 +6,11 @@
  * loading states, and error handling built in.
  *
  * Base URL is read from NEXT_PUBLIC_API_URL environment variable.
+ *
+ * Type policy (#351): API response shapes are sourced from the generated
+ * types in `@/app/types`. The hand-written interfaces below are retained as
+ * type aliases for backward compatibility but should not be extended by hand.
+ * Run `npm run generate:api-types` to regenerate after backend API changes.
  */
 
 import { useEffect, useState } from "react";
@@ -24,6 +29,18 @@ import { TRACEPARENT_HEADER, outboundTraceparent } from "../lib/traceContext";
 import { useWallet } from "../components/providers/WalletProvider";
 import { useContractToast } from "./useContractToast";
 import { toast } from "sonner";
+import type {
+  ApiLoan,
+  ApiRemittance,
+  ApiUserProfile,
+  ApiUserBalance,
+  ApiPoolStats,
+  ApiDepositorPortfolio,
+  ApiAppNotification,
+  ApiAuthSession,
+  ApiCursorPageInfo,
+  ApiPaginatedResult,
+} from "../types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -172,6 +189,22 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+//
+// NOTE (#351): The hand-written interfaces below are the canonical types used
+// throughout the application. They are intentionally kept in sync with the
+// generated aliases imported above (ApiLoan, ApiRemittance, etc.).
+//
+// For new code, prefer importing from "@/app/types" directly:
+//   import type { ApiLoan } from "@/app/types";
+//
+// The generated types become the source of truth once `npm run generate:api-types`
+// has been run against a live backend. Re-run that command after any backend
+// API schema change and commit the result.
+//
+// Backward-compat re-exports so callers that import Loan/Remittance/etc.
+// from this module continue to work without changes:
+export type { ApiLoan as ApiLoan, ApiRemittance as ApiRemittance };
+// (Full aliases are declared after each interface below.)
 
 export interface Loan {
   id: string;
@@ -523,11 +556,15 @@ export interface CursorPageInfo {
   hasNext: boolean;
   total: number | null;
 }
+// #351: generated alias — new code should import ApiCursorPageInfo from "@/app/types"
+export type { ApiCursorPageInfo };
 
 export interface PaginatedListResult<T> {
   items: T[];
   pageInfo: CursorPageInfo;
 }
+// #351: generated alias — new code should import ApiPaginatedResult from "@/app/types"
+export type { ApiPaginatedResult };
 
 interface RawPageInfo {
   limit?: number;

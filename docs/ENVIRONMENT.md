@@ -119,6 +119,8 @@ stricter rate limit (10 requests/minute/IP) to prevent abuse.
 | `NEXT_PUBLIC_LOAN_MANAGER_CONTRACT_ID` | ✓ | ✓ | ✓ | —                                        | Loan manager contract address                                   | `frontend/.env.example` |
 | `NEXT_PUBLIC_NFT_CONTRACT_ID`       | ✓   | ✓       | ✓    | —                                        | Remittance NFT contract address                                 | `frontend/.env.example` |
 | `NEXT_PUBLIC_STELLAR_EXPLORER_URL` | ✓   | ✓       | ✓    | `https://stellar.expert/explorer/testnet` | Stellar explorer base URL for transaction links        | `frontend/src/components/ui/TxHashLink.tsx` |
+| `NEXT_PUBLIC_CONTRACT_VERSION` | ✓ | ✓ | ✓ | `v1` | Contract ABI version the frontend targets (`v1` or `v2`). Unrecognised values fall back to `v1`. The flag only selects which Soroban function name is called, never which numbers are displayed; rollback is a one-env-var change plus rebuild. See `frontend/src/app/utils/contractVersion.ts`. | `frontend/.env.example` |
+| `NEXT_PUBLIC_SERVICE_HEALTH_POLL_MS` | ✓ | ✓ | ✓ | `30000` | How often `ServiceStatusProvider` polls `/health` and `/status/pause` to drive the degraded-service banner. Set to `0` to disable polling entirely. | `frontend/.env.example` |
 
 ---
 
