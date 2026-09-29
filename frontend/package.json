@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
-    "@sentry/nextjs": "^10.46.0",
+    "@sentry/nextjs": "^11.0.0",
     "@serwist/next": "^9.0.12",
     "@serwist/precaching": "^9.0.12",
     "@serwist/sw": "^9.0.12",
