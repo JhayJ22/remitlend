@@ -40,6 +40,10 @@ import { startLoanDueCheckCron, stopLoanDueCheckCron } from './cron/loanCheckCro
 import { startScoreDecayScheduler } from './cron/scoreDecayJob.js';
 import { initializePauseState } from './middleware/pauseGuard.js';
 import { shutdownCoordinator } from './middleware/shutdownHandler.js';
+import {
+  startSorobanWriteReplayProcessor,
+  stopSorobanWriteReplayProcessor,
+} from './services/sorobanWriteReplayProcessor.js';
 
 const port = process.env.PORT || 3001;
 
@@ -81,6 +85,9 @@ const server = app.listen(port, () => {
 
   // Start periodic on-chain default checks (if configured)
   startDefaultCheckerScheduler();
+
+  // Drain Soroban writes queued while the RPC was unavailable (#74)
+  startSorobanWriteReplayProcessor();
 
   // Start webhook retry processor (5m/15m/45m backoff via WebhookService.processRetries)
   startWebhookRetryProcessor();
@@ -126,6 +133,7 @@ const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
     await stopIndexer();
     stopDefaultCheckerScheduler();
     stopWebhookRetryProcessor();
+    stopSorobanWriteReplayProcessor();
     stopScoreReconciliationScheduler();
     stopCrossContractReconciler();
     stopNotificationCleanupScheduler();
