@@ -19,6 +19,7 @@ import {
   getAssetDecimals,
 } from "../../utils/amount";
 import { useContractToast } from "../../hooks/useContractToast";
+import { STELLAR_NETWORK_LABEL } from "../../utils/stellarNetwork";
 import {
   MEMO_MAX_LENGTH,
   REMITTANCE_FORM_DEFAULTS,
@@ -175,7 +176,7 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
               disabled={isBusy}
               required
               error={errors.recipientAddress?.message}
-              helperText="Enter the recipient's Stellar public key (56 characters starting with G)"
+              helperText={`Enter a checksummed Stellar public key. This remittance uses ${STELLAR_NETWORK_LABEL}; confirm the recipient can receive funds on that network.`}
               {...register("recipientAddress")}
             />
 
