@@ -4,6 +4,7 @@ import { query } from '../db/connection.js';
 import { cacheService } from '../services/cacheService.js';
 import { sorobanService } from '../services/sorobanService.js';
 import { calculateTieredScore } from '../services/bayesianScoringService.js';
+import { invalidateOnScoreUpdate } from '../utils/cacheKeys.js';
 
 // ---------------------------------------------------------------------------
 // Score computation helpers
@@ -28,72 +29,80 @@ const ON_TIME_DELTA = 15;
 const LATE_DELTA = -30;
 
 // ---------------------------------------------------------------------------
-// Controllers
+// Score read payloads
+//
+// The read endpoints are served by the stale-while-revalidate middleware in
+// `middleware/swrCacheMiddleware.ts`, which calls these pure builders and owns
+// the Redis envelope. Keeping computation separate from transport means the
+// exact same builder runs on a cache miss and on a background refresh.
 // ---------------------------------------------------------------------------
 
+export interface ScoreResponse {
+  success: true;
+  userId: string;
+  score: number;
+  band: CreditBand;
+  confidence: number;
+  tier: string;
+  credibleInterval: [number, number];
+  factors: {
+    repaymentHistory: string;
+    latePaymentPenalty: string;
+    range: string;
+    bayesianConfidence: string;
+  };
+}
+
+export interface ScoreHistoryPoint {
+  date: string | null;
+  score: number;
+  event: unknown;
+}
+
+export interface ScoreBreakdownResponse {
+  success: true;
+  userId: string;
+  score: number;
+  band: CreditBand;
+  breakdown: {
+    totalLoans: number;
+    repaidOnTime: number;
+    repaidLate: number;
+    defaulted: number;
+    totalRepaid: number;
+    averageRepaymentTime: string;
+    longestStreak: number;
+    currentStreak: number;
+  };
+  history: ScoreHistoryPoint[];
+}
+
 /**
- * GET /api/score/:userId
+ * Build the `GET /api/score/:userId` response body.
  *
- * Returns the current credit score for a user along with their credit band
- * and the key factors that influence the score.  Intended to be called by
+ * Returns the current credit score for a user along with their credit band and
+ * the key factors that influence the score. Intended to be called by
  * LoanManager and other contracts that need to make lending decisions.
  */
-export const getScore = asyncHandler(async (req: Request, res: Response) => {
-  const { userId } = req.params as { userId: string };
-
-  const cacheKey = `score:userId:${userId}`;
-  const cachedScoreParams = await cacheService.get<{
-    score: number;
-    band: CreditBand;
-    confidence: number;
-    tier: string;
-    credibleInterval: [number, number];
-  }>(cacheKey);
-
-  if (cachedScoreParams) {
-    res.json({
-      success: true,
-      userId,
-      score: cachedScoreParams.score,
-      band: cachedScoreParams.band,
-      confidence: cachedScoreParams.confidence,
-      tier: cachedScoreParams.tier,
-      credibleInterval: cachedScoreParams.credibleInterval,
-      factors: {
-        repaymentHistory: 'On-time payments increase score by 15 pts each',
-        latePaymentPenalty: 'Late payments decrease score by 30 pts each',
-        range: '500 (Poor) – 850 (Excellent)',
-        bayesianConfidence: 'Confidence increases with more transactions (0-1 scale)',
-      },
-    });
-    return;
-  }
-
+export async function computeScoreResponse(userId: string): Promise<ScoreResponse> {
   const tieredScore = await calculateTieredScore(userId);
-  const band = getCreditBand(tieredScore.score);
 
-  const response = {
+  return {
+    success: true,
+    userId,
     score: tieredScore.score,
-    band,
+    band: getCreditBand(tieredScore.score),
     confidence: tieredScore.confidence,
     tier: tieredScore.tier,
     credibleInterval: tieredScore.credibleInterval,
-  };
-
-  await cacheService.set(cacheKey, response, 300);
-
-  res.json({
-    success: true,
-    userId,
-    ...response,
     factors: {
       repaymentHistory: 'On-time payments increase score by 15 pts each',
       latePaymentPenalty: 'Late payments decrease score by 30 pts each',
       range: '500 (Poor) – 850 (Excellent)',
       bayesianConfidence: 'Confidence increases with more transactions (0-1 scale)',
     },
-  });
-});
+  };
+}
 
 /**
  * POST /api/score/update
@@ -132,9 +141,9 @@ export const updateScore = asyncHandler(async (req: Request, res: Response) => {
   const newScore = result.rows[0].current_score;
   const band = getCreditBand(newScore);
 
-  // Invalidate cache
-  const cacheKey = `score:userId:${userId}`;
-  await cacheService.delete(cacheKey);
+  // Bust every cached score read for this user (versioned SWR keys plus the
+  // legacy unversioned keys) so the next request recomputes from the new row.
+  await invalidateOnScoreUpdate(userId);
 
   res.json({
     success: true,
@@ -149,7 +158,7 @@ export const updateScore = asyncHandler(async (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/score/:userId/breakdown
+ * Build the `GET /api/score/:userId/breakdown` response body.
  *
  * Returns a detailed breakdown of the factors contributing to the user's
  * credit score, derived from loan_events and scores tables. Gives borrowers
@@ -164,111 +173,104 @@ export const updateScore = asyncHandler(async (req: Request, res: Response) => {
  *
  * This reduces 6+ separate queries to 1-2 efficient round-trips.
  */
-export const getScoreBreakdown = asyncHandler(async (req: Request, res: Response) => {
-  const { userId } = req.params as { userId: string };
-
-  const cacheKey = `score:breakdown:${userId}`;
-  const cached = await cacheService.get<Record<string, unknown>>(cacheKey);
-  if (cached) {
-    res.json({ success: true, ...cached });
-    return;
-  }
-
+export async function computeScoreBreakdownResponse(
+  userId: string,
+): Promise<ScoreBreakdownResponse> {
   // Single unified query that computes all breakdown metrics
   const breakdownResult = await query(
     `WITH 
-       -- Current score from scores table
-       current_score_cte AS (
-         SELECT COALESCE(current_score, 500) AS current_score
-         FROM scores
-         WHERE user_id = $1
-       ),
-       -- All loan events for this borrower
-       borrower_events AS (
-         SELECT 
-           loan_id,
-           event_type,
-           ledger,
-           ledger_closed_at,
-           amount,
-           term_ledgers
-         FROM contract_events
-         WHERE address = $1
-       ),
-       -- Loan approval details (ledger and term)
-       approved_loans AS (
-         SELECT 
-           loan_id,
-           MAX(ledger) AS approved_ledger,
-           MAX(COALESCE(term_ledgers, 17280)) AS term_ledgers
-         FROM borrower_events
-         WHERE event_type = 'LoanApproved' AND loan_id IS NOT NULL
-         GROUP BY loan_id
-       ),
-       -- Repaid loan details (ledger and timestamp)
-       repaid_loans AS (
-         SELECT 
-           loan_id,
-           MIN(ledger) AS repaid_ledger,
-           MIN(ledger_closed_at) AS repaid_at
-         FROM borrower_events
-         WHERE event_type = 'LoanRepaid' AND loan_id IS NOT NULL
-         GROUP BY loan_id
-       ),
-       -- Classification of repayments as on-time or late
-       repayment_timing AS (
-         SELECT 
-           r.loan_id,
-           r.repaid_ledger,
-           r.repaid_at,
-           CASE WHEN r.repaid_ledger <= a.approved_ledger + a.term_ledgers
-                THEN true ELSE false END AS on_time,
-           (r.repaid_ledger - a.approved_ledger) AS repayment_ledgers
-         FROM repaid_loans r
-         JOIN approved_loans a ON a.loan_id = r.loan_id
-       ),
-       -- Aggregate statistics across all loans
-       loan_stats AS (
-         SELECT 
-           COUNT(DISTINCT CASE WHEN event_type = 'LoanRequested' THEN loan_id END) AS total_loans,
-           COUNT(DISTINCT CASE WHEN event_type = 'LoanRepaid' THEN loan_id END) AS repaid_count,
-           COUNT(DISTINCT CASE WHEN event_type = 'LoanDefaulted' THEN loan_id END) AS defaulted_count,
-           COALESCE(SUM(CASE WHEN event_type = 'LoanRepaid' THEN CAST(amount AS NUMERIC) ELSE 0 END), 0) AS total_repaid
-         FROM borrower_events
-       ),
-       -- Repayment timing statistics
-       timing_stats AS (
-         SELECT 
-           COUNT(*) FILTER (WHERE on_time) AS on_time_count,
-           COUNT(*) FILTER (WHERE NOT on_time) AS late_count,
-           AVG(repayment_ledgers) AS avg_repayment_ledgers
-         FROM repayment_timing
-       ),
-       -- Final aggregated breakdown
-       breakdown_summary AS (
-         SELECT 
-           cs.current_score,
-           COALESCE(ls.total_loans, 0) AS total_loans,
-           COALESCE(ls.repaid_count, 0) AS repaid_count,
-           COALESCE(ls.defaulted_count, 0) AS defaulted_count,
-           COALESCE(ls.total_repaid, 0) AS total_repaid,
-           COALESCE(ts.on_time_count, 0) AS on_time_count,
-           COALESCE(ts.late_count, 0) AS late_count,
-           COALESCE(ts.avg_repayment_ledgers, 0) AS avg_repayment_ledgers
-         FROM current_score_cte cs
-         CROSS JOIN loan_stats ls
-         CROSS JOIN timing_stats ts
-       )
-       SELECT 
-         current_score,
-         total_loans,
-         repaid_count,
-         defaulted_count,
-         total_repaid,
-         on_time_count,
-         late_count,
-         avg_repayment_ledgers
-       FROM breakdown_summary`,
+      -- Current score from scores table
+      current_score_cte AS (
+        SELECT COALESCE(current_score, 500) AS current_score
+        FROM scores
+        WHERE user_id = $1
+      ),
+      -- All loan events for this borrower
+      borrower_events AS (
+        SELECT 
+          loan_id,
+          event_type,
+          ledger,
+          ledger_closed_at,
+          amount,
+          term_ledgers
+        FROM contract_events
+        WHERE address = $1
+      ),
+      -- Loan approval details (ledger and term)
+      approved_loans AS (
+        SELECT 
+          loan_id,
+          MAX(ledger) AS approved_ledger,
+          MAX(COALESCE(term_ledgers, 17280)) AS term_ledgers
+        FROM borrower_events
+        WHERE event_type = 'LoanApproved' AND loan_id IS NOT NULL
+        GROUP BY loan_id
+      ),
+      -- Repaid loan details (ledger and timestamp)
+      repaid_loans AS (
+        SELECT 
+          loan_id,
+          MIN(ledger) AS repaid_ledger,
+          MIN(ledger_closed_at) AS repaid_at
+        FROM borrower_events
+        WHERE event_type = 'LoanRepaid' AND loan_id IS NOT NULL
+        GROUP BY loan_id
+      ),
+      -- Classification of repayments as on-time or late
+      repayment_timing AS (
+        SELECT 
+          r.loan_id,
+          r.repaid_ledger,
+          r.repaid_at,
+          CASE WHEN r.repaid_ledger <= a.approved_ledger + a.term_ledgers
+               THEN true ELSE false END AS on_time,
+          (r.repaid_ledger - a.approved_ledger) AS repayment_ledgers
+        FROM repaid_loans r
+        JOIN approved_loans a ON a.loan_id = r.loan_id
+      ),
+      -- Aggregate statistics across all loans
+      loan_stats AS (
+        SELECT 
+          COUNT(DISTINCT CASE WHEN event_type = 'LoanRequested' THEN loan_id END) AS total_loans,
+          COUNT(DISTINCT CASE WHEN event_type = 'LoanRepaid' THEN loan_id END) AS repaid_count,
+          COUNT(DISTINCT CASE WHEN event_type = 'LoanDefaulted' THEN loan_id END) AS defaulted_count,
+          COALESCE(SUM(CASE WHEN event_type = 'LoanRepaid' THEN CAST(amount AS NUMERIC) ELSE 0 END), 0) AS total_repaid
+        FROM borrower_events
+      ),
+      -- Repayment timing statistics
+      timing_stats AS (
+        SELECT 
+          COUNT(*) FILTER (WHERE on_time) AS on_time_count,
+          COUNT(*) FILTER (WHERE NOT on_time) AS late_count,
+          AVG(repayment_ledgers) AS avg_repayment_ledgers
+        FROM repayment_timing
+      ),
+      -- Final aggregated breakdown
+      breakdown_summary AS (
+        SELECT 
+          cs.current_score,
+          COALESCE(ls.total_loans, 0) AS total_loans,
+          COALESCE(ls.repaid_count, 0) AS repaid_count,
+          COALESCE(ls.defaulted_count, 0) AS defaulted_count,
+          COALESCE(ls.total_repaid, 0) AS total_repaid,
+          COALESCE(ts.on_time_count, 0) AS on_time_count,
+          COALESCE(ts.late_count, 0) AS late_count,
+          COALESCE(ts.avg_repayment_ledgers, 0) AS avg_repayment_ledgers
+        FROM current_score_cte cs
+        CROSS JOIN loan_stats ls
+        CROSS JOIN timing_stats ts
+      )
+      SELECT 
+        current_score,
+        total_loans,
+        repaid_count,
+        defaulted_count,
+        total_repaid,
+        on_time_count,
+        late_count,
+        avg_repayment_ledgers
+      FROM breakdown_summary`,
     [userId],
   );
 
@@ -329,7 +331,8 @@ export const getScoreBreakdown = asyncHandler(async (req: Request, res: Response
   }
   currentStreak = tempStreak;
 
-  const responseData = {
+  return {
+    success: true,
     userId,
     score,
     band,
@@ -345,11 +348,7 @@ export const getScoreBreakdown = asyncHandler(async (req: Request, res: Response
     },
     history,
   };
-
-  await cacheService.set(cacheKey, responseData, 300);
-
-  res.json({ success: true, ...responseData });
-});
+}
 
 /**
  * GET /api/score/:walletAddress/history

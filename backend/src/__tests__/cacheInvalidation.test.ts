@@ -25,6 +25,7 @@ jest.unstable_mockModule('../services/cacheService.js', () => ({
 
 const {
   CacheKeys,
+  SCORE_CACHE_VERSION,
   invalidateOnRepay,
   invalidateOnLoanRequest,
   invalidateOnDeposit,
@@ -51,8 +52,10 @@ describe('cacheKeys helpers', () => {
       expect(CacheKeys.borrowerLoans(BORROWER)).toBe(`borrower:loans:${BORROWER}`);
     });
 
-    it('scoreBreakdown encodes the public key', () => {
-      expect(CacheKeys.scoreBreakdown(BORROWER)).toBe(`score:breakdown:${BORROWER}`);
+    it('scoreBreakdown encodes the schema version and public key', () => {
+      expect(CacheKeys.scoreBreakdown(BORROWER)).toBe(
+        `score:breakdown:v${SCORE_CACHE_VERSION}:${BORROWER}`,
+      );
     });
   });
 

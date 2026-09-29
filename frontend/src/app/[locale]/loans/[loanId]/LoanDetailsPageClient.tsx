@@ -344,10 +344,18 @@ export function LoanDetailsPageClient() {
             <div className="rounded-2xl bg-indigo-50 p-5 dark:bg-indigo-500/10">
               <div className="flex items-center gap-3 text-indigo-700 dark:text-indigo-300">
                 <Wallet className="h-5 w-5" />
-                <h2 className="text-lg font-semibold">Next action</h2>
+                <h2 className="text-lg font-semibold">
+                  {loan.status === "defaulted" || loan.status === "liquidated"
+                    ? "Resolution guidance"
+                    : "Next action"}
+                </h2>
               </div>
               <p className="mt-3 text-sm leading-6 text-indigo-700/80 dark:text-indigo-200">
-                Make a repayment before the next due date to keep your score trending upward.
+                {loan.status === "defaulted"
+                  ? "Your loan is marked as defaulted. Review the loan timeline and contact your lender to discuss the outstanding balance and available next steps."
+                  : loan.status === "liquidated"
+                    ? "Your collateral has been liquidated. Review the loan timeline and current balance, then contact your lender about any remaining obligation."
+                    : "Make a repayment before the next due date to keep your score trending upward."}
               </p>
               {loan.status !== "repaid" &&
                 loan.status !== "defaulted" &&
@@ -396,9 +404,9 @@ export function LoanDetailsPageClient() {
             </h2>
             <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
               {loan.status === "liquidated"
-                ? "Collateral was liquidated after the position fell below the collateral threshold."
+                ? "Collateral has been liquidated. Check the loan timeline and current balance for the latest recorded outcome."
                 : loan.status === "defaulted"
-                  ? "Collateral has been seized."
+                  ? "This loan is marked as defaulted. Contact your lender to confirm the collateral status and discuss resolution options."
                   : loan.status === "repaid"
                     ? "Collateral released — loan fully repaid."
                     : "Collateral is held in escrow for the duration of this loan."}

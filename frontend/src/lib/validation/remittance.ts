@@ -23,7 +23,7 @@ export const remittanceSchema = z
       .min(1, "Recipient address is required")
       .refine(
         isValidStellarAddress,
-        "Invalid Stellar address format (must be 56 characters starting with G)",
+        "Invalid Stellar address (check the address and its checksum)",
       ),
     token: z.enum(REMITTANCE_TOKENS, { message: "Select a valid token" }),
     amount: z

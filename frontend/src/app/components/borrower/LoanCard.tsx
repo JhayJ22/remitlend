@@ -73,9 +73,9 @@ export function LoanCard({ loan, variant = "compact" }: LoanCardProps) {
         ? "text-yellow-600"
         : "text-gray-600";
   const deadlineLabel = isLiquidated
-    ? "Collateral was liquidated"
+    ? "Review the loan details for the recorded outcome"
     : isDefaulted
-      ? "Contact support to recover"
+      ? "Review resolution options with your lender"
       : isOverdue
         ? `${Math.abs(daysUntil)} days overdue`
         : `${daysUntil} days remaining`;
@@ -169,7 +169,7 @@ export function LoanCard({ loan, variant = "compact" }: LoanCardProps) {
               className="flex-1"
               variant="primary"
             >
-              Contact Support
+              View Resolution Details
             </Button>
             <Button variant="outline" onClick={() => router.push(`/loans/${loan.id}`)}>
               {variant === "compact" ? "View Details" : "Details"}

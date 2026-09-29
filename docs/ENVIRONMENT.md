@@ -46,6 +46,17 @@ stricter rate limit (10 requests/minute/IP) to prevent abuse.
 | `REDIS_URL` | ✓ | ✓ | ✓ | `redis://redis:6379` | Redis connection string | `backend/src/services/cacheService.ts` |
 | `STELLAR_NETWORK` | ✓ | ✓ | ✓ | `testnet` | Stellar network name (`testnet`, `mainnet`) | `backend/src/config/stellar.ts` |
 | `STELLAR_RPC_URL` | ✓ | ✓ | ✓ | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint | `backend/src/config/stellar.ts` |
+| `SOROBAN_REQUIRE_RPC_AT_STARTUP` | ✓ | ✓ | ✓ | `false` | When `"true"`, startup fails if the Soroban RPC is unreachable. Default is to boot in degraded mode: reads serve last-known data and writes are queued. | `backend/src/services/sorobanService.ts` |
+| `SOROBAN_RPC_HEALTH_TIMEOUT_MS` | ✓ | ✓ | ✓ | `1500` | Timeout for a single Soroban RPC health probe in ms | `backend/src/services/sorobanCircuitBreaker.ts` |
+| `SOROBAN_RPC_HEALTH_CACHE_MS` | ✓ | ✓ | ✓ | `3000` | How long an RPC health-probe result is reused before probing again, in ms | `backend/src/services/sorobanCircuitBreaker.ts` |
+| `SOROBAN_CIRCUIT_FAILURE_THRESHOLD` | ✓ | ✓ | ✓ | `3` | Consecutive RPC failures that open the degradation circuit | `backend/src/services/sorobanCircuitBreaker.ts` |
+| `SOROBAN_CIRCUIT_COOLDOWN_MS` | ✓ | ✓ | ✓ | `15000` | How long the circuit stays open before a single half-open recovery attempt, in ms | `backend/src/services/sorobanCircuitBreaker.ts` |
+| `SOROBAN_STALE_READ_TTL_MS` | ✓ | ✓ | ✓ | `3600000` | How long a last known-good read value stays usable while the RPC is down, in ms | `backend/src/services/sorobanCircuitBreaker.ts` |
+| `SOROBAN_STALE_WARNING_TTL_MS` | ✓ | ✓ | ✓ | `60000` | How long read responses keep advertising the `degraded: true` warning after stale data was served, in ms | `backend/src/services/sorobanCircuitBreaker.ts` |
+| `SOROBAN_WRITE_REPLAY_INTERVAL_MS` | ✓ | ✓ | ✓ | `15000` | How often the replay worker drains the queued-write table, in ms | `backend/src/services/sorobanWriteReplayProcessor.ts` |
+| `SOROBAN_WRITE_REPLAY_BATCH_SIZE` | ✓ | ✓ | ✓ | `25` | Maximum queued writes replayed per pass | `backend/src/services/sorobanWriteReplayProcessor.ts` |
+| `SOROBAN_WRITE_BACKOFF_BASE_MS` | ✓ | ✓ | ✓ | `5000` | Base delay before retrying a queued write that failed to replay, in ms | `backend/src/services/sorobanWriteQueue.ts` |
+| `SOROBAN_WRITE_BACKOFF_MAX_MS` | ✓ | ✓ | ✓ | `300000` | Ceiling for the queued-write replay backoff, in ms | `backend/src/services/sorobanWriteQueue.ts` |
 | `STELLAR_NETWORK_PASSPHRASE` | ✓ | ✓ | ✓ | `Test SDF Network ; September 2015` | Network passphrase for transaction signing | `backend/src/config/stellar.ts` |
 | `LOAN_MANAGER_CONTRACT_ID` | ✓ | ✓ | ✓ | — | Deployed loan manager contract address | `backend/src/config/stellar.ts` |
 | `REMITTANCE_NFT_CONTRACT_ID` | ✓ | ✓ | ✓ | — | Deployed remittance NFT contract address | `backend/src/config/contracts.ts` |

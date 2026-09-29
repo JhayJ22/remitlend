@@ -1,4 +1,4 @@
-import { cacheService } from './cacheService.js';
+import { invalidateOnScoreUpdate } from '../utils/cacheKeys.js';
 import { type PoolClient, query } from '../db/connection.js';
 import logger from '../utils/logger.js';
 
@@ -54,10 +54,10 @@ export async function updateUserScoresBulk(
       updatedCount: params.length / 2,
     });
 
-    // Invalidate Redis cache for updated users
+    // Invalidate every cached score read for updated users (versioned SWR
+    // keys plus the legacy unversioned keys).
     for (const userId of userIds) {
-      await cacheService.delete(`score:userId:${userId}`);
-      await cacheService.delete(`score:breakdown:${userId}`);
+      await invalidateOnScoreUpdate(userId);
     }
   } catch (error) {
     logger.withContext().error('Failed to apply bulk user score updates', { error });
@@ -107,11 +107,11 @@ export async function setAbsoluteUserScoresBulk(scores: Map<string, number>): Pr
       updatedCount: valuePlaceholders.length,
     });
 
-    // Invalidate Redis cache for reconciled users
+    // Invalidate every cached score read for reconciled users (versioned SWR
+    // keys plus the legacy unversioned keys).
     for (const [userId] of scores) {
       if (userId) {
-        await cacheService.delete(`score:userId:${userId}`);
-        await cacheService.delete(`score:breakdown:${userId}`);
+        await invalidateOnScoreUpdate(userId);
       }
     }
   } catch (error) {

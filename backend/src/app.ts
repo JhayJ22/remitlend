@@ -33,6 +33,7 @@ import { requestIdMiddleware } from './middleware/requestId.js';
 import { traceContextMiddleware } from './middleware/traceContext.js';
 import { cspHeadersMiddleware, cspNonceMiddleware } from './middleware/cspNonce.js';
 import { idempotencyMiddleware } from './middleware/idempotency.js';
+import { sorobanDegradationBanner } from './middleware/sorobanDegradationBanner.js';
 import { shutdownCoordinator } from './middleware/shutdownHandler.js';
 import { reportCSPViolation } from './controllers/cspReportController.js';
 import { pauseGuard } from './middleware/pauseGuard.js';
@@ -162,6 +163,8 @@ app.use(requestIdMiddleware);
 app.use(traceContextMiddleware);
 app.use(requestLogger);
 app.use(metricsMiddleware);
+// Graceful degradation (#74): flag read responses while the Soroban RPC circuit is open.
+app.use(sorobanDegradationBanner);
 app.use(dbConnectionLeakDetector);
 
 // Shutdown coordinator: track in-flight requests and reject new ones during shutdown
