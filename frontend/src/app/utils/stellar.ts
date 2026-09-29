@@ -1,3 +1,5 @@
+import { StrKey } from "@stellar/stellar-sdk";
+
 const EXPLORER_BASE_URL =
   process.env.NEXT_PUBLIC_STELLAR_EXPLORER_URL ?? "https://stellar.expert/explorer/testnet";
 
@@ -7,10 +9,7 @@ const EXPLORER_BASE_URL =
  */
 export function isValidStellarAddress(address: string): boolean {
   if (!address || typeof address !== "string") return false;
-  // Stellar public keys are exactly 56 characters, start with 'G'
-  if (address.length !== 56 || !address.startsWith("G")) return false;
-  // Check if it's valid base32 (only contains alphanumeric characters)
-  return /^G[A-Z2-7]{55}$/.test(address);
+  return StrKey.isValidEd25519PublicKey(address);
 }
 
 export function getTxUrl(txHash: string): string {

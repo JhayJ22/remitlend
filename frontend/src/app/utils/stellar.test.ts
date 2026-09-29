@@ -13,6 +13,11 @@ describe("Stellar Utilities", () => {
       expect(isValidStellarAddress(validAddress)).toBe(true);
     });
 
+    it("should reject a valid-looking address with an invalid checksum", () => {
+      const invalidAddress = "GBUQWP3BOUZX34ULNQG23RQ6F4BVWCIBTLFL2F7HVRQG5LDHNWY2QTWB";
+      expect(isValidStellarAddress(invalidAddress)).toBe(false);
+    });
+
     it("should reject an address that is too short", () => {
       const invalidAddress = "GBUQWP3BOUZX34ULNQG23RQ6F4BVWCIBTL";
       expect(isValidStellarAddress(invalidAddress)).toBe(false);
