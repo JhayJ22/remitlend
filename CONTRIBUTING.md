@@ -195,40 +195,48 @@ suite and runs in CI.
   retried.
 - Stale or unavailable data (dependency failure) and authorization failure
   states.
-- Boundary values: zero, minimum, and maximum representable amounts.
+- Boundary value
 
-**Rules for visual regression tests:**
+## Contracts: Protocol-Wide Debt Ceiling
 
-- Derive every displayed amount, status, and chain state from the same
-  authoritative source the app uses at runtime (API/contract responses or the
-  shared financial formatting utilities). **Never hard-code or mock financial
-  arithmetic in a story or snapshot** — a mocked number can silently diverge
-  from production.
-- Cover the success path plus the failure paths listed above (authorization
-  failure, boundary values, retries, stale data, dependency failure) for each
-  critical financial surface you touch.
-- Keep snapshots deterministic: pin the viewport, freeze time and locale, and
-  disable animations (`prefers-reduced-motion`) so diffs reflect real changes
-  only.
-- When a visual change is intentional, update the baseline in the same PR and
-  call it out in the PR description with before/after images.
+Protocol-wide exposure is bounded by a single, admin-settable **debt ceiling**
+stored in contract storage alongside the existing per-loan limits. The ceiling
+caps the total outstanding principal across all active loans; it is enforced at
+loan creation/origination so no new loan can push aggregate debt above the
+configured value.
 
-**Running locally:**
+**Contributor expectations when touching the ceiling:**
 
-```bash
-cd frontend
-npm run build
-npx playwright test e2e/visual --project=chromium --update-snapshots
-```
-
-Omit `--update-snapshots` to verify against the committed baselines the way CI
-does. New critical financial surfaces must add their route/state to the visual
-regression suite in the same PR that introduces them.
+- **Storage is additive only.** The ceiling lives in a new storage key; do not
+  reorder or repurpose existing keys, and do not change existing entry-point
+  signatures. Deployed contracts and API consumers must keep working unchanged.
+- **Authorization is admin-only.** Only the configured admin may update the
+  ceiling. Unauthorized callers must fail with an explicit, structured error
+  (not a panic), and the failed attempt must not mutate storage.
+- **Enforcement is at origination.** Reject any new loan whose principal would
+  push total outstanding debt above the ceiling, returning a distinct structured
+  error so callers can distinguish a ceiling breach from other validation
+  failures. Boundary values (exactly at the ceiling, and one unit above) must be
+  covered by tests.
+- **Arithmetic is checked.** Use checked/saturating arithmetic for the aggregate
+  comparison; never rely on wrapping. The ceiling and totals are derived from
+  authoritative on-chain state, not cached or client-supplied values.
+- **Observability.** Emit an audit event on every ceiling update (old value, new
+  value, admin) and on every rejected origination, so operators can diagnose
+  breaches from structured logs.
+- **Migration & rollback.** Because storage is additive, no data migration is
+  required; a fresh deployment initializes the ceiling explicitly. Rollback is a
+  redeploy of the prior contract version — the new key is simply ignored by older
+  code, so no state cleanup is needed.
+- **Tests.** Add focused tests for: successful admin update, unauthorized update
+  failure, origination at the boundary, origination one unit above the boundary,
+  and dependency/stale-state failure paths. Run the narrowest relevant package
+  tests plus `cargo fmt --check`, `cargo clippy`, and `cargo test` under
+  `contracts/`.
 
 ## Style Guides
 
-- **TypeScript**: Use functional components and hooks. Prefer `interface` over `type`. Ensure strict typing.
-- **Rust**: Follow standard Rust naming conventions and maintain idiomatic code.
-
----
-Thank you for contributing to RemitLend! 🚀
+- **TypeScript/JavaScript**: Follow the existing ESLint and Prettier configuration.
+- **Rust (Soroban)**: Run `cargo fmt` and `cargo clippy` before committing.
+- **Markdown**: Keep lines reasonably wrapped and use fenced code blocks with a
+  language hint.
