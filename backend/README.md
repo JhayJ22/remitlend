@@ -256,292 +256,63 @@ For the full auth model (challenge-signature-JWT flow, role-scope table,
 API-key namespaces, cookie attributes) see
 [docs/SECURITY-MODEL.md](../docs/SECURITY-MODEL.md).
 
-## Project Structure
+## Container Hardening (Production)
 
-```
-backend/
-├── src/
-│   ├── __tests__/           # Test files
-│   │   ├── health.test.ts
-│   │   ├── score.test.ts
-│   │   ├── validation.test.ts
-│   │   └── errorHandling.test.ts
-│   ├── config/              # Configuration files
-│   │   └── swagger.ts       # Swagger/OpenAPI config
-│   ├── controllers/         # Request handlers
-│   │   ├── scoreController.ts
-│   │   └── simulationController.ts
-│   ├── middleware/          # Express middleware
-│   │   ├── asyncHandler.ts  # Async error wrapper
-│   │   ├── auth.ts          # Authentication (planned)
-│   │   ├── errorHandler.ts  # Error handling
-│   │   ├── rateLimiter.ts   # Rate limiting
-│   │   └── validation.ts    # Request validation
-│   ├── routes/              # API routes
-│   │   └── index.ts
-│   ├── schemas/             # Zod validation schemas
-│   │   ├── scoreSchemas.ts
-│   │   └── simulationSchemas.ts
-│   ├── errors/              # Custom error classes
-│   │   └── AppError.ts
-│   ├── app.ts               # Express app setup
-│   └── index.ts             # Server entry point
-├── .env.example             # Environment template
-├── .eslintrc.cjs            # ESLint configuration
-├── .prettierrc              # Prettier configuration
-├── jest.config.js           # Jest configuration
-├── tsconfig.json            # TypeScript configuration
-├── package.json
-└── README.md
-```
+Production images and Compose services run with least privilege and an immutable
+root filesystem. The backend container:
 
-## Middleware
+- Runs as the non-root `node` user (UID/GID 1000) with `no-new-privileges`.
+- Drops all Linux capabilities and adds back none.
+- Mounts the root filesystem read-only (`read_only: true`).
+- Receives only the writable paths it needs through explicit `tmpfs` mounts:
+  `/tmp` (build/scratch) and `/app/.cache` (runtime caches).
+- Reads secrets from the approved runtime mechanism (environment/secret files
+  injected by the orchestrator) — never baked into image layers.
 
-### Error Handler
+### Local development differences
 
-Centralized error handling middleware that catches and formats errors.
+Local development is intentionally more permissive: `npm run dev` runs on the
+host with a writable filesystem and hot reload, and the Compose dev profile does
+not enable `read_only` or capability drops. Only the production profile applies
+the hardened runtime settings.
 
-```typescript
-import { errorHandler } from './middleware/errorHandler';
-app.use(errorHandler);
-```
-
-### Validation
-
-Request validation using Zod schemas.
-
-```typescript
-import { validate } from './middleware/validation';
-import { mySchema } from './schemas/mySchemas';
-
-router.post('/endpoint', validate(mySchema), controller);
-```
-
-### Rate Limiter
-
-Protects endpoints from abuse with configurable rate limits.
-
-```typescript
-import { rateLimiter } from './middleware/rateLimiter';
-app.use('/api/', rateLimiter);
-```
-
-### Async Handler
-
-Wraps async route handlers to catch errors automatically.
-
-```typescript
-import { asyncHandler } from './middleware/asyncHandler';
-
-router.get(
-  '/endpoint',
-  asyncHandler(async (req, res) => {
-    // Async code here
-  }),
-);
-```
-
-## Testing
-
-### Running Tests
+### Production verification commands
 
 ```bash
-# Run all tests
-npm test
+# Confirm the process is not root and has no added capabilities
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend id
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend \
+  grep -E 'Cap(Eff|Prm|Bnd)' /proc/1/status
 
-# Run specific test file
-npm test -- health.test.ts
+# Confirm the root filesystem is read-only and tmpfs mounts are present
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend \
+  sh -c 'touch /app/forbidden 2>&1 || echo "rootfs is read-only"'
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend mount | grep tmpfs
 
-# Run with coverage
-npm test -- --coverage
+# Confirm health checks and graceful shutdown still work
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop backend
 
-# Watch mode
-npm test -- --watch
+# Scan images for privileged settings and unexpected writable paths
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  aquasec/trivy image --severity HIGH,CRITICAL remitlend-backend:latest
 ```
 
-### Test Structure
+Integration tests assert that the production Compose service sets
+`read_only: true`, `security_opt: [no-new-privileges:true]`, `cap_drop: [ALL]`,
+and declares the expected `tmpfs` writable paths, so regressions are caught in CI.
 
-```typescript
-import request from 'supertest';
-import app from '../app';
+## Backend Performance Budgets
 
-describe('GET /api/health', () => {
-  it('should return 200 OK', async () => {
-    const response = await request(app).get('/api/health').expect(200);
+The load-test workflow (`.github/workflows/load-test.yml`) enforces latency and
+resource budgets for critical read and preview routes. Budgets are version-controlled
+in `backend/perf/budgets.json` and compared against a stored baseline in
+`backend/perf/baseline.json` on every run.
 
-    expect(response.body).toHaveProperty('status', 'ok');
-  });
-});
-```
+### Critical routes under budget
 
-### Test Coverage
-
-Aim for >80% code coverage on new code. Current coverage:
-
-- Statements: Check with `npm test -- --coverage`
-- Branches: Check with `npm test -- --coverage`
-- Functions: Check with `npm test -- --coverage`
-- Lines: Check with `npm test -- --coverage`
-
-## Error Handling
-
-### Custom Error Class
-
-```typescript
-import { AppError } from './errors/AppError';
-
-throw new AppError('User not found', 404);
-```
-
-### Error Response Format
-
-```json
-{
-  "success": false,
-  "message": "Error message",
-  "statusCode": 400,
-  "errors": []
-}
-```
-
-## Validation Schemas
-
-Validation schemas are defined using Zod in the `schemas/` directory.
-
-### Example Schema
-
-```typescript
-import { z } from 'zod';
-
-export const getUserScoreSchema = z.object({
-  params: z.object({
-    userId: z.string().min(1, 'User ID is required'),
-  }),
-});
-
-export const simulateRemittanceSchema = z.object({
-  body: z.object({
-    userId: z.string().min(1),
-    transactions: z.array(
-      z.object({
-        amount: z.number().positive(),
-        date: z.string(),
-        recipient: z.string(),
-      }),
-    ),
-  }),
-});
-```
-
-## Future Enhancements
-
-### Phase 1: Real Remittance Integration
-
-- [ ] Wise API integration
-- [ ] Western Union API integration
-- [ ] Remittance data verification
-- [ ] Historical data import
-
-### Phase 2: Enhanced Features
-
-- [ ] User authentication (JWT)
-- [ ] Database integration (PostgreSQL)
-- [ ] IPFS integration for NFT metadata
-- [ ] Webhook support for blockchain events
-
-### Phase 3: Production Ready
-
-- [ ] Caching layer (Redis)
-- [ ] Logging and monitoring
-- [ ] CI/CD pipeline
-- [ ] Load balancing support
-- [ ] API versioning
-
-## Deployment
-
-### Docker
-
-```bash
-# Build image
-docker build -t remitlend-backend .
-
-# Run container
-docker run -p 3001:3001 --env-file .env remitlend-backend
-```
-
-### Docker Compose
-
-From the project root:
-
-```bash
-docker compose up backend
-```
-
-### Production Considerations
-
-- Set `NODE_ENV=production`
-- Use process manager (PM2, systemd)
-- Enable HTTPS
-- Configure proper CORS origins
-- Set up monitoring and logging
-- Implement health checks
-- Use environment-specific configs
-
-## Contributing
-
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines on contributing to the backend.
-
-### Code Style
-
-- Follow TypeScript best practices
-- Use async/await over callbacks
-- Maintain strict typing
-- Write descriptive variable names
-- Add JSDoc comments for public functions
-- Keep functions small and focused
-
-### Before Submitting PR
-
-```bash
-# Run all checks
-npm run lint
-npm run format:check
-npm test
-npm run build
-```
-
-## Troubleshooting
-
-### Port Already in Use
-
-```bash
-# Find and kill process on port 3001
-lsof -ti:3001 | xargs kill -9
-```
-
-### TypeScript Errors
-
-```bash
-# Clean build
-rm -rf dist/
-npm run build
-```
-
-### Module Not Found
-
-```bash
-# Reinstall dependencies
-rm -rf node_modules package-lock.json
-npm install
-```
-
-## License
-
-ISC License - See LICENSE file for details.
-
-## Support
-
-- Open an issue for bug reports
-- Check existing issues before creating new ones
-- Provide detailed reproduction steps
-- Include error messages and logs
+| Route                          | Method | p50 (ms) | p95 (ms) | Error rate | Heap (MB) | DB queries | RPC calls |
+| ------------------------------ | ------ | -------- | -------- | ---------- | --------- | ---------- | --------- |
+| `/api/health`                  | GET    | 25       | 75       | 0.5%       | 256       | 0          | 0         |
+| `/api/score/:userId`           | GET    | 120      | 350      | 1.0%       | 384       | 4          | 0         |
+| `/api/score/simulate` (preview)| POST   | 200      | 600      | 1.0%       | 384       | 2          | 0         |
