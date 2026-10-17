@@ -691,6 +691,16 @@ impl LoanManager {
     /// each component's share of the current total debt. This avoids a strict
     /// waterfall where a borrower can repeatedly clear one bucket first while
     /// delaying principal reduction.
+    ///
+    /// Allocation order (formal, do not change without a migration plan):
+    /// 1. Each bucket is floored to `amount * due / total_debt`
+    ///    (`RoundingMode::Floor`, not the policy default of half-even).
+    /// 2. Leftover units are handed out one at a time to the bucket with the
+    ///    largest fractional remainder, skipping buckets already at their `due`.
+    /// 3. Ties on remainder resolve to the lower index: principal, then
+    ///    interest, then late fee.
+    /// 4. No bucket is ever paid more than its own `due`, so the three
+    ///    payments always sum exactly to `amount` for `amount <= total_debt`.
     fn proportional_repayment_split(loan: &Loan, amount: i128) -> (i128, i128, i128) {
         let principal_due = Self::remaining_principal(loan);
         let total_debt = principal_due
