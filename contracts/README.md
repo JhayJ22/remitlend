@@ -277,6 +277,19 @@ pub enum LoanStatus {
 - Interest rate: Based on credit score
 - Repayment period: Configurable
 
+**Repayment Allocation**:
+Each repayment is split across the three debt buckets in proportion to their
+share of the current total debt (`principal + accrued_interest + accrued_late_fee`):
+- Each bucket receives `floor(amount × due / total_debt)`.
+- Leftover units go one at a time to the bucket with the largest remainder.
+- Remainder ties go to the earlier bucket: principal, then interest, then late fee.
+- A bucket never receives more than its own outstanding amount.
+- The split always sums exactly to the repaid amount.
+
+This is intentionally not a strict waterfall, so a borrower cannot clear
+interest and fees first while principal stays untouched. Clients that preview a
+repayment must use the same rule. The on-chain allocation is authoritative.
+
 **Tests**:
 - ✅ Loan request flow
 - ✅ Loan approval flow
