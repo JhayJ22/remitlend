@@ -24,6 +24,8 @@ import { eventStreamService } from './services/eventStreamService.js';
 import {
   startNotificationCleanupScheduler,
   stopNotificationCleanupScheduler,
+  startNotificationDeliveryProcessor,
+  stopNotificationDeliveryProcessor,
 } from './services/notificationService.js';
 import {
   startScoreReconciliationScheduler,
@@ -34,6 +36,10 @@ import {
   stopCrossContractReconciler,
 } from './services/crossContractReconciler.js';
 import { sorobanService } from './services/sorobanService.js';
+import {
+  startSubjectAccessExportProcessor,
+  stopSubjectAccessExportProcessor,
+} from './services/subjectAccessExportService.js';
 import { validateLoanConfigOnStartup } from './config/loanConfig.js';
 import { startLoanDueCheckCron, stopLoanDueCheckCron } from './cron/loanCheckCron.js';
 import {
@@ -109,6 +115,9 @@ const server = app.listen(port, () => {
 
   // Start periodic notification cleanup
   startNotificationCleanupScheduler();
+  startNotificationDeliveryProcessor();
+
+  startSubjectAccessExportProcessor();
 
   // Start loan due check cron
   startLoanDueCheckCron();
@@ -168,6 +177,8 @@ const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
     stopScoreReconciliationScheduler();
     stopCrossContractReconciler();
     stopNotificationCleanupScheduler();
+    stopNotificationDeliveryProcessor();
+    stopSubjectAccessExportProcessor();
     logger.info('All schedulers stopped.');
 
     // Step 3: Close event streams
