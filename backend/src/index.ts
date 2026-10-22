@@ -22,9 +22,13 @@ import {
 } from './services/webhookRetryProcessor.js';
 import { eventStreamService } from './services/eventStreamService.js';
 import {
-  startNotificationCleanupScheduler,
-  stopNotificationCleanupScheduler,
+  startNotificationDeliveryProcessor,
+  stopNotificationDeliveryProcessor,
 } from './services/notificationService.js';
+import {
+  startDataRetentionScheduler,
+  stopDataRetentionScheduler,
+} from './services/dataRetentionService.js';
 import {
   startScoreReconciliationScheduler,
   stopScoreReconciliationScheduler,
@@ -34,6 +38,10 @@ import {
   stopCrossContractReconciler,
 } from './services/crossContractReconciler.js';
 import { sorobanService } from './services/sorobanService.js';
+import {
+  startSubjectAccessExportProcessor,
+  stopSubjectAccessExportProcessor,
+} from './services/subjectAccessExportService.js';
 import { validateLoanConfigOnStartup } from './config/loanConfig.js';
 import { startLoanDueCheckCron, stopLoanDueCheckCron } from './cron/loanCheckCron.js';
 import {
@@ -107,8 +115,11 @@ const server = app.listen(port, () => {
   // Start cross-contract (disbursement <-> score) reconciliation ledger sweep
   startCrossContractReconciler();
 
-  // Start periodic notification cleanup
-  startNotificationCleanupScheduler();
+  // Enforce the approved data-retention matrix in bounded, checkpointed batches.
+  startDataRetentionScheduler();
+  startNotificationDeliveryProcessor();
+
+  startSubjectAccessExportProcessor();
 
   // Start loan due check cron
   startLoanDueCheckCron();
@@ -167,7 +178,9 @@ const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
     stopSorobanWriteReplayProcessor();
     stopScoreReconciliationScheduler();
     stopCrossContractReconciler();
-    stopNotificationCleanupScheduler();
+    stopDataRetentionScheduler();
+    stopNotificationDeliveryProcessor();
+    stopSubjectAccessExportProcessor();
     logger.info('All schedulers stopped.');
 
     // Step 3: Close event streams

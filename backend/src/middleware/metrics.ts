@@ -61,6 +61,35 @@ export const webhookRetryQueueDepthGauge = new client.Gauge({
   registers: [metricsRegistry],
 });
 
+export const notificationDeliveryFailuresCounter = new client.Counter({
+  name: 'notification_delivery_failures_total',
+  help: 'Notification provider delivery failures by bounded channel, provider, and failure class.',
+  labelNames: ['channel', 'provider', 'failure_class'] as const,
+  registers: [metricsRegistry],
+});
+
+export const notificationDeliveryLagHistogram = new client.Histogram({
+  name: 'notification_delivery_lag_seconds',
+  help: 'Time from notification creation to provider-confirmed delivery.',
+  labelNames: ['channel', 'provider'] as const,
+  buckets: [1, 5, 15, 30, 60, 300, 900, 3600, 21600],
+  registers: [metricsRegistry],
+});
+
+export const retentionRowsProcessedCounter = new client.Counter({
+  name: 'retention_rows_processed_total',
+  help: 'Rows anonymized, expired, soft-deleted, or deleted by retention data class and operation.',
+  labelNames: ['data_class', 'operation'] as const,
+  registers: [metricsRegistry],
+});
+
+export const retentionJobRunsCounter = new client.Counter({
+  name: 'retention_job_runs_total',
+  help: 'Retention job runs by bounded outcome.',
+  labelNames: ['outcome'] as const,
+  registers: [metricsRegistry],
+});
+
 export const scoreReconciliationLastRunTimestampGauge = new client.Gauge({
   name: 'score_reconciliation_last_run_timestamp',
   help: 'Unix timestamp in seconds for the last score reconciliation run.',
