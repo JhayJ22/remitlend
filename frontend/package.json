@@ -6,12 +6,12 @@
     "node": ">=18"
   },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "node init && next dev",
+    "build": "node init && next build",
     "performance:budget": "node scripts/check-performance-budget.mjs",
     "performance:budget:mobile": "node scripts/check-mobile-performance-budget.mjs",
     "i18n:check": "node scripts/check-i18n.mjs",
-    "start": "next start",
+    "start": "node init && next start",
     "lint": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "audit:a11y": "next build && npx axe-playwright",
@@ -21,7 +21,7 @@
     "test:e2e": "playwright test",
     "test:a11y": "playwright test e2e/a11y.spec.ts --project=chromium",
     "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build",
+    "build-storybook": "node init && storybook build",
     "prepare": "husky",
     "generate:api-types": "tsx scripts/generate-api-types.ts",
     "validate:api-contract": "node scripts/check-contract-drift.js --fail-on-breaking"
