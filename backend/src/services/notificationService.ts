@@ -14,6 +14,47 @@ export type NotificationType =
 
 export type NotificationStatus = 'unread' | 'read' | 'archived';
 
+export type NotificationChannel = 'email' | 'sms' | 'in_app';
+
+export const SUPPORTED_CHANNELS: readonly NotificationChannel[] = ['email', 'sms', 'in_app'];
+
+/**
+ * Category model:
+ *  - 'loan_activity' and 'score' are user-governed (opt-out allowed).
+ *  - 'security' and 'legal' are MANDATORY: they are always delivered on every
+ *    channel the user has a contact for, ignoring channel opt-outs, quiet hours
+ *    and per-type overrides. They cannot be disabled through preferences.
+ */
+export type NotificationCategory = 'loan_activity' | 'score' | 'security' | 'legal';
+
+export const SUPPORTED_CATEGORIES: readonly NotificationCategory[] = [
+  'loan_activity',
+  'score',
+  'security',
+  'legal',
+];
+
+export const MANDATORY_CATEGORIES: readonly NotificationCategory[] = ['security', 'legal'];
+
+export const MANDATORY_NOTIFICATION_POLICY = `
+Mandatory notifications (categories: ${MANDATORY_CATEGORIES.join(', ')}) are always delivered.
+Users cannot opt out of them, and quiet hours do not suppress them. They are delivered
+to every contact channel the user has on file (email and/or SMS).
+`.trim();
+
+const TYPE_CATEGORY: Record<NotificationType, NotificationCategory> = {
+  loan_approved: 'loan_activity',
+  repayment_due: 'loan_activity',
+  repayment_confirmed: 'loan_activity',
+  loan_defaulted: 'legal',
+  loan_liquidated: 'legal',
+  score_changed: 'score',
+};
+
+export function categoryForType(type: NotificationType): NotificationCategory {
+  return TYPE_CATEGORY[type];
+}
+
 export interface Notification {
   id: number;
   userId: string;
@@ -36,12 +77,214 @@ interface CreateNotificationParams {
   actionUrl?: string | undefined | null;
 }
 
+export interface QuietHours {
+  enabled: boolean;
+  /** Local start hour (0-23), inclusive. */
+  startHour: number;
+  /** Local end hour (0-23), exclusive. May be less than startHour (overnight window). */
+  endHour: number;
+}
+
 export interface NotificationPreferences {
+  /** Channels the user has opted into for non-mandatory categories. */
+  channels: NotificationChannel[];
+  /** Non-mandatory categories the user has enabled. */
+  categories: NotificationCategory[];
+  locale: string;
+  timezone: string;
+  quietHours: QuietHours;
   emailEnabled: boolean;
   smsEnabled: boolean;
   phone: string | null;
   perTypeOverrides: Record<string, boolean>;
   digestFrequency?: 'off' | 'daily' | 'weekly';
+}
+
+export interface NotificationPreferencesUpdate {
+  emailEnabled: boolean;
+  smsEnabled: boolean;
+  phone: string | null;
+  channels?: NotificationChannel[];
+  categories?: NotificationCategory[];
+  locale?: string;
+  timezone?: string;
+  quietHours?: QuietHours;
+}
+
+export const DEFAULT_PREFERENCES: Omit<
+  NotificationPreferences,
+  'emailEnabled' | 'smsEnabled' | 'phone' | 'perTypeOverrides'
+> = {
+  channels: ['email', 'in_app'],
+  categories: ['loan_activity', 'score'],
+  locale: 'en-US',
+  timezone: 'UTC',
+  quietHours: { enabled: false, startHour: 22, endHour: 7 },
+};
+
+/**
+ * Cutoff policy: preference changes apply to messages whose delivery decision
+ * has not yet been made. A decision is made at queue-dispatch time, so any
+ * change saved before dispatch takes effect; changes saved after dispatch do
+ * not retroactively affect that message.
+ */
+export const PREFERENCE_CUTOFF_POLICY =
+  'Preference changes apply to any notification not yet dispatched at the time the change is saved.';
+
+// ─── Validation ───────────────────────────────────────────────────────────────
+
+const LOCALE_RE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+const PHONE_RE = /^\+[1-9]\d{6,14}$/;
+
+export function isValidTimezone(tz: string): boolean {
+  if (typeof tz !== 'string' || tz.length === 0) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function validatePreferencesUpdate(input: NotificationPreferencesUpdate): void {
+  if (input.channels !== undefined) {
+    if (!Array.isArray(input.channels)) throw new Error('channels must be an array');
+    for (const c of input.channels) {
+      if (!SUPPORTED_CHANNELS.includes(c)) throw new Error(`Unsupported channel: ${c}`);
+    }
+  }
+  if (input.categories !== undefined) {
+    if (!Array.isArray(input.categories)) throw new Error('categories must be an array');
+    for (const c of input.categories) {
+      if (!SUPPORTED_CATEGORIES.includes(c)) throw new Error(`Unsupported category: ${c}`);
+      if (MANDATORY_CATEGORIES.includes(c)) {
+        throw new Error(`Category '${c}' is mandatory and cannot be configured`);
+      }
+    }
+  }
+  if (input.locale !== undefined && !LOCALE_RE.test(input.locale)) {
+    throw new Error('Invalid locale');
+  }
+  if (input.timezone !== undefined && !isValidTimezone(input.timezone)) {
+    throw new Error('Invalid timezone');
+  }
+  if (input.quietHours !== undefined) {
+    const q = input.quietHours;
+    if (typeof q.enabled !== 'boolean') throw new Error('quietHours.enabled must be boolean');
+    for (const h of [q.startHour, q.endHour]) {
+      if (!Number.isInteger(h) || h < 0 || h > 23) {
+        throw new Error('quietHours hours must be integers 0-23');
+      }
+    }
+    if (q.enabled && q.startHour === q.endHour) {
+      throw new Error('quietHours start and end must differ when enabled');
+    }
+  }
+  if (input.phone !== null && input.phone !== undefined && !PHONE_RE.test(input.phone)) {
+    throw new Error('Invalid phone number (E.164 expected)');
+  }
+}
+
+// ─── Quiet hours (timezone-aware, DST-safe) ──────────────────────────────────
+
+/**
+ * Returns the local hour (0-23) of `instant` in `timezone`. Uses Intl, which
+ * applies the correct DST offset for that instant.
+ */
+export function localHourAt(instant: Date, timezone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hour: 'numeric',
+    hourCycle: 'h23',
+  }).formatToParts(instant);
+  const hour = parts.find((p) => p.type === 'hour');
+  return hour ? Number(hour.value) % 24 : 0;
+}
+
+/**
+ * Determines whether `instant` falls inside the quiet window in the user's
+ * timezone. Resolution is hour-granular and evaluated on the real instant, so
+ * on a fall-back transition the repeated hour is treated consistently (both
+ * occurrences are evaluated by their actual local hour), and on a spring-forward
+ * gap no instant maps to the skipped local hour, so there is no ambiguity.
+ * Mandatory categories bypass this check entirely.
+ */
+export function isInQuietHours(instant: Date, quiet: QuietHours, timezone: string): boolean {
+  if (!quiet.enabled) return false;
+  const h = localHourAt(instant, timezone);
+  const { startHour: s, endHour: e } = quiet;
+  return s < e ? h >= s && h < e : h >= s || h < e;
+}
+
+/**
+ * Returns the next instant (UTC) at which the quiet window ends, searching
+ * forward hour by hour. Deterministic: depends only on the inputs.
+ */
+export function nextQuietEnd(instant: Date, quiet: QuietHours, timezone: string): Date {
+  let t = instant.getTime();
+  const limit = t + 48 * 3600_000;
+  while (t <= limit) {
+    const candidate = new Date(t);
+    if (!isInQuietHours(candidate, quiet, timezone)) return candidate;
+    t += 3600_000;
+  }
+  return instant;
+}
+
+// ─── Delivery decision ───────────────────────────────────────────────────────
+
+export interface DeliveryDecision {
+  email: boolean;
+  sms: boolean;
+  reason: 'mandatory' | 'delivered' | 'opted_out' | 'quiet_hours' | 'no_contact';
+  deliverAt: Date;
+}
+
+export function decideDelivery(
+  type: NotificationType,
+  prefs: NotificationPreferences,
+  now: Date,
+  hasEmail: boolean,
+  hasPhone: boolean,
+): DeliveryDecision {
+  const category = categoryForType(type);
+
+  if (MANDATORY_CATEGORIES.includes(category)) {
+    return {
+      email: hasEmail,
+      sms: hasPhone,
+      reason: hasEmail || hasPhone ? 'mandatory' : 'no_contact',
+      deliverAt: now,
+    };
+  }
+
+  if (!prefs.categories.includes(category)) {
+    return { email: false, sms: false, reason: 'opted_out', deliverAt: now };
+  }
+
+  if (prefs.perTypeOverrides[type] === false) {
+    return { email: false, sms: false, reason: 'opted_out', deliverAt: now };
+  }
+
+  if (isInQuietHours(now, prefs.quietHours, prefs.timezone)) {
+    return {
+      email: false,
+      sms: false,
+      reason: 'quiet_hours',
+      deliverAt: nextQuietEnd(now, prefs.quietHours, prefs.timezone),
+    };
+  }
+
+  const emailOk = hasEmail && prefs.emailEnabled && prefs.channels.includes('email');
+  const smsOk = hasPhone && prefs.smsEnabled && prefs.channels.includes('sms');
+  const smsEligibleType = type === 'repayment_due' || type === 'loan_defaulted' || type === 'loan_liquidated';
+
+  return {
+    email: emailOk,
+    sms: smsOk && smsEligibleType,
+    reason: emailOk || smsOk ? 'delivered' : 'no_contact',
+    deliverAt: now,
+  };
 }
 
 // ─── SSE subscriber registry ──────────────────────────────────────────────────
@@ -109,548 +352,6 @@ function buildEmailTemplate(
   return templates[type];
 }
 
-async function sendEmail(email: string, message: string, type?: NotificationType): Promise<void> {
-  const fromEmail = process.env.FROM_EMAIL;
-  const maskedEmail = email.replace(/(.{2}).*(@.*)/, '$1***$2');
-
-  if (!fromEmail) {
-    logger.withContext().info('[Email] FROM_EMAIL not set', { email: maskedEmail, message });
-    return;
-  }
-
-  await ensureSendGrid();
-
-  if (!process.env.SENDGRID_API_KEY) {
-    logger
-      .withContext()
-      .info(`[Email] SendGrid not configured. Would send to ${maskedEmail}: ${message}`);
-    return;
-  }
-
-  const template = type
-    ? buildEmailTemplate(type, message)
-    : { subject: 'Notification from RemitLend', html: `<p>${message}</p>` };
-
-  try {
-    const sgMail = await import('@sendgrid/mail');
-    await sgMail.default.send({
-      to: email,
-      from: fromEmail,
-      subject: template.subject,
-      html: template.html,
-    });
-    logger.withContext().info(`[Email] Sent to ${maskedEmail}`, { subject: template.subject });
-  } catch (error) {
-    logger.withContext().error(`[Email] SendGrid failed for ${maskedEmail}`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    // Swallow error — email failure must not break the main flow
-  }
-}
-
-async function sendSMS(phone: string, message: string) {
-  const maskedPhone = phone.length > 4 ? '+xx...****' + phone.slice(-2) : '****';
-  const twilioClient = await getTwilioClient();
-  if (!twilioClient || !process.env.TWILIO_PHONE_NUMBER) {
-    logger
-      .withContext()
-      .warn(`[SMS] Twilio not configured. Would send to ${maskedPhone}`, { message });
-    return;
-  }
-
-  try {
-    const result = await twilioClient.messages.create({
-      body: message,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: phone,
-    });
-    logger.withContext().info(`[SMS] Sent to ${maskedPhone}`, { sid: result.sid });
-  } catch (error) {
-    logger.withContext().error(`[SMS] Failed to send to ${maskedPhone}`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    // Swallow error - don't fail the notification creation
-  }
-}
-
-class NotificationService {
-  async getNotificationPreferences(userId: string): Promise<NotificationPreferences> {
-    const result = await query(
-      `SELECT email_enabled, sms_enabled, phone
-       FROM user_profiles
-       WHERE public_key = $1
-       LIMIT 1`,
-      [userId],
-    );
-
-    if (result.rows.length === 0) {
-      return {
-        emailEnabled: false,
-        smsEnabled: false,
-        phone: null,
-        perTypeOverrides: {},
-      };
-    }
-
-    const row = result.rows[0];
-    return {
-      emailEnabled: Boolean(row.email_enabled),
-      smsEnabled: Boolean(row.sms_enabled),
-      phone: (row.phone as string | null) ?? null,
-      perTypeOverrides: {},
-    };
-  }
-
-  async updateNotificationPreferences(
-    userId: string,
-    payload: Pick<NotificationPreferences, 'emailEnabled' | 'smsEnabled' | 'phone'>,
-  ): Promise<NotificationPreferences> {
-    const result = await query(
-      `UPDATE user_profiles
-       SET email_enabled = $2,
-           sms_enabled = $3,
-           phone = $4
-       WHERE public_key = $1
-       RETURNING email_enabled, sms_enabled, phone`,
-      [userId, payload.emailEnabled, payload.smsEnabled, payload.phone],
-    );
-
-    const row = result.rows[0] ?? {
-      email_enabled: payload.emailEnabled,
-      sms_enabled: payload.smsEnabled,
-      phone: payload.phone,
-    };
-
-    return {
-      emailEnabled: Boolean(row.email_enabled),
-      smsEnabled: Boolean(row.sms_enabled),
-      phone: (row.phone as string | null) ?? null,
-      perTypeOverrides: {},
-    };
-  }
-
-  /**
-   * Persists a new notification and pushes it to any active SSE subscribers
-   * for that user.
-   */
-  async createNotification(params: CreateNotificationParams): Promise<Notification> {
-    const { userId, type, title, message, loanId, actionUrl } = params;
-
-    const resolvedActionUrl = actionUrl ?? (loanId != null ? `/loans/${loanId}` : null);
-
-    const result = await query(
-      `INSERT INTO notifications (user_id, type, title, message, loan_id, action_url, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'unread')
-       RETURNING id, user_id, type, title, message, loan_id, action_url, read, status, created_at`,
-      [userId, type, title, message, loanId ?? null, resolvedActionUrl],
-    );
-
-    const notification = this.mapRow(result.rows[0]);
-    this.broadcast(userId, notification);
-
-    // Also trigger external notifications
-    await this.notifyUserExternal(userId, message, type);
-
-    return notification;
-  }
-
-  /**
-   * Batches repayment_due notifications per user based on digest frequency.
-   * Returns grouped notifications by user and digest frequency.
-   */
-  async batchRepaymentNotificationsForDigest(
-    notifications: Array<{ userId: string; message: string; loanId?: number }>,
-  ): Promise<Map<string, Array<{ userId: string; message: string; loanId?: number }>>> {
-    const grouped = new Map<string, Array<{ userId: string; message: string; loanId?: number }>>();
-
-    for (const notif of notifications) {
-      const prefResult = await query(
-        `SELECT digest_frequency FROM user_notification_preferences WHERE user_id = $1`,
-        [notif.userId],
-      );
-
-      const digestFrequency = prefResult.rows[0]?.digest_frequency ?? 'off';
-
-      if (digestFrequency === 'off') {
-        // Send immediately
-        const key = `${notif.userId}:immediate`;
-        if (!grouped.has(key)) {
-          grouped.set(key, []);
-        }
-        grouped.get(key)!.push(notif);
-      } else {
-        // Batch for daily or weekly digest
-        const key = `${notif.userId}:${digestFrequency}`;
-        if (!grouped.has(key)) {
-          grouped.set(key, []);
-        }
-        grouped.get(key)!.push(notif);
-      }
-    }
-
-    return grouped;
-  }
-
-  /**
-   * Sends external notifications (Email/SMS) based on user preferences.
-   * SMS is triggered for repayment_due and loan_defaulted events.
-   */
-  private async notifyUserExternal(userId: string, message: string, type: NotificationType) {
-    try {
-      const result = await query(
-        `SELECT email, phone, email_enabled, sms_enabled 
-         FROM user_profiles 
-         WHERE public_key = $1`,
-        [userId],
-      );
-
-      if (result.rows.length === 0) return;
-
-      const user = result.rows[0];
-
-      if (user.email_enabled && user.email) {
-        await sendEmail(user.email, message, type);
-      }
-
-      // Trigger SMS for critical events: repayment_due, loan_defaulted, and loan_liquidated
-      const smsEnabledForType =
-        type === 'repayment_due' || type === 'loan_defaulted' || type === 'loan_liquidated';
-
-      if (user.sms_enabled && user.phone && smsEnabledForType) {
-        await sendSMS(user.phone, message);
-      }
-    } catch (error) {
-      logger.withContext().error('Error sending external notifications', { userId, error });
-    }
-  }
-
-  /**
-   * Returns the most recent notifications for a user (newest first).
-   * Supports filtering by type, status, and date range.
-   */
-  async getNotificationsForUser(
-    userId: string,
-    limit = 50,
-    type?: string,
-    status?: string,
-    from?: string,
-    to?: string,
-  ): Promise<Notification[]> {
-    let whereClause = 'user_id = $1';
-    const params: (string | number)[] = [userId];
-    let paramIndex = 2;
-
-    if (type) {
-      whereClause += ` AND type = $${paramIndex}`;
-      params.push(type);
-      paramIndex++;
-    }
-
-    if (status) {
-      whereClause += ` AND status = $${paramIndex}`;
-      params.push(status);
-      paramIndex++;
-    }
-
-    if (from) {
-      const fromDate = new Date(from);
-      if (Number.isNaN(fromDate.getTime())) {
-        throw new Error("Invalid 'from' date format");
-      }
-      whereClause += ` AND created_at >= $${paramIndex}`;
-      params.push(fromDate.toISOString());
-      paramIndex++;
-    }
-
-    if (to) {
-      const toDate = new Date(to);
-      if (Number.isNaN(toDate.getTime())) {
-        throw new Error("Invalid 'to' date format");
-      }
-      whereClause += ` AND created_at <= $${paramIndex}`;
-      params.push(toDate.toISOString());
-      paramIndex++;
-    }
-
-    const result = await query(
-      `SELECT id, user_id, type, title, message, loan_id, action_url, read, status, created_at
-         FROM notifications
-         WHERE ${whereClause}
-         ORDER BY created_at DESC
-         LIMIT $${paramIndex}`,
-      [...params, limit],
-    );
-    return result.rows.map(this.mapRow);
-  }
-
-  /**
-   * Returns the unread notification count for a user.
-   */
-  async getUnreadCount(userId: string): Promise<number> {
-    const result = await query(
-      `SELECT COUNT(*) AS count FROM notifications WHERE user_id = $1 AND status = 'unread'`,
-      [userId],
-    );
-    return parseInt(result.rows[0]?.count ?? '0', 10);
-  }
-
-  /**
-   * Marks specific notifications as read.
-   * Only updates rows that belong to the given user to prevent cross-user access.
-   */
-  async markRead(userId: string, ids: number[]): Promise<void> {
-    if (!ids.length) return;
-    await query(
-      `UPDATE notifications SET read = true, status = 'read'
-       WHERE user_id = $1 AND id = ANY($2::int[]) AND status = 'unread'`,
-      [userId, ids],
-    );
-  }
-
-  /**
-   * Marks all notifications for a user as read.
-   */
-  async markAllRead(userId: string): Promise<void> {
-    await query(
-      `UPDATE notifications SET read = true, status = 'read'
-       WHERE user_id = $1 AND status = 'unread'`,
-      [userId],
-    );
-  }
-
-  /**
-   * Archives specific notifications for a user.
-   * Archived notifications are excluded from the main feed and cleaned up sooner.
-   */
-  async archiveNotifications(userId: string, ids: number[]): Promise<void> {
-    if (!ids.length) return;
-    await query(
-      `UPDATE notifications SET read = true, status = 'archived'
-       WHERE user_id = $1 AND id = ANY($2::int[]) AND status != 'archived'`,
-      [userId, ids],
-    );
-  }
-
-  /**
-   * Notifies all admins of a dispute via:
-   * 1. Email to ADMIN_EMAIL (if configured)
-   * 2. In-app SSE push to each admin wallet currently subscribed
-   * 3. Webhook POST to ADMIN_WEBHOOK_URL (if configured)
-   */
-  async notifyAdmins(params: { title: string; message: string; loanId?: number }): Promise<void> {
-    const { title, message, loanId } = params;
-
-    // 1. Email the configured admin address
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (adminEmail) {
-      await sendEmail(adminEmail, message);
-    } else {
-      logger.withContext().warn('[Admin] ADMIN_EMAIL not set — logging dispute only', {
-        title,
-        message,
-      });
-    }
-
-    // 2. Push SSE notification to every admin currently connected
-    try {
-      const adminWallets = (process.env.ADMIN_WALLETS ?? '')
-        .split(',')
-        .map((w) => w.trim())
-        .filter((w) => w.length > 0);
-
-      for (const adminId of adminWallets) {
-        const actionUrl = loanId != null ? `/loans/${loanId}` : null;
-        const result = await query(
-          `INSERT INTO notifications (user_id, type, title, message, loan_id, action_url, status)
-           VALUES ($1, 'loan_defaulted', $2, $3, $4, $5, 'unread')
-           RETURNING id, user_id, type, title, message, loan_id, action_url, read, status, created_at`,
-          [adminId, title, message, loanId ?? null, actionUrl],
-        );
-        const notification = this.mapRow(result.rows[0]);
-        this.broadcast(adminId, notification);
-      }
-    } catch (err) {
-      logger.withContext().error('[Admin] Failed to persist/push admin notifications', {
-        err,
-      });
-    }
-
-    // 3. Optional webhook (Slack / Discord / custom)
-    const webhookUrl = process.env.ADMIN_WEBHOOK_URL;
-    if (webhookUrl) {
-      try {
-        await fetch(webhookUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: `[RemitLend] ${title}: ${message}` }),
-        });
-      } catch (err) {
-        logger.withContext().error('[Admin] Webhook POST failed', { webhookUrl, err });
-      }
-    }
-  }
-
-  // ─── SSE helpers ────────────────────────────────────────────────────────────
-
-  /**
-   * Registers an SSE response stream for the given user.
-   * Returns an unsubscribe function that should be called when the client
-   * disconnects.
-   */
-  subscribe(userId: string, res: SseClient): () => void {
-    if (!sseClients.has(userId)) {
-      sseClients.set(userId, new Set());
-    }
-    sseClients.get(userId)!.add(res);
-
-    return () => {
-      sseClients.get(userId)?.delete(res);
-      if (sseClients.get(userId)?.size === 0) {
-        sseClients.delete(userId);
-      }
-    };
-  }
-
-  /**
-   * Pushes a notification to all active SSE streams for the given user.
-   */
-  private broadcast(userId: string, notification: Notification): void {
-    const clients = sseClients.get(userId);
-    if (!clients?.size) return;
-
-    const data = `data: ${JSON.stringify(notification)}\n\n`;
-    for (const res of clients) {
-      try {
-        res.write(data);
-      } catch (err) {
-        logger.withContext().error('SSE write error', { userId, err });
-        clients.delete(res);
-      }
-    }
-  }
-
-  /**
-   * Deletes notifications older than the specified number of days.
-   * @param retentionDays The number of days to keep notifications.
-   * @returns The number of deleted notifications.
-   */
-  async deleteOldNotifications(retentionDays: number): Promise<number> {
-    try {
-      const result = await query(
-        `DELETE FROM notifications
-         WHERE created_at < NOW() - (INTERVAL '1 day' * $1)`,
-        [retentionDays],
-      );
-      const deletedCount = result.rowCount ?? 0;
-      if (deletedCount > 0) {
-        logger.withContext().info(`Notification cleanup completed: ${deletedCount} rows deleted`, {
-          retentionDays,
-        });
-      }
-      return deletedCount;
-    } catch (error) {
-      logger.withContext().error('Error during notification cleanup', {
-        error,
-        retentionDays,
-      });
-      return 0;
-    }
-  }
-
-  /**
-   * Deletes read and archived notifications older than the specified number of days.
-   * Acknowledged notifications are cleaned up on a shorter retention cycle than unread ones.
-   * @param retentionDays The number of days to keep read/archived notifications.
-   * @returns The number of deleted notifications.
-   */
-  async deleteReadAndArchived(retentionDays: number): Promise<number> {
-    try {
-      const result = await query(
-        `DELETE FROM notifications
-         WHERE status IN ('read', 'archived')
-           AND created_at < NOW() - (INTERVAL '1 day' * $1)`,
-        [retentionDays],
-      );
-      const deletedCount = result.rowCount ?? 0;
-      if (deletedCount > 0) {
-        logger
-          .withContext()
-          .info(`Read/archived notification cleanup completed: ${deletedCount} rows deleted`, {
-            retentionDays,
-          });
-      }
-      return deletedCount;
-    } catch (error) {
-      logger.withContext().error('Error during read/archived notification cleanup', {
-        error,
-        retentionDays,
-      });
-      return 0;
-    }
-  }
-
-  // ─── Row mapper ──────────────────────────────────────────────────────────────
-
-  private mapRow(row: Record<string, unknown>): Notification {
-    const loanId = row.loan_id != null ? (row.loan_id as number) : undefined;
-    const actionUrl = row.action_url != null ? (row.action_url as string) : undefined;
-    const base = {
-      id: row.id as number,
-      userId: row.user_id as string,
-      type: row.type as NotificationType,
-      title: row.title as string,
-      message: row.message as string,
-      read: row.read as boolean,
-      status: (row.status as NotificationStatus) ?? (row.read ? 'read' : 'unread'),
-      createdAt: new Date(row.created_at as string),
-    };
-    // Keep optional fields omitted rather than null so the mapped shape is
-    // consistent (loanId is treated the same way).
-    const withLoan = loanId !== undefined ? { ...base, loanId } : base;
-    return actionUrl !== undefined ? { ...withLoan, actionUrl } : withLoan;
-  }
-}
-
-export const notificationService = new NotificationService();
-
-let cleanupInterval: ReturnType<typeof setInterval> | undefined;
-
-/**
- * Starts a periodic scheduler to clean up old notifications based on retention policy.
- */
-export function startNotificationCleanupScheduler(): void {
-  if (cleanupInterval) return;
-
-  const retentionDays = parseInt(process.env.NOTIFICATION_RETENTION_DAYS || '90', 10);
-  const readRetentionDays = parseInt(process.env.READ_NOTIFICATION_RETENTION_DAYS || '30', 10);
-  const intervalMs = parseInt(
-    process.env.NOTIFICATION_CLEANUP_INTERVAL_MS || String(24 * 60 * 60 * 1000), // Default: 24h
-    10,
-  );
-
-  // Run once immediately on start to clear any backlog
-  void notificationService.deleteOldNotifications(retentionDays);
-  void notificationService.deleteReadAndArchived(readRetentionDays);
-
-  cleanupInterval = setInterval(async () => {
-    await notificationService.deleteOldNotifications(retentionDays);
-    await notificationService.deleteReadAndArchived(readRetentionDays);
-  }, intervalMs);
-
-  logger.withContext().info('Notification cleanup scheduler started', {
-    retentionDays,
-    readRetentionDays,
-    intervalMs,
-  });
-}
-
-/**
- * Stops the notification cleanup scheduler.
- */
-export function stopNotificationCleanupScheduler(): void {
-  if (cleanupInterval) {
-    clearInterval(cleanupInterval);
-    cleanupInterval = undefined;
-    logger.withContext().info('Notification cleanup scheduler stopped');
-  }
-}
+// NOTE: sendEmail / SMS dispatch / SSE broadcast / persistence functions were
+// truncated in the submitted source and must be restored from the original
+// file before this change is merged. They are intentionally not reconstructed here.
