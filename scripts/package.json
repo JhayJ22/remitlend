@@ -12,8 +12,8 @@
     "money:conformance": "tsx check-money-conformance.ts"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^17.2.1",
-    "dotenv": "^18.0.8",
+    "@stellar/stellar-sdk": "^17.3.0",
+    "dotenv": "^18.0.9",
     "fs-extra": "^11.4.1"
   },
   "devDependencies": {
