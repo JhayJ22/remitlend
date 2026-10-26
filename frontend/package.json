@@ -27,7 +27,7 @@
     "validate:api-contract": "node scripts/check-contract-drift.js --fail-on-breaking"
   },
   "dependencies": {
-    "@hookform/resolvers": "^5.9.1",
+    "@hookform/resolvers": "^6.0.0",
     "@sentry/nextjs": "^11.8.0",
     "@serwist/next": "^9.5.13",
     "@serwist/precaching": "^9.5.13",
