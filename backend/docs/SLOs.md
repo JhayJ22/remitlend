@@ -24,6 +24,32 @@ can be attributed to the right dependency:
 5. **Indexer projection** — indexed state reflects the confirmed event.
 6. **Notification** — user-facing notification delivered (where applicable).
 
+## Low-bandwidth rendering states
+
+Core account journeys (loan request, repayment, eligible-funds inspection, withdrawal)
+are rendered under a supported connection state model so that constrained clients
+degrade predictably without weakening financial or security guarantees:
+
+| State | Trigger | Rendering behavior |
+| --- | --- | --- |
+| `normal` | Connection healthy | Full experience, all optional assets loaded. |
+| `constrained` | Slow/limited connection detected | Nonessential assets (decorative images, secondary widgets, noncritical data) are deferred or omitted; core journey controls remain. |
+| `offline` / `stale` | Connection lost or data older than the freshness bound | Cached data shown with an explicit user-visible stale-data warning; mutating actions are blocked. |
+
+Invariants that hold in every state:
+
+- **Transaction details** (amounts in exact money units, counterparty, fees) are always
+  rendered and never truncated or rounded.
+- **Security and authorization checks** are always enforced; constrained mode never
+  bypasses consent or access-control gates.
+- **Stale-data warnings** are always explicit and user-visible; stale data is never
+  presented as authoritative.
+- **Invalid or stale actions are rejected** client-side before dispatch, so no partial
+  financial side effects occur; the API remains the source of truth and re-validates.
+
+These states are a rendering concern only; they do not change the SLI event definitions
+below, which continue to be measured at the API and chain boundaries.
+
 ## SLI definitions
 
 Every SLI below specifies a precise event definition, an eligible denominator, and an
@@ -146,41 +172,6 @@ exhausted.
 | `LoanRequestFinalitySlow` | SLI-2 burn rate | Borrowers cannot confirm loans | `@chain-oncall` | `runbooks/chain-finality.md` | 14.4x over 1h and 6x over 6h |
 | `RepaymentSubmissionSlow` | SLI-3 burn rate | Borrowers cannot submit repayments | `@backend-oncall` | `runbooks/repayment-submission.md` | 14.4x over 1h and 6x over 6h |
 | `RepaymentFinalitySlow` | SLI-4 burn rate | Repayments not confirmed | `@chain-oncall` | `runbooks/chain-finality.md` | 14.4x over 1h and 6x over 6h |
-| `EligibleFundsProjectionLag` | SLI-5 burn rate | Lenders see stale eligible funds | `@indexer-oncall` | `runbooks/indexer-projection-lag.md` | 14.4x over 1h and 6x over 6h |
-| `EligibleFundsUnavailable` | SLI-6 burn rate | Lenders cannot inspect funds | `@backend-oncall` | `runbooks/eligible-funds-availability.md` | 14.4x over 1h and 6x over 6h |
-| `WithdrawalSubmissionSlow` | SLI-7 burn rate | Lenders wait to withdraw | `@backend-oncall` | `runbooks/withdrawal-submission.md` | 14.4x over 1h and 6x over 6h |
-| `WithdrawalFinalitySlow` | SLI-8 burn rate | Withdrawals not confirmed | `@chain-oncall` | `runbooks/chain-finality.md` | 14.4x over 1h and 6x over 6h |
-| `NotificationDeliverySlow` | SLI-9 burn rate | Users miss journey notifications | `@notifications-oncall` | `runbooks/notification-delivery.md` | 14.4x over 1h and 6x over 6h |
+| `EligibleFunds
 
-## Dashboards
-
-Dashboards separate dependency outages from application failures and avoid
-high-cardinality labels:
-
-- **Application failures** — SLI-1, SLI-3, SLI-6, SLI-7, broken down by endpoint and
-  status class only.
-- **Dependency outages** — SLI-2, SLI-4, SLI-5, SLI-8, SLI-9, broken down by dependency
-  (RPC provider, chain, indexer, notification provider).
-- **Label policy** — labels are limited to `journey`, `stage`, `dependency`, and
-  `status_class`. User ids, loan ids, pool ids, transaction hashes, and other
-  high-cardinality values are never used as metric labels; they belong in logs and
-traces only.
-
-## Error-budget policy
-
-Each SLI has a 28-day error budget of `1 - target`.
-
-- **< 50% budget consumed:** normal operation; no action required.
-- **50–100% budget consumed:** the owning team reviews the burn in the next weekly
-  review and files a follow-up if the trend continues.
-- **100% budget consumed:** feature work for the affected journey pauses; the owning
-  team prioritizes reliability work until the budget recovers.
-- **Fast burn (14.4x over 1h):** page the owner immediately and follow the runbook.
-
-## Review cadence
-
-- **Weekly:** owners review burn rates, alert noise, and open runbook gaps.
-- **Monthly:** review SLI definitions, exclusions, and targets against observed traffic;
-  adjust thresholds when journeys or dependencies change.
-- **Quarterly:** full SLO review with product and on-call to confirm the journeys and
-  targets still reflect user expectations.
+/* … truncated 2344 chars — edit only what you need near the top … */

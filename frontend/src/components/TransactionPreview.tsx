@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 export type ScheduleStatus = "confirmed" | "stale" | "incomplete" | "mismatch" | "unavailable";
 
@@ -63,6 +63,56 @@ export function reconcileSchedule(
   return { ok: true };
 }
 
+interface ChangedField {
+  label: string;
+  estimate: string;
+  confirmed: string;
+}
+
+function collectChangedFields(
+  request: PreviewRequest,
+  schedule?: AuthoritativeSchedule | null,
+): ChangedField[] {
+  if (!schedule) return [];
+  const changed: ChangedField[] = [];
+  if (schedule.asset !== request.asset || schedule.unit !== request.unit) {
+    changed.push({
+      label: "Asset / unit",
+      estimate: `${request.asset} / ${request.unit}`,
+      confirmed: `${schedule.asset} / ${schedule.unit}`,
+    });
+  }
+  if (schedule.rateBps !== request.rateBps) {
+    changed.push({
+      label: "Rate",
+      estimate: `${(request.rateBps / 100).toFixed(2)}%`,
+      confirmed: `${(schedule.rateBps / 100).toFixed(2)}%`,
+    });
+  }
+  if (schedule.termMonths !== request.termMonths) {
+    changed.push({
+      label: "Term",
+      estimate: `${request.termMonths} months`,
+      confirmed: `${schedule.termMonths} months`,
+    });
+  }
+  if (schedule.principalMinor !== request.principalMinor) {
+    changed.push({
+      label: "Principal",
+      estimate: formatMinor(request.principalMinor, request.unit),
+      confirmed: formatMinor(schedule.principalMinor, schedule.unit),
+    });
+  }
+  if (schedule.feesMinor !== request.feesMinor) {
+    changed.push({
+      label: "Fees",
+      estimate: formatMinor(request.feesMinor, request.unit),
+      confirmed: formatMinor(schedule.feesMinor, schedule.unit),
+    });
+  }
+  return changed;
+}
+
 export default function TransactionPreview({
   request,
   schedule,
@@ -71,10 +121,42 @@ export default function TransactionPreview({
 }: TransactionPreviewProps) {
   const check = useMemo(() => reconcileSchedule(request, schedule), [request, schedule]);
   const canSign = check.ok;
+  const changedFields = useMemo(
+    () => collectChangedFields(request, schedule),
+    [request, schedule],
+  );
+
+  const errorRef = useRef<HTMLParagraphElement | null>(null);
+  const signRef = useRef<HTMLButtonElement | null>(null);
+  const retryRef = useRef<HTMLButtonElement | null>(null);
+  const wasBlocked = useRef(false);
+
+  // Move focus to the error when signing becomes blocked, and return focus to
+  // the sign button once the schedule reconciles again. Never trap focus.
+  useEffect(() => {
+    if (!canSign) {
+      wasBlocked.current = true;
+      errorRef.current?.focus();
+    } else if (wasBlocked.current) {
+      wasBlocked.current = false;
+      signRef.current?.focus();
+    }
+  }, [canSign]);
+
+  const stateLabel = !schedule
+    ? "loading"
+    : canSign
+      ? changedFields.length > 0
+        ? "ready with changed fields"
+        : "ready"
+      : "error";
 
   return (
-    <section className="transaction-preview">
-      <h3>Loan cost preview</h3>
+    <section className="transaction-preview" aria-labelledby="preview-heading">
+      <h3 id="preview-heading">Loan cost preview</h3>
+      <p className="preview-state" aria-live="polite">
+        Preview state: {stateLabel}
+      </p>
       <dl>
         <dt>Schedule version</dt>
         <dd>{schedule?.scheduleVersion ?? "—"}</dd>
@@ -97,16 +179,36 @@ export default function TransactionPreview({
         <dt>Total due (confirmed)</dt>
         <dd>{schedule ? formatMinor(schedule.totalDueMinor, schedule.unit) : "—"}</dd>
       </dl>
+      <div className="preview-changed" aria-live="polite" aria-atomic="true">
+        <h4>Changed fields</h4>
+        {changedFields.length === 0 ? (
+          <p>No fields changed since preview.</p>
+        ) : (
+          <ul>
+            {changedFields.map((field) => (
+              <li key={field.label}>
+                {field.label}: estimate {field.estimate}, confirmed {field.confirmed}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
       {!canSign && (
-        <p className="preview-error" role="alert">
+        <p className="preview-error" role="alert" tabIndex={-1} ref={errorRef}>
           {check.reason}. Signing is blocked until the schedule is refreshed.
         </p>
       )}
       <div className="preview-actions">
-        <button type="button" onClick={onRetry} disabled={!onRetry}>
+        <button type="button" onClick={onRetry} disabled={!onRetry} ref={retryRef}>
           Retry schedule
         </button>
-        <button type="button" onClick={onSign} disabled={!canSign || !onSign}>
+        <button
+          type="button"
+          onClick={onSign}
+          disabled={!canSign || !onSign}
+          aria-describedby={!canSign ? "preview-error" : undefined}
+          ref={signRef}
+        >
           Sign transaction
         </button>
       </div>
