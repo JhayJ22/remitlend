@@ -58,6 +58,18 @@ export enum ErrorCode {
   LOAN_NOT_ACTIVE = 'LOAN_NOT_ACTIVE',
   INVALID_LOAN_ID = 'INVALID_LOAN_ID',
   INVALID_TX_XDR = 'INVALID_TX_XDR',
+
+  // Operations Errors (alerts, incident bundles, clock skew)
+  ALERT_OWNERSHIP_NOT_FOUND = 'ALERT_OWNERSHIP_NOT_FOUND',
+  ALERT_SEVERITY_INVALID = 'ALERT_SEVERITY_INVALID',
+  ALERT_DRILL_DUPLICATE = 'ALERT_DRILL_DUPLICATE',
+  INCIDENT_BUNDLE_NOT_FOUND = 'INCIDENT_BUNDLE_NOT_FOUND',
+  INCIDENT_BUNDLE_EXPIRED = 'INCIDENT_BUNDLE_EXPIRED',
+  INCIDENT_BUNDLE_TOO_LARGE = 'INCIDENT_BUNDLE_TOO_LARGE',
+  INCIDENT_BUNDLE_FORBIDDEN = 'INCIDENT_BUNDLE_FORBIDDEN',
+  CLOCK_SKEW_EXCEEDED = 'CLOCK_SKEW_EXCEEDED',
+  TIMESTAMP_STALE = 'TIMESTAMP_STALE',
+  AUTHORITATIVE_TIME_UNAVAILABLE = 'AUTHORITATIVE_TIME_UNAVAILABLE',
 }
 
 /**
@@ -307,6 +319,78 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     description: 'The provided transaction XDR is invalid or malformed',
     suggestedAction: 'Provide a valid signed transaction XDR',
   },
+
+  // Operations Errors
+  [ErrorCode.ALERT_OWNERSHIP_NOT_FOUND]: {
+    code: ErrorCode.ALERT_OWNERSHIP_NOT_FOUND,
+    message: 'Alert ownership not defined',
+    httpStatus: 422,
+    description: 'The SLO alert has no owner, runbook, or escalation route configured',
+    suggestedAction: 'Register an owner, runbook, and escalation route for this alert',
+  },
+  [ErrorCode.ALERT_SEVERITY_INVALID]: {
+    code: ErrorCode.ALERT_SEVERITY_INVALID,
+    message: 'Invalid alert severity',
+    httpStatus: 400,
+    description: 'The provided alert severity is not a supported value',
+    suggestedAction: 'Use one of the supported severities (e.g. SEV1, SEV2, SEV3, SEV4)',
+  },
+  [ErrorCode.ALERT_DRILL_DUPLICATE]: {
+    code: ErrorCode.ALERT_DRILL_DUPLICATE,
+    message: 'Duplicate alert drill',
+    httpStatus: 409,
+    description: 'A drill with the same idempotency key has already been recorded',
+    suggestedAction: 'Reuse the existing drill result or supply a new idempotency key',
+  },
+  [ErrorCode.INCIDENT_BUNDLE_NOT_FOUND]: {
+    code: ErrorCode.INCIDENT_BUNDLE_NOT_FOUND,
+    message: 'Incident bundle not found',
+    httpStatus: 404,
+    description: 'No evidence bundle exists for the supplied incident ID',
+    suggestedAction: 'Verify the incident ID and try again',
+  },
+  [ErrorCode.INCIDENT_BUNDLE_EXPIRED]: {
+    code: ErrorCode.INCIDENT_BUNDLE_EXPIRED,
+    message: 'Incident bundle expired',
+    httpStatus: 410,
+    description: 'The evidence bundle has exceeded its time limit and is no longer retrievable',
+    suggestedAction: 'Regenerate the bundle from the incident ID if still within retention',
+  },
+  [ErrorCode.INCIDENT_BUNDLE_TOO_LARGE]: {
+    code: ErrorCode.INCIDENT_BUNDLE_TOO_LARGE,
+    message: 'Incident bundle exceeds size limit',
+    httpStatus: 413,
+    description: 'The requested evidence bundle exceeds the bounded size limit',
+    suggestedAction: 'Narrow the incident time window or reduce the requested references',
+  },
+  [ErrorCode.INCIDENT_BUNDLE_FORBIDDEN]: {
+    code: ErrorCode.INCIDENT_BUNDLE_FORBIDDEN,
+    message: 'Incident bundle access denied',
+    httpStatus: 403,
+    description: 'You are not authorized to access this incident evidence bundle',
+    suggestedAction: 'Request access from the incident owner or security team',
+  },
+  [ErrorCode.CLOCK_SKEW_EXCEEDED]: {
+    code: ErrorCode.CLOCK_SKEW_EXCEEDED,
+    message: 'Clock skew exceeded',
+    httpStatus: 400,
+    description: 'The measured clock drift between services exceeds the allowed tolerance',
+    suggestedAction: 'Resynchronize clocks and retry the operation',
+  },
+  [ErrorCode.TIMESTAMP_STALE]: {
+    code: ErrorCode.TIMESTAMP_STALE,
+    message: 'Timestamp is stale',
+    httpStatus: 400,
+    description: 'The supplied timestamp is outside the accepted validity window',
+    suggestedAction: 'Regenerate the request with a fresh authoritative timestamp',
+  },
+  [ErrorCode.AUTHORITATIVE_TIME_UNAVAILABLE]: {
+    code: ErrorCode.AUTHORITATIVE_TIME_UNAVAILABLE,
+    message: 'Authoritative time unavailable',
+    httpStatus: 503,
+    description: 'The authoritative time source could not be reached to validate the request',
+    suggestedAction: 'Retry once the time source is available; do not assume local time',
+  },
 };
 
 /**
@@ -331,6 +415,12 @@ export function getDefaultErrorCodeForStatus(status: number): ErrorCode {
       return ErrorCode.NOT_FOUND;
     case 409:
       return ErrorCode.CONFLICT;
+    case 410:
+      return ErrorCode.INCIDENT_BUNDLE_EXPIRED;
+    case 413:
+      return ErrorCode.INCIDENT_BUNDLE_TOO_LARGE;
+    case 422:
+      return ErrorCode.ALERT_OWNERSHIP_NOT_FOUND;
     case 429:
       return ErrorCode.RATE_LIMIT_EXCEEDED;
     case 503:
@@ -339,4 +429,27 @@ export function getDefaultErrorCodeForStatus(status: number): ErrorCode {
     default:
       return ErrorCode.INTERNAL_ERROR;
   }
+}
+
+/**
+ * Operations error codes grouped for convenience (alerts, incident bundles, clock skew).
+ */
+export const OPERATIONS_ERROR_CODES: readonly ErrorCode[] = [
+  ErrorCode.ALERT_OWNERSHIP_NOT_FOUND,
+  ErrorCode.ALERT_SEVERITY_INVALID,
+  ErrorCode.ALERT_DRILL_DUPLICATE,
+  ErrorCode.INCIDENT_BUNDLE_NOT_FOUND,
+  ErrorCode.INCIDENT_BUNDLE_EXPIRED,
+  ErrorCode.INCIDENT_BUNDLE_TOO_LARGE,
+  ErrorCode.INCIDENT_BUNDLE_FORBIDDEN,
+  ErrorCode.CLOCK_SKEW_EXCEEDED,
+  ErrorCode.TIMESTAMP_STALE,
+  ErrorCode.AUTHORITATIVE_TIME_UNAVAILABLE,
+] as const;
+
+/**
+ * Helper to check whether an error code belongs to the operations category.
+ */
+export function isOperationsErrorCode(code: ErrorCode): boolean {
+  return OPERATIONS_ERROR_CODES.includes(code);
 }

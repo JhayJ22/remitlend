@@ -48,6 +48,14 @@ import {
   startSorobanWriteReplayProcessor,
   stopSorobanWriteReplayProcessor,
 } from './services/sorobanWriteReplayProcessor.js';
+import {
+  startAlertDrillScheduler,
+  stopAlertDrillScheduler,
+} from './services/alertDrillScheduler.js';
+import {
+  startClockSkewSampler,
+  stopClockSkewSampler,
+} from './services/clockSkewSampler.js';
 
 const port = process.env.PORT || 3001;
 
@@ -118,6 +126,12 @@ const server = app.listen(port, () => {
 
   // Wire up and activate the score decay daily scheduler loop
   scoreDecaySchedulerHandle = startScoreDecayScheduler() || null;
+
+  // Start scheduled SLO alert ownership drill (#863), guarded by env flag
+  startAlertDrillScheduler();
+
+  // Start periodic service/provider clock-skew sampling (#868), guarded by env flag
+  startClockSkewSampler();
 });
 
 let shuttingDown = false;
@@ -168,6 +182,8 @@ const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
     stopScoreReconciliationScheduler();
     stopCrossContractReconciler();
     stopNotificationCleanupScheduler();
+    stopAlertDrillScheduler();
+    stopClockSkewSampler();
     logger.info('All schedulers stopped.');
 
     // Step 3: Close event streams
