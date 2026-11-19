@@ -47,6 +47,7 @@ import {
   shutdownConnectionLeakDetection,
   dbConnectionLeakDetector,
 } from './middleware/dbConnectionLeakDetector.js';
+import { buildCapacitySnapshot } from './services/capacityModel.js';
 const app = express();
 
 setupConnectionLeakDetection();
@@ -273,6 +274,50 @@ app.get(
  * - System metrics: process_*, nodejs_* (default prom-client metrics)
  */
 app.get('/metrics', requireApiKey('admin:indexer'), asyncHandler(metricsHandler));
+
+/**
+ * GET /capacity
+ *
+ * On-demand capacity model snapshot — issue #865.
+ *
+ * Returns a point-in-time forecast of database storage, connection demand,
+ * and Redis memory, plus retention headroom and scale threshold crossings.
+ * Requires admin:indexer API key (same gate as /metrics).
+ *
+ * Query parameters:
+ *   forecastDays  (integer, default 30) — projection horizon.
+ *
+ * Response body:
+ * {
+ *   capturedAt: ISO string,
+ *   forecastDays: number,
+ *   overallThresholdLevel: "ok" | "warn" | "critical",
+ *   tables: [ { table, rowCount, estimatedBytes, projectedBytes,
+ *                retentionDays, eligibleForPurge, thresholdLevel } ],
+ *   totalDbEstimatedBytes: number,
+ *   totalDbProjectedBytes: number,
+ *   connectionDemand: { peakConnections, projectedPeakConnections,
+ *                        connectionUtilizationRatio, thresholdLevel },
+ *   redisMemoryModel: { totalBytesEstimate, projectedBytesEstimate },
+ *   thresholds: { tableStorageWarnBytes, tableStorageCriticalBytes, ... }
+ * }
+ *
+ * No secret values, no user-identifying data, and no financial amounts are
+ * included in any field of this response.
+ */
+app.get(
+  '/capacity',
+  requireApiKey('admin:indexer'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const rawDays = req.query['forecastDays'];
+    const forecastDays = typeof rawDays === 'string' && /^\d+$/.test(rawDays)
+      ? Math.min(Math.max(Number.parseInt(rawDays, 10), 1), 365)
+      : 30;
+
+    const snapshot = await buildCapacitySnapshot(forecastDays);
+    res.json(snapshot);
+  }),
+);
 
 /**
  * GET /health/deep

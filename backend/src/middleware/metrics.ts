@@ -410,3 +410,131 @@ export const dbPoolRejectedCounter = new client.Counter({
   help: 'Requests rejected immediately because the pool wait queue was full.',
   registers: [metricsRegistry],
 });
+
+// ---------------------------------------------------------------------------
+// Capacity model metrics (issue #865)
+// ---------------------------------------------------------------------------
+
+/**
+ * Estimated live size in bytes for each tracked database table.
+ * Label `table` carries the table name.
+ */
+export const dbTableEstimatedBytesGauge = new client.Gauge({
+  name: 'db_table_estimated_bytes',
+  help: 'Estimated live storage size in bytes for a database table (rowCount × bytesPerRow).',
+  labelNames: ['table'] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Projected storage size in bytes for each tracked database table
+ * after the configured forecast horizon.
+ */
+export const dbTableProjectedBytesGauge = new client.Gauge({
+  name: 'db_table_projected_bytes',
+  help: 'Projected storage size in bytes for a database table after the capacity forecast horizon.',
+  labelNames: ['table'] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Live row count for each tracked database table.
+ */
+export const dbTableRowCountGauge = new client.Gauge({
+  name: 'db_table_row_count',
+  help: 'Current approximate row count for a database table (pg_class.reltuples estimate).',
+  labelNames: ['table'] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Rows eligible for purge under the current retention policy, per table.
+ */
+export const dbTablePurgeEligibleGauge = new client.Gauge({
+  name: 'db_table_purge_eligible_rows',
+  help: 'Rows that are eligible for deletion under the current retention policy.',
+  labelNames: ['table'] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Capacity threshold level per table encoded as a numeric gauge.
+ * 0 = ok, 1 = warn, 2 = critical.
+ */
+export const dbTableThresholdLevelGauge = new client.Gauge({
+  name: 'db_table_capacity_threshold_level',
+  help: 'Capacity threshold level for a table: 0=ok, 1=warn, 2=critical.',
+  labelNames: ['table'] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Peak database connection demand (api_replicas × pool_max + background_jobs).
+ */
+export const dbConnectionPeakGauge = new client.Gauge({
+  name: 'db_connection_peak_demand',
+  help: 'Peak concurrent database connections based on the capacity demand model.',
+  registers: [metricsRegistry],
+});
+
+/**
+ * Connection utilization ratio: peak demand / POSTGRES_MAX_CONNECTIONS (0–1).
+ */
+export const dbConnectionUtilizationGauge = new client.Gauge({
+  name: 'db_connection_utilization_ratio',
+  help: 'Fraction of POSTGRES_MAX_CONNECTIONS consumed by peak demand (0=empty, 1=fully consumed).',
+  registers: [metricsRegistry],
+});
+
+/**
+ * Estimated total Redis memory demand in bytes.
+ */
+export const redisMemoryEstimateGauge = new client.Gauge({
+  name: 'redis_memory_estimate_bytes',
+  help: 'Estimated total Redis memory demand from idempotency keys, rate limiters, and stale-read cache.',
+  registers: [metricsRegistry],
+});
+
+/**
+ * Overall capacity threshold level across all tables and connections.
+ * 0 = ok, 1 = warn, 2 = critical.
+ */
+export const capacityOverallThresholdGauge = new client.Gauge({
+  name: 'capacity_overall_threshold_level',
+  help: 'Overall capacity threshold level across all tables and the connection model: 0=ok, 1=warn, 2=critical.',
+  registers: [metricsRegistry],
+});
+
+const CAPACITY_THRESHOLD_VALUE: Record<string, number> = {
+  ok: 0,
+  warn: 1,
+  critical: 2,
+};
+
+/**
+ * Update all capacity Prometheus gauges from a capacity snapshot.
+ * Call this after every scheduled capacity snapshot pass.
+ */
+export function recordCapacitySnapshot(
+  snapshot: import('../services/capacityModel.js').CapacitySnapshot,
+): void {
+  for (const entry of snapshot.tables) {
+    dbTableEstimatedBytesGauge.set({ table: entry.table }, entry.estimatedBytes);
+    dbTableProjectedBytesGauge.set({ table: entry.table }, entry.projectedBytes);
+    dbTableRowCountGauge.set({ table: entry.table }, entry.rowCount);
+    if (entry.eligibleForPurge !== null) {
+      dbTablePurgeEligibleGauge.set({ table: entry.table }, entry.eligibleForPurge);
+    }
+    dbTableThresholdLevelGauge.set(
+      { table: entry.table },
+      CAPACITY_THRESHOLD_VALUE[entry.thresholdLevel] ?? 0,
+    );
+  }
+
+  dbConnectionPeakGauge.set(snapshot.connectionDemand.peakConnections);
+  dbConnectionUtilizationGauge.set(snapshot.connectionDemand.connectionUtilizationRatio);
+  redisMemoryEstimateGauge.set(snapshot.redisMemoryModel.totalBytesEstimate);
+  capacityOverallThresholdGauge.set(
+    CAPACITY_THRESHOLD_VALUE[snapshot.overallThresholdLevel] ?? 0,
+  );
+}
