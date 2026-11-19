@@ -36,6 +36,10 @@ export const up = (pgm) => {
       default: pgm.func('current_timestamp'),
     },
     metadata: { type: 'jsonb' },
+    // Disclosure acknowledgment version captured at loan request submission.
+    // Nullable so pre-existing loans are not retroactively affected when the
+    // disclosure content/version changes.
+    disclosure_version: { type: 'varchar(50)' },
   });
 
   pgm.createIndex('loan_history', 'loan_id');
