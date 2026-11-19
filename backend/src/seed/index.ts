@@ -430,6 +430,10 @@ const parseArgs = () => {
   const args = new Set(process.argv.slice(2));
   return {
     reset: args.has('--reset'),
+    // When set, the seed run is executed inside an explicit transaction that is
+    // rolled back at the end. Used by the hermetic migration/seed test matrix to
+    // verify that seeding is atomic and leaves no partial state behind.
+    dryRun: args.has('--dry-run'),
   };
 };
 
@@ -758,7 +762,7 @@ const logSummary = () => {
 };
 
 const runSeed = async () => {
-  const { reset } = parseArgs();
+  const { reset, dryRun } = parseArgs();
 
   logger.info('Starting development database seeding...');
   logger.info('='.repeat(50));
@@ -777,6 +781,15 @@ const runSeed = async () => {
     await seedLoanEvents();
     await seedNotifications();
     await seedIndexerState();
+
+    if (dryRun) {
+      await query('ROLLBACK');
+      logger.info('');
+      logger.info('='.repeat(50));
+      logger.info('Dry-run seeding completed; transaction rolled back.');
+      logSummary();
+      return;
+    }
 
     await query('COMMIT');
 

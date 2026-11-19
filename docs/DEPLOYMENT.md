@@ -185,6 +185,169 @@ PostgreSQL and Redis are intentionally not exposed through host ports. They comm
 
 Production images should use an explicit release tag or immutable image reference rather than a mutable `latest` or staging tag.
 
+## Reproducible Release Bundles
+
+Every production release is published as a single immutable release bundle. The
+bundle is the only supported input to a production deployment: operators must
+not deploy images or artifacts that are not referenced by a bundle manifest.
+
+### Bundle contents
+
+A bundle is a directory (and a matching `.tar.gz` archive) named
+`remitlend-release-<source_revision>-<build_id>` containing:
+
+| File | Purpose |
+| --- | --- |
+| `manifest.json` | Bundle manifest: source revision, build ID, image digests, artifact hashes, and the deployment manifest reference. |
+| `lockfiles/` | Exact lockfile copies (`package-lock.json` for backend and frontend, contract `Cargo.lock`) with SHA-256 digests recorded in the manifest. |
+| `test-results/` | Machine-readable test reports (unit, integration, contract, migration matrix, mutation) with pass/fail counts and the command used to produce them. |
+| `schemas/` | Generated API schemas (OpenAPI JSON) and generated event/contract schemas, each with a SHA-256 digest. |
+| `wasm/` | Compiled contract WASM artifacts with SHA-256 digests. |
+| `deployment/` | Deployment manifest (`docker-compose.production.yml` rendered with the bundle's image digests) and the environment variable reference used. |
+| `traceability.json` | Issue-to-release traceability record (see below). |
+
+### Manifest requirements
+
+`manifest.json` must record, at minimum:
+
+* `source_revision`: the full 40-character Git commit SHA the bundle was built from.
+* `build_id`: the CI run identifier that produced the bundle.
+* `lockfile_digests`: SHA-256 of each lockfile.
+* `image_digests`: immutable `@sha256:` image references for backend and frontend.
+* `wasm_hashes`: SHA-256 of each contract WASM artifact.
+* `schema_hashes`: SHA-256 of each generated schema.
+* `test_results`: paths and digests of every test report, including the
+  mutation score and the migration matrix result.
+* `deployment_manifest_digest`: SHA-256 of the rendered deployment manifest.
+
+Every artifact in the bundle must be traceable to exactly one immutable build:
+the manifest is the source of truth, and any artifact whose digest does not
+match the manifest must be rejected.
+
+### Verifying a bundle before deployment
+
+```bash
+# 1. Verify the archive checksum published with the release.
+sha256sum -c remitlend-release-<source_revision>-<build_id>.tar.gz.sha256
+
+# 2. Extract and verify every artifact against the manifest.
+tar -xzf remitlend-release-<source_revision>-<build_id>.tar.gz
+cd remitlend-release-<source_revision>-<build_id>
+npm run release:verify -- --bundle .
+
+# 3. Confirm the source revision matches the reviewed and merged commit.
+git rev-parse HEAD
+```
+
+`release:verify` recomputes every digest in `manifest.json` and fails closed if
+any artifact is missing, modified, or not referenced by the manifest. Do not
+deploy a bundle that fails verification.
+
+### Deploying from a bundle
+
+Set `TAG` in `.env.production` to the bundle's `source_revision` (or use the
+rendered `deployment/docker-compose.production.yml`, which pins images by
+digest) and follow the standard deployment steps above. Record the bundle name
+and manifest digest in the deployment log.
+
+### Compatibility and migration implications
+
+* Bundles are additive: the manifest schema may gain fields, but existing
+  fields are never removed or repurposed without a documented major version
+  bump in `manifest_version`.
+* A bundle pins the schema migrations it expects. If the target database has
+  migrations newer than the bundle, the deployment must be rejected rather than
+  downgraded.
+* Rollback targets must be a previously verified bundle; do not rebuild an old
+  revision from source, because the rebuild may not reproduce identical
+  digests.
+
+## Mutation Testing Thresholds
+
+Authorization and ownership predicates on critical paths are covered by
+mutation tests. The mutation suite mutates representative route and service
+policies (for example loan ownership checks, admin-only routes, and
+wallet-signature authorization) and verifies that the existing tests fail when a
+check is removed or inverted.
+
+Stable thresholds for critical paths:
+
+| Scope | Minimum mutation score |
+| --- | --- |
+| Authorization and ownership predicates (critical) | 90% |
+| Financial calculation and money-unit handling | 90% |
+| Other backend modules | 70% |
+
+Run the suite locally:
+
+```bash
+cd backend
+npm run test:mutation
+```
+
+The mutation report is written to `test-results/mutation/` and included in the
+release bundle. A release is blocked when a critical-path score falls below its
+threshold. Threshold changes require review and must be recorded in the release
+notes.
+
+## Hermetic Migration and Seed Matrix
+
+Migrations and seeds are validated against supported PostgreSQL versions using
+fixtures only. The matrix runs without production data and without external
+network access.
+
+```bash
+cd backend
+npm run test:migrations:matrix
+```
+
+The matrix covers:
+
+* Supported PostgreSQL versions (see `docs/ENVIRONMENT.md` for the supported
+  range).
+* Empty database: apply all migrations and seeds from scratch.
+* Prior-schema fixtures: apply migrations and seeds on top of a populated
+  previous schema.
+* Rollback and retry: `migrate:down` followed by `migrate:up`, and re-running a
+  partially applied migration to confirm idempotent retry behavior.
+
+Results are written to `test-results/migrations/` and included in the release
+bundle. A failing matrix entry blocks the release.
+
+## Issue-to-Release Traceability
+
+Financial changes must be traceable from accepted requirements to the release
+that ships them.
+
+1. Each accepted requirement (issue) is linked to its implementation PR(s) in
+   the PR description using `Closes #<issue>` or `Refs #<issue>`.
+2. The PR records the required risk evidence: tests added, mutation results,
+   migration matrix results, and any compatibility or migration notes.
+3. The release notes list every issue included in the bundle and link to the
+   PRs and evidence.
+4. `traceability.json` in the bundle records each issue, its linked PRs, the
+   evidence artifacts, and the release notes entry.
+
+A release is blocked when a high-risk acceptance criterion is unresolved or
+silently waived. Waivers must be explicit: recorded in the issue, approved by a
+reviewer, and listed in the release notes. The release check fails closed when
+`traceability.json` is missing, when an issue has no linked PR, or when a
+high-risk issue is marked unresolved without an approved waiver.
+
+### Reproducible validation evidence
+
+The implementation PR for a release-related change must include the commands
+run and their results, for example:
+
+```bash
+npm run release:verify -- --bundle <bundle>
+npm run test:mutation
+npm run test:migrations:matrix
+```
+
+Attach the resulting reports (or links to the CI run that produced them) so a
+reviewer can reproduce the validation from the bundle alone.
+
 ## Expand-Contract Migrations
 
 Schema changes that old and new application versions cannot both tolerate must
