@@ -37,6 +37,7 @@ import {
 } from '../controllers/loanStateEventController.js';
 
 import { listDiscrepancies } from '../services/discrepancyLedgerService.js';
+import breakGlassRoutes from './breakGlassRoutes.js';
 import {
   createRequest as createPrivilegedRequest,
   approveRequest as approvePrivilegedRequest,
@@ -722,3 +723,7 @@ router.post(
 );
 
 export default router;
+
+// ── Break-glass emergency access (issue #849) ────────────────────────────
+// Mounts all break-glass routes under /admin/break-glass (and v1 equivalent).
+router.use('/', breakGlassRoutes);

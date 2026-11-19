@@ -48,6 +48,10 @@ import {
   startSorobanWriteReplayProcessor,
   stopSorobanWriteReplayProcessor,
 } from './services/sorobanWriteReplayProcessor.js';
+import {
+  startBreakGlassExpirySweep,
+  stopBreakGlassExpirySweep,
+} from './services/breakGlassService.js';
 
 const port = process.env.PORT || 3001;
 
@@ -118,6 +122,9 @@ const server = app.listen(port, () => {
 
   // Wire up and activate the score decay daily scheduler loop
   scoreDecaySchedulerHandle = startScoreDecayScheduler() || null;
+
+  // Auto-revoke break-glass grants past their expiry (#849)
+  startBreakGlassExpirySweep();
 });
 
 let shuttingDown = false;
@@ -165,6 +172,7 @@ const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
     stopDefaultCheckerScheduler();
     stopWebhookRetryProcessor();
     stopSorobanWriteReplayProcessor();
+    stopBreakGlassExpirySweep();
     stopScoreReconciliationScheduler();
     stopCrossContractReconciler();
     stopNotificationCleanupScheduler();
