@@ -76,6 +76,13 @@ export const envSchema = z.object({
   STELLAR_EURC_ISSUER: optionalString(),
   STELLAR_PHP_ISSUER: optionalString(),
 
+  /**
+   * When set to "true", an unreachable Stellar RPC at startup is treated as a
+   * fatal error. When absent or "false" the server starts in degraded mode and
+   * queues writes until the RPC recovers.
+   */
+  SOROBAN_REQUIRE_RPC_AT_STARTUP: booleanString().default('false' as unknown as never),
+
   // ── Loan configuration ────────────────────────────────────────────────────
   LOAN_MIN_SCORE: positiveInt(300, 850),
   LOAN_MAX_AMOUNT: positiveInt(1, 1_000_000),

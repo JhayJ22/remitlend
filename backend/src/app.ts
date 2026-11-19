@@ -43,6 +43,10 @@ import { asyncHandler } from './utils/asyncHandler.js';
 import { AppError } from './errors/AppError.js';
 import logger from './utils/logger.js';
 import {
+  checkNetworkReadiness,
+  SUPPORTED_API_VERSION_MANIFEST,
+} from './config/networkReadiness.js';
+import {
   setupConnectionLeakDetection,
   shutdownConnectionLeakDetection,
   dbConnectionLeakDetector,
@@ -218,8 +222,54 @@ app.get('/version', (_req: Request, res: Response) => {
       remittanceNft: process.env.REMITTANCE_NFT_CONTRACT_ID ?? 'unknown',
       multisigGovernance: process.env.MULTISIG_GOVERNANCE_CONTRACT_ID ?? 'unknown',
     },
+    supportedVersions: SUPPORTED_API_VERSION_MANIFEST,
   });
 });
+
+/**
+ * GET /ready
+ *
+ * Kubernetes-style readiness probe — issue #862.
+ *
+ * Validates network passphrase, RPC endpoint, all contract IDs, asset issuer
+ * metadata, and the supported-version manifest.  Returns:
+ *   200  — ready to serve financial routes (no critical issues).
+ *   503  — not ready (one or more critical issues found).
+ *
+ * Warning-level issues (e.g. optional asset issuers not configured) are
+ * included in the response but do not change the HTTP status code.
+ *
+ * The live RPC probe is intentionally included so load balancers can detect
+ * an RPC outage and route around the affected instance.  When
+ * SOROBAN_REQUIRE_RPC_AT_STARTUP=true the RPC check is treated as critical.
+ *
+ * Response body shape:
+ * {
+ *   ready: boolean,
+ *   healthy: boolean,
+ *   durationMs: number,
+ *   issues: Array<{ field: string, message: string, severity: "critical"|"warning" }>,
+ *   versions: { minApiVersion: number, maxApiVersion: number, deprecatedVersions: number[] }
+ * }
+ *
+ * No secret values are exposed in any field of this response.
+ */
+app.get(
+  '/ready',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const result = await checkNetworkReadiness();
+
+    const body = {
+      ready: result.ready,
+      healthy: result.healthy,
+      durationMs: result.durationMs,
+      issues: result.issues,
+      versions: SUPPORTED_API_VERSION_MANIFEST,
+    };
+
+    res.status(result.ready ? 200 : 503).json(body);
+  }),
+);
 
 app.get(
   '/health',

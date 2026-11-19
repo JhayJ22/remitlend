@@ -35,6 +35,7 @@ import {
 } from './services/crossContractReconciler.js';
 import { sorobanService } from './services/sorobanService.js';
 import { validateLoanConfigOnStartup } from './config/loanConfig.js';
+import { assertNetworkReadiness } from './config/networkReadiness.js';
 import { startLoanDueCheckCron, stopLoanDueCheckCron } from './cron/loanCheckCron.js';
 import {
   startContractVerificationCron,
@@ -77,6 +78,11 @@ try {
   logger.error('Soroban configuration is invalid, aborting startup.', { err });
   process.exit(1);
 }
+
+// Validate network passphrase, RPC endpoint, all contract IDs, asset metadata,
+// and supported-version manifest — issue #862.
+// Critical failures abort startup; warnings are logged and startup continues.
+await assertNetworkReadiness();
 
 // Initialize pause state table and load initial state
 try {
