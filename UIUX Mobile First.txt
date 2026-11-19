@@ -1,38 +1,75 @@
-1. Kingdom Dashboard
-I worked on the gamification layer, mapping financial growth to a city-building "Kingdom" experience.
+UIUX Mobile First
+=================
 
-Hero: Kingdom Value: $24,500
+Accessible Transaction Recovery (Issue #844)
+---------------------------------------------
 
-Stats: Net Worth ($42,850) and Savings Rate ($1,200).
+Supported recovery states
+-------------------------
+Every transaction recovery surface must render exactly one of the following
+states. Each state has explicit, user-visible messaging and a single safe
+primary action. States are mutually exclusive; the UI must never show two
+primary actions at once.
 
-CTA: "New Quest Available" to incentivize recurring transfers.
+1. Pending
+   - Message: "Your transaction is still processing. This can take a moment."
+   - Primary action: "Check status" (re-query; no new financial side effect).
+   - Secondary: "Cancel" only when the backend confirms cancellation is safe.
+   - Do not allow re-submitting the transaction while pending.
 
-2. Borrower Dashboard
-I worked on the credit identity interface, distilling complex on-chain data into a "Reliability Score."
+2. Expired
+   - Message: "This transaction expired before it completed. No money moved."
+   - Primary action: "Start again" (creates a new attempt with a fresh id).
+   - The expired attempt is read-only; never retry the stale id.
 
-Metrics: 850 (Excellent) score with status badges for Repayment and Stability.
+3. Rejected
+   - Message: "This transaction was rejected. No money moved."
+   - Primary action: "Review details" (opens the rejection reason).
+   - Secondary: "Dismiss". Retry is offered only if the rejection is
+     recoverable and the backend marks it as such.
 
-Feature: Digital Passport with NFT Achievement Stamps for "Early Adopter" and "Trusted" status.
+4. Failed
+   - Message: "This transaction failed. No money moved."
+   - Primary action: "Retry" (idempotent retry using the same idempotency key).
+   - Secondary: "Dismiss".
 
-3. Lender Pool Overview
-I worked on the liquidity provider UI, balancing high-level pool health with granular loan data.
+Stale or invalid actions
+------------------------
+- Actions that are no longer valid for the current state must be disabled or
+  hidden, never merely styled as inactive.
+- A recovery action must carry the transaction id and idempotency key. If the
+  server reports the attempt is stale (already completed, expired, or
+  superseded), the UI must reject the action, show the current authoritative
+  state, and must not trigger any partial financial side effect.
+- Never optimistically move money on a recovery action; wait for the
+  authoritative server response before updating the displayed state.
 
-Liquidity: $850,000 at 12.4% APY.
+Zoom and reflow (200%-400%)
+---------------------------
+- The safe primary action must remain visible and reachable at 200%, 300%,
+  and 400% zoom and at narrow viewport widths (down to 320 CSS px).
+- No horizontal scrolling, clipping, or overlap of the primary action.
+- Layout must reflow to a single column; the primary action stacks below the
+  message and stays within the viewport.
+- Touch targets remain at least 44x44 CSS px at all zoom levels.
+- Text must not be truncated; allow wrapping and preserve the full message.
 
-Risk: Visualized via a "Pool Health" bar (94/100) to ensure lender confidence.
+Keyboard focus
+--------------
+- Focus is preserved across state transitions and reflow.
+- When a state changes (e.g. pending -> failed), move focus to the state
+  heading (tabindex="-1") and announce the change via an ARIA live region
+  (aria-live="polite" for updates, "assertive" for failures).
+- After a recovery action completes, restore focus to the primary action of
+  the resulting state, or to the state heading if the action is removed.
+- No focus traps: focus order follows visual order; Escape dismisses
+  non-destructive dialogs and returns focus to the invoking control.
+- The primary action must be reachable by keyboard alone and must have a
+  visible focus indicator with sufficient contrast.
 
-4. Loan Tiers
-I worked on the progression logic, creating a roadmap for users to unlock lower interest rates.
-
-Status: Current 650/1000 score tracking toward the "Silver" tier.
-
-Hierarchy: Five-tier system from "Seed" (15% interest) to "Platinum" (5% interest).
-
-5. RemitLend Kingdom (Archon)
-I worked on the high-level user experience, integrating daily investment quests into the dashboard.
-
-Engagement: XP tracking for "Level 14 Archon" status.
-
-Direct Action: "Invest $100" quest to unlock specific district upgrades. worked on
-
-figma link https://www.figma.com/design/3WvDt5wvKog3b85KT09KLX/REMIT-LEND?node-id=2-526&t=XfRD5blXkIb5CUg2-0
+Validation evidence
+-------------------
+- Automated coverage: successful recovery path per state, stale-action
+  rejection, idempotent retry, and dependency-failure handling.
+- Manual/a11y checks: 200%-400% zoom reflow, 320px viewport, keyboard-only
+  traversal, and focus restoration after each recovery action.
