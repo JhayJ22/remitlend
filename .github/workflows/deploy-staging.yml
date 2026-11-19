@@ -321,89 +321,82 @@ jobs:
           echo "No production traffic will be sent during this drill."
 
       - name: Restore sanitized database snapshot into standby
+        env:
+          REHEARSAL_DB_URL: ${{ vars.DR_REHEARSAL_DB_URL || 'postgres://postgres:postgres@localhost:5432/restore_rehearsal' }}
+          RESTORE_RTO_TARGET_MINUTES: ${{ env.RTO_TARGET_MINUTES }}
+          RESTORE_RPO_TARGET_MINUTES: ${{ env.RPO_TARGET_MINUTES }}
+          RESTORE_REHEARSAL_REPORT: ${{ github.workspace }}/restore-rehearsal-report.json
+          DR_DRILL_STANDBY_WRITE_BLOCKED: 'true'
         run: |
           set -e
           echo "Restoring sanitized snapshot into standby region..."
           # Sanitized, non-production snapshot only — never production data.
-          if [ -f deploy/dr/restore-standby.sh ]; then
-            bash deploy/dr/restore-standby.sh
-          else
-            echo "::warning::deploy/dr/restore-standby.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/restore-standby.sh
 
       - name: Start standby services
+        env:
+          DR_DRILL_STANDBY_WRITE_BLOCKED: 'true'
         run: |
           set -e
-          echo "Starting standby services with production-equivalent config..."
-          if [ -f deploy/dr/start-standby.sh ]; then
-            bash deploy/dr/start-standby.sh
-          else
-            echo "::warning::deploy/dr/start-standby.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/start-standby.sh
 
       - name: Recover indexer checkpoint
+        env:
+          REHEARSAL_DB_URL: ${{ vars.DR_REHEARSAL_DB_URL || 'postgres://postgres:postgres@localhost:5432/restore_rehearsal' }}
         run: |
           set -e
-          echo "Recovering indexer from last verified checkpoint..."
-          if [ -f deploy/dr/recover-indexer.sh ]; then
-            bash deploy/dr/recover-indexer.sh
-          else
-            echo "::warning::deploy/dr/recover-indexer.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/recover-indexer.sh
 
       - name: Fail over RPC endpoint
+        env:
+          DR_STANDBY_STELLAR_RPC_URL: ${{ vars.DR_STANDBY_STELLAR_RPC_URL || '' }}
         run: |
           set -e
-          echo "Failing over RPC to standby provider..."
-          if [ -f deploy/dr/rpc-failover.sh ]; then
-            bash deploy/dr/rpc-failover.sh
-          else
-            echo "::warning::deploy/dr/rpc-failover.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/rpc-failover.sh
 
       - name: Apply DNS/routing change to standby
         run: |
           set -e
-          echo "Applying DNS/routing change to point at standby..."
-          if [ -f deploy/dr/dns-failover.sh ]; then
-            bash deploy/dr/dns-failover.sh
-          else
-            echo "::warning::deploy/dr/dns-failover.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/dns-failover.sh
 
       - name: Verify standby cannot submit transactions
+        env:
+          DR_DRILL_STANDBY_WRITE_BLOCKED: 'true'
+          DR_DRILL_SIGNER_VERIFIED: 'false'
+          DR_DRILL_NETWORK_VERIFIED: 'false'
         run: |
           set -e
-          echo "Verifying standby is fenced from submitting transactions..."
           # The standby must remain unable to submit until network and signer
           # controls are explicitly verified. A successful submission here is a
           # drill failure.
-          if [ -f deploy/dr/verify-fenced.sh ]; then
-            bash deploy/dr/verify-fenced.sh
-          else
-            echo "::warning::deploy/dr/verify-fenced.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/verify-fenced.sh
 
       - name: Reconcile data integrity and record RTO/RPO
+        env:
+          RESTORE_REHEARSAL_REPORT: ${{ github.workspace }}/restore-rehearsal-report.json
+          RESTORE_RTO_TARGET_MINUTES: ${{ env.RTO_TARGET_MINUTES }}
+          RESTORE_RPO_TARGET_MINUTES: ${{ env.RPO_TARGET_MINUTES }}
         run: |
           set -e
-          echo "Reconciling data integrity between primary and standby..."
-          if [ -f deploy/dr/reconcile.sh ]; then
-            bash deploy/dr/reconcile.sh
-          else
-            echo "::warning::deploy/dr/reconcile.sh not found; recording as a follow-up action"
-          fi
-          echo "Recording observed RTO/RPO against targets (RTO ${RTO_TARGET_MINUTES}m, RPO ${RPO_TARGET_MINUTES}m)..."
+          bash deploy/dr/reconcile.sh
+          echo "RTO target: ${RTO_TARGET_MINUTES}m | RPO target: ${RPO_TARGET_MINUTES}m"
+
+      - name: Upload restore rehearsal report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dr-drill-restore-rehearsal-report
+          path: restore-rehearsal-report.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Fail back to primary region
+        env:
+          RESTORE_REHEARSAL_REPORT: ${{ github.workspace }}/restore-rehearsal-report.json
+          DR_DRILL_FAILBACK_CRITERIA: integrity_reconciled,indexer_caught_up,rpc_healthy
         run: |
           set -e
-          echo "Failing back to primary region..."
-          if [ -f deploy/dr/failback.sh ]; then
-            bash deploy/dr/failback.sh
-          else
-            echo "::warning::deploy/dr/failback.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/failback.sh
 
       - name: Summarize drill and track follow-ups
         if: always()

@@ -362,3 +362,16 @@ jobs:
         working-directory: contracts
         continue-on-error: true
       - name: Generate
+
+  # ── 14. Database restore rehearsal (issue #859) ──────────────────────────
+  # Static checks run on every PR; live rehearsal runs when migration or
+  # restore files change, and always on push to main. The release pipeline
+  # fails when any critical consistency check fails or RTO/RPO targets are
+  # breached.
+  restore-rehearsal:
+    needs: [supply-chain-audit, migration-paths]
+    uses: ./.github/workflows/reusable-restore-rehearsal.yml
+    permissions:
+      contents: read
+    with:
+      force-run: ${{ github.event_name == 'push' }}
