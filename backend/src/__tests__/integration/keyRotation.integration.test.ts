@@ -15,7 +15,11 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from '@jest/glo
 import { pool } from '../../db/connection';
 import { keyRotationService } from '../../services/keyRotationService';
 
-describe('Key Rotation Integration Tests', () => {
+// These tests require a real Postgres with migrations applied. CI runs unit
+// tests against a non-existent DB, so this suite is opt-in via INTEGRATION_TESTS.
+const describeIfDb = process.env.INTEGRATION_TESTS === 'true' ? describe : describe.skip;
+
+describeIfDb('Key Rotation Integration Tests', () => {
   const TEST_OLD_KEK_ID = 'test-kek-v1';
   const TEST_NEW_KEK_ID = 'test-kek-v2';
 

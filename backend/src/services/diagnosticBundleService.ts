@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { deepRedact } from '../utils/logger';
-import { maskValue } from '../utils/piiCrypto';
+import { maskValue } from '../utils/masking.js';
 import { auditLogService } from './auditLogService';
 
 /**

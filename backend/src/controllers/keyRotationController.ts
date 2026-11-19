@@ -25,16 +25,28 @@ export async function startKeyRotation(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { new_kek_id } = req.body as { new_kek_id?: string };
+    const { new_kek_id, data_class } = req.body as {
+      new_kek_id?: string;
+      data_class?: string;
+    };
 
     if (!new_kek_id || typeof new_kek_id !== 'string') {
       throw new AppError('new_kek_id is required and must be a string', 400);
     }
 
+    // Issue #846: rotation is scoped to a single data class so that rotating
+    // one class's KEK never re-wraps (or risks) another class's ciphertext.
+    const ALLOWED_CLASSES = ['pii', 'financial', 'credential', 'audit'] as const;
+    type DataClass = (typeof ALLOWED_CLASSES)[number];
+    const dataClass: DataClass =
+      data_class && (ALLOWED_CLASSES as readonly string[]).includes(data_class)
+        ? (data_class as DataClass)
+        : 'pii';
+
     const actor = req.user?.publicKey || 'system:api';
     const requestId = (req as any).requestId || 'unknown';
 
-    const batch = await keyRotationService.startRotation(new_kek_id, actor, requestId);
+    const batch = await keyRotationService.startRotation(new_kek_id, actor, requestId, dataClass);
 
     // Audit log
     await query(
@@ -48,6 +60,7 @@ export async function startKeyRotation(
         JSON.stringify({
           old_kek_id: batch.old_kek_id,
           new_kek_id: batch.new_kek_id,
+          data_class: dataClass,
           request_id: requestId,
         }),
         'success',
@@ -58,6 +71,7 @@ export async function startKeyRotation(
       batch_id: batch.id,
       old_kek_id: batch.old_kek_id,
       new_kek_id: batch.new_kek_id,
+      data_class: dataClass,
       status: batch.status,
       initiated_at: batch.initiated_at,
     });
