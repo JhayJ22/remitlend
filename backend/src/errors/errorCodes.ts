@@ -61,6 +61,12 @@ export enum ErrorCode {
 }
 
 /**
+ * Base URL for error code documentation. Each registry entry links to
+ * `${ERROR_DOCS_BASE_URL}#${code}` so clients can deep-link to details.
+ */
+export const ERROR_DOCS_BASE_URL = 'https://docs.remitwise.app/errors';
+
+/**
  * Error code metadata for documentation and frontend consumption.
  */
 export interface ErrorCodeMetadata {
@@ -69,10 +75,14 @@ export interface ErrorCodeMetadata {
   httpStatus: number;
   description: string;
   suggestedAction?: string;
+  documentationUrl: string;
 }
 
 /**
  * Centralized error code registry with metadata.
+ *
+ * This is the single source of truth for error codes: HTTP status,
+ * user-readable message template, and documentation URL all live here.
  */
 export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
   // Validation Errors
@@ -82,6 +92,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 400,
     description: 'The provided amount is invalid or not a positive number',
     suggestedAction: 'Provide a valid positive number for the amount field',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#INVALID_AMOUNT`,
   },
   [ErrorCode.INVALID_PUBLIC_KEY]: {
     code: ErrorCode.INVALID_PUBLIC_KEY,
@@ -89,6 +100,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 400,
     description: 'The provided Stellar public key format is invalid',
     suggestedAction: "Provide a valid Stellar public key (starts with 'G')",
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#INVALID_PUBLIC_KEY`,
   },
   [ErrorCode.INVALID_SIGNATURE]: {
     code: ErrorCode.INVALID_SIGNATURE,
@@ -96,6 +108,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 400,
     description: 'The provided cryptographic signature is invalid',
     suggestedAction: 'Sign the challenge message with your wallet and retry',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#INVALID_SIGNATURE`,
   },
   [ErrorCode.INVALID_CHALLENGE]: {
     code: ErrorCode.INVALID_CHALLENGE,
@@ -103,6 +116,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 400,
     description: 'The challenge message format is invalid',
     suggestedAction: 'Request a new challenge and retry',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#INVALID_CHALLENGE`,
   },
   [ErrorCode.MISSING_FIELD]: {
     code: ErrorCode.MISSING_FIELD,
@@ -110,6 +124,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 400,
     description: 'A required field was not provided in the request',
     suggestedAction: 'Check the request body and include all required fields',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#MISSING_FIELD`,
   },
   [ErrorCode.VALIDATION_ERROR]: {
     code: ErrorCode.VALIDATION_ERROR,
@@ -117,6 +132,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 400,
     description: 'Request validation failed',
     suggestedAction: 'Review the validation errors and correct the input',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#VALIDATION_ERROR`,
   },
 
   // Authentication Errors
@@ -126,6 +142,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 401,
     description: 'Authentication is required to access this resource',
     suggestedAction: 'Provide valid authentication credentials',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#UNAUTHORIZED`,
   },
   [ErrorCode.TOKEN_EXPIRED]: {
     code: ErrorCode.TOKEN_EXPIRED,
@@ -133,6 +150,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 401,
     description: 'The JWT token has expired',
     suggestedAction: 'Log in again to obtain a new token',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#TOKEN_EXPIRED`,
   },
   [ErrorCode.TOKEN_INVALID]: {
     code: ErrorCode.TOKEN_INVALID,
@@ -140,6 +158,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 401,
     description: 'The JWT token is invalid or malformed',
     suggestedAction: 'Log in again to obtain a new token',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#TOKEN_INVALID`,
   },
   [ErrorCode.CHALLENGE_EXPIRED]: {
     code: ErrorCode.CHALLENGE_EXPIRED,
@@ -147,6 +166,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 401,
     description: 'The challenge message has expired (valid for 5 minutes)',
     suggestedAction: 'Request a new challenge and sign it',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#CHALLENGE_EXPIRED`,
   },
   [ErrorCode.CHALLENGE_REPLAYED]: {
     code: ErrorCode.CHALLENGE_REPLAYED,
@@ -154,6 +174,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 401,
     description: 'The challenge was not issued for this wallet or has already been consumed',
     suggestedAction: 'Request a new challenge and sign it',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#CHALLENGE_REPLAYED`,
   },
 
   // Authorization Errors
@@ -163,6 +184,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 403,
     description: 'You do not have permission to access this resource',
     suggestedAction: 'Ensure you have the required permissions',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#FORBIDDEN`,
   },
   [ErrorCode.ACCESS_DENIED]: {
     code: ErrorCode.ACCESS_DENIED,
@@ -170,6 +192,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 403,
     description: 'Access to this resource is denied',
     suggestedAction: 'Contact support if you believe this is an error',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#ACCESS_DENIED`,
   },
   [ErrorCode.BORROWER_MISMATCH]: {
     code: ErrorCode.BORROWER_MISMATCH,
@@ -177,6 +200,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 403,
     description: 'The borrower public key does not match the authenticated user',
     suggestedAction: 'Ensure the borrower public key matches your wallet',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#BORROWER_MISMATCH`,
   },
 
   // Not Found Errors
@@ -186,6 +210,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 404,
     description: 'The requested resource does not exist',
     suggestedAction: 'Verify the resource ID and try again',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#NOT_FOUND`,
   },
   [ErrorCode.LOAN_NOT_FOUND]: {
     code: ErrorCode.LOAN_NOT_FOUND,
@@ -193,6 +218,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 404,
     description: 'The specified loan does not exist',
     suggestedAction: 'Verify the loan ID and try again',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#LOAN_NOT_FOUND`,
   },
   [ErrorCode.USER_NOT_FOUND]: {
     code: ErrorCode.USER_NOT_FOUND,
@@ -200,6 +226,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 404,
     description: 'The specified user does not exist',
     suggestedAction: 'Verify the user ID and try again',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#USER_NOT_FOUND`,
   },
   [ErrorCode.POOL_NOT_FOUND]: {
     code: ErrorCode.POOL_NOT_FOUND,
@@ -207,6 +234,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 404,
     description: 'The specified pool does not exist',
     suggestedAction: 'Verify the pool address and try again',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#POOL_NOT_FOUND`,
   },
 
   // Conflict Errors
@@ -216,6 +244,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 409,
     description: 'The request conflicts with the current state of the resource',
     suggestedAction: 'Review the resource state and retry',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#CONFLICT`,
   },
   [ErrorCode.DUPLICATE_REQUEST]: {
     code: ErrorCode.DUPLICATE_REQUEST,
@@ -223,6 +252,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 409,
     description: 'This request has already been processed',
     suggestedAction: 'Check if the operation was already completed',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#DUPLICATE_REQUEST`,
   },
 
   // Rate Limiting
@@ -232,6 +262,7 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 429,
     description: 'Too many requests. Please try again later',
     suggestedAction: 'Wait before making another request',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#RATE_LIMIT_EXCEEDED`,
   },
 
   // Server Errors
@@ -240,35 +271,42 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     message: 'Internal server error',
     httpStatus: 500,
     description: 'An unexpected error occurred on the server',
-    suggestedAction: 'Please try again later or contact support',
+    suggestedAction: 'Retry the request. If the problem persists, contact support',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#INTERNAL_ERROR`,
   },
   [ErrorCode.DATABASE_ERROR]: {
     code: ErrorCode.DATABASE_ERROR,
     message: 'Database error',
     httpStatus: 500,
-    description: 'A database error occurred',
-    suggestedAction: 'Please try again later or contact support',
+    description: 'A database operation failed',
+    suggestedAction: 'Retry the request. If the problem persists, contact support',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#DATABASE_ERROR`,
   },
   [ErrorCode.EXTERNAL_SERVICE_ERROR]: {
     code: ErrorCode.EXTERNAL_SERVICE_ERROR,
     message: 'External service error',
     httpStatus: 500,
-    description: 'An external service failed to respond',
-    suggestedAction: 'Please try again later or contact support',
+    description: 'A downstream external service failed',
+    suggestedAction: 'Retry the request later',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#EXTERNAL_SERVICE_ERROR`,
   },
   [ErrorCode.BLOCKCHAIN_ERROR]: {
     code: ErrorCode.BLOCKCHAIN_ERROR,
     message: 'Blockchain error',
     httpStatus: 500,
-    description: 'A blockchain operation failed',
-    suggestedAction: 'Please try again later or contact support',
+    description: 'A Stellar blockchain operation failed',
+    suggestedAction: 'Retry the request later',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#BLOCKCHAIN_ERROR`,
   },
+
+  // Service Unavailable
   [ErrorCode.SERVICE_UNAVAILABLE]: {
     code: ErrorCode.SERVICE_UNAVAILABLE,
     message: 'Service unavailable',
     httpStatus: 503,
     description: 'The service is temporarily unavailable',
-    suggestedAction: 'Please try again later',
+    suggestedAction: 'Retry the request later',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#SERVICE_UNAVAILABLE`,
   },
 
   // Business Logic Errors
@@ -276,67 +314,59 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     code: ErrorCode.INSUFFICIENT_BALANCE,
     message: 'Insufficient balance',
     httpStatus: 400,
-    description: 'The account has insufficient balance for this operation',
-    suggestedAction: 'Deposit more funds or reduce the amount',
+    description: 'The account does not have enough balance for this operation',
+    suggestedAction: 'Fund the account and retry',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#INSUFFICIENT_BALANCE`,
   },
   [ErrorCode.LOAN_ALREADY_REPAID]: {
     code: ErrorCode.LOAN_ALREADY_REPAID,
-    message: 'Loan already repaid',
-    httpStatus: 400,
-    description: 'This loan has already been fully repaid',
-    suggestedAction: 'No further action is needed for this loan',
+    message: 'Loan has already been repaid',
+    httpStatus: 409,
+    description: 'The loan has already been fully repaid',
+    suggestedAction: 'No further repayment is required',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#LOAN_ALREADY_REPAID`,
   },
   [ErrorCode.LOAN_NOT_ACTIVE]: {
     code: ErrorCode.LOAN_NOT_ACTIVE,
     message: 'Loan is not active',
-    httpStatus: 400,
-    description: 'This loan is not in an active state',
-    suggestedAction: 'Verify the loan status and try again',
+    httpStatus: 409,
+    description: 'The loan is not in an active state for this operation',
+    suggestedAction: 'Verify the loan status and retry',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#LOAN_NOT_ACTIVE`,
   },
   [ErrorCode.INVALID_LOAN_ID]: {
     code: ErrorCode.INVALID_LOAN_ID,
     message: 'Invalid loan ID',
     httpStatus: 400,
     description: 'The provided loan ID is invalid',
-    suggestedAction: 'Provide a valid numeric loan ID',
+    suggestedAction: 'Provide a valid loan ID',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#INVALID_LOAN_ID`,
   },
   [ErrorCode.INVALID_TX_XDR]: {
     code: ErrorCode.INVALID_TX_XDR,
     message: 'Invalid transaction XDR',
     httpStatus: 400,
     description: 'The provided transaction XDR is invalid or malformed',
-    suggestedAction: 'Provide a valid signed transaction XDR',
+    suggestedAction: 'Build and sign a valid transaction and retry',
+    documentationUrl: `${ERROR_DOCS_BASE_URL}#INVALID_TX_XDR`,
   },
 };
 
 /**
- * Helper function to get error code metadata.
+ * Look up metadata for an error code. Falls back to INTERNAL_ERROR metadata
+ * when the code is unknown so callers always get a usable status/message.
  */
-export function getErrorCodeMetadata(code: ErrorCode): ErrorCodeMetadata {
-  return ERROR_CODE_REGISTRY[code];
+export function getErrorMetadata(code: ErrorCode | string): ErrorCodeMetadata {
+  return (
+    ERROR_CODE_REGISTRY[code as ErrorCode] ??
+    ERROR_CODE_REGISTRY[ErrorCode.INTERNAL_ERROR]
+  );
 }
 
 /**
- * Helper function to map HTTP status codes to default error codes.
+ * Full error code inventory, suitable for `GET /docs/errors` and for
+ * generating the frontend `lib/errors.ts` mapping.
  */
-export function getDefaultErrorCodeForStatus(status: number): ErrorCode {
-  switch (status) {
-    case 400:
-      return ErrorCode.VALIDATION_ERROR;
-    case 401:
-      return ErrorCode.UNAUTHORIZED;
-    case 403:
-      return ErrorCode.FORBIDDEN;
-    case 404:
-      return ErrorCode.NOT_FOUND;
-    case 409:
-      return ErrorCode.CONFLICT;
-    case 429:
-      return ErrorCode.RATE_LIMIT_EXCEEDED;
-    case 503:
-      return ErrorCode.SERVICE_UNAVAILABLE;
-    case 500:
-    default:
-      return ErrorCode.INTERNAL_ERROR;
-  }
+export function getErrorCodeInventory(): ErrorCodeMetadata[] {
+  return Object.values(ERROR_CODE_REGISTRY);
 }

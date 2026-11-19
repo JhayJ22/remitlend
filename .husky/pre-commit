@@ -2,6 +2,17 @@
 
 STAGED_FILES=$(git diff --cached --name-only)
 
+# Secret scanning (Gitleaks) — block commits containing detected secrets
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "Running gitleaks protect --staged..."
+  gitleaks protect --staged --redact --verbose || {
+    echo "Gitleaks detected potential secrets in staged changes. Commit blocked."
+    exit 1
+  }
+else
+  echo "WARNING: gitleaks not installed; skipping secret scan. See docs/SECRETS-INVENTORY.md."
+fi
+
 # Frontend
 if echo "$STAGED_FILES" | grep -q '^frontend/'; then
   echo "Running frontend lint-staged..."

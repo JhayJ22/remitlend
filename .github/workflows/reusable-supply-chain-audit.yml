@@ -1,5 +1,6 @@
 # Issue #409 – Reusable workflow: supply-chain audit
 # Issue #567 – Dependency vulnerability exception lifecycle with expiry
+# Issue #815 – Secret scanning with Gitleaks (full-repository detect)
 # Least-privilege: only reads code, no write permissions needed.
 name: Supply Chain Audit (reusable)
 
@@ -14,6 +15,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # full history so gitleaks detect can scan all commits
+      - name: Scan repository for committed secrets (Gitleaks)
+        run: |
+          set -euo pipefail
+          GITLEAKS_VERSION="8.18.4"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+          # Fails the job (non-zero exit) when any secret is detected.
+          gitleaks detect --source . --config .gitleaks.toml --redact --verbose
       - name: Block compromised packages
         run: |
           echo "Scanning lockfiles for known malicious packages..."
