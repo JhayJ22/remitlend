@@ -1,0 +1,76 @@
+name: Reusable Backend CI
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version'
+        required: false
+        type: string
+        default: '20'
+      working-directory:
+        description: 'Backend working directory'
+        required: false
+        type: string
+        default: 'backend'
+
+jobs:
+  backend:
+    name: Backend CI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Type check
+        run: npm run typecheck --if-present
+
+      - name: Run tests
+        run: npm test --if-present
+
+      - name: Generate Pact consumer contracts
+        run: npm run test:contracts --if-present
+
+      - name: Verify Pact contracts
+        run: |
+          if [ -d "src/__tests__/contracts/pacts" ] && [ -n "$(ls -A src/__tests__/contracts/pacts 2>/dev/null)" ]; then
+            npx --yes @pact-foundation/pact-cli@latest verify \
+              --dir src/__tests__/contracts/pacts \
+              --provider-base-url "${PACT_PROVIDER_BASE_URL:-http://localhost:8080}" \
+              --loglevel debug || {
+                echo "::error::Pact contract verification failed. A recorded consumer contract no longer matches the provider."
+                echo "--- Recorded contracts ---"
+                for f in src/__tests__/contracts/pacts/*.json; do
+                  echo "### $f"
+                  cat "$f"
+                done
+                exit 1
+              }
+          else
+            echo "::error::No Pact contracts found in src/__tests__/contracts/pacts. Consumer contract tests must generate contracts during the test run."
+            exit 1
+          fi
+
+      - name: Upload Pact contracts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact-contracts
+          path: ${{ inputs.working-directory }}/src/__tests__/contracts/pacts
+          if-no-files-found: warn
