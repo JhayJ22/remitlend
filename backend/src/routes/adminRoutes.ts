@@ -45,6 +45,16 @@ import {
   getRequest as getPrivilegedRequest,
 } from '../services/privilegedActionService.js';
 import { AppError } from '../errors/AppError.js';
+import {
+  initiateReview,
+  approveReview,
+  listReviews,
+  getReview,
+  getCurrentReviews,
+  recordChange,
+  listChanges,
+  runGateCheck,
+} from '../controllers/threatModelController.js';
 
 const router = Router();
 
@@ -722,3 +732,167 @@ router.post(
 );
 
 export default router;
+
+// ── Threat-model refresh gate (#856) ─────────────────────────────────────────
+
+/**
+ * @swagger
+ * /admin/threat-model/reviews:
+ *   post:
+ *     summary: Initiate an annual threat-model review for a trust boundary
+ *     description: >
+ *       Starts a draft review. A second admin must call /approve before it
+ *       counts as a current review and unblocks the production release gate.
+ *       Duplicate drafts by the same reviewer for the same boundary are rejected.
+ *     tags: [Admin, ThreatModel]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [boundary, document_hash]
+ *             properties:
+ *               boundary:
+ *                 type: string
+ *                 enum: [wallet, provider, api, contract, infra]
+ *               document_hash:
+ *                 type: string
+ *                 description: SHA-256 hex of the threat-model document content
+ *               mitigations:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   required: [id, description, status]
+ *               approval_ref:
+ *                 type: string
+ *                 nullable: true
+ *     responses:
+ *       202:
+ *         description: Review draft created
+ *       409:
+ *         description: Duplicate draft for this boundary + reviewer
+ */
+router.post(
+  '/threat-model/reviews',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  auditLog,
+  asyncHandler(initiateReview),
+);
+
+/**
+ * @swagger
+ * /admin/threat-model/reviews/{id}/approve:
+ *   post:
+ *     summary: Approve a draft threat-model review (second-admin gate)
+ *     description: >
+ *       Self-approval is blocked. Approving a review automatically supersedes
+ *       any older approved reviews for the same boundary.
+ *     tags: [Admin, ThreatModel]
+ *     responses:
+ *       200:
+ *         description: Review approved; now counts as current for 365 days
+ *       403:
+ *         description: Self-approval attempt
+ *       409:
+ *         description: Review not in draft state
+ */
+router.post(
+  '/threat-model/reviews/:id/approve',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  auditLog,
+  asyncHandler(approveReview),
+);
+
+/** @swagger
+ * /admin/threat-model/reviews:
+ *   get:
+ *     summary: List threat-model reviews (filterable by boundary, status)
+ *     tags: [Admin, ThreatModel]
+ */
+router.get('/threat-model/reviews', requireJwtAuth, requireRoles('admin'), asyncHandler(listReviews));
+
+/** @swagger
+ * /admin/threat-model/reviews/current:
+ *   get:
+ *     summary: Current approved review for every boundary
+ *     tags: [Admin, ThreatModel]
+ */
+router.get(
+  '/threat-model/reviews/current',
+  requireJwtAuth,
+  requireRoles('admin'),
+  asyncHandler(getCurrentReviews),
+);
+
+/** @swagger
+ * /admin/threat-model/reviews/{id}:
+ *   get:
+ *     summary: Single threat-model review with days_until_expiry
+ *     tags: [Admin, ThreatModel]
+ */
+router.get('/threat-model/reviews/:id', requireJwtAuth, requireRoles('admin'), asyncHandler(getReview));
+
+/**
+ * @swagger
+ * /admin/threat-model/changes:
+ *   post:
+ *     summary: Record a trust-boundary change (from CI or manually)
+ *     description: >
+ *       Checks whether a current review exists for the boundary.
+ *       Returns 403 (gate_status=gated) when no current review exists.
+ *       Returns 201 (gate_status=passed) when a current review exists.
+ *       Admin can force-override with force=true + force_reason (audited).
+ *     tags: [Admin, ThreatModel]
+ *     responses:
+ *       201:
+ *         description: Change recorded; gate passed or forced
+ *       403:
+ *         description: No current threat-model review — gate blocked
+ */
+router.post(
+  '/threat-model/changes',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  auditLog,
+  asyncHandler(recordChange),
+);
+
+/** @swagger
+ * /admin/threat-model/changes:
+ *   get:
+ *     summary: Change inventory (filterable by boundary, gate_status)
+ *     tags: [Admin, ThreatModel]
+ */
+router.get('/threat-model/changes', requireJwtAuth, requireRoles('admin'), asyncHandler(listChanges));
+
+/**
+ * @swagger
+ * /admin/threat-model/gate-check:
+ *   post:
+ *     summary: Run the gate check for a list of changed file paths
+ *     description: >
+ *       Classifies each path against the boundary pattern map and checks
+ *       whether a current review exists for each touched boundary.
+ *       Returns 200 when all boundaries pass; 403 when any boundary is gated.
+ *     tags: [Admin, ThreatModel]
+ *     responses:
+ *       200:
+ *         description: All touched boundaries have current reviews
+ *       403:
+ *         description: One or more boundaries lack a current review
+ */
+router.post(
+  '/threat-model/gate-check',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  asyncHandler(runGateCheck),
+);
