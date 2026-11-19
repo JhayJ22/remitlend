@@ -1,60 +1,83 @@
 # Architecture
 
-This document describes the high-level architecture of the protocol, the
-contract/backend boundary, and the money semantics shared between them.
+This document describes the high-level architecture of the project and the
+contracts that connect its boundaries. It is the authoritative reference for
+cross-cutting design decisions.
 
-## Components
+## Overview
 
-- `contracts/` — on-chain pool, loan lifecycle, and settlement logic.
-- `backend/` — off-chain previews, disclosures, and money calculations.
-- `docs/` — borrower-facing documentation, including
-  `docs/loan-cost-disclosure.md`.
+The system is composed of a frontend application, a backend API, and shared
+contracts. The frontend renders core account journeys (balances, transaction
+details, transfers) against authoritative backend data. Money is always carried
+as exact integer minor units; the frontend never performs floating-point money
+math.
 
-## Repayment allocation (versioned)
+## Frontend
 
-Partial and final repayments follow a single deterministic allocation rule,
-identified by `ALLOCATION_RULE_VERSION` (currently `1`). Contract settlement and
-backend previews MUST use the same version; a mismatch is a bug.
+### Core account journeys
 
-Allocation order for an amount actually transferred:
+Core journeys are:
 
-1. **Accrued interest** — interest accrued up to the accrual boundary.
-2. **Fees** — outstanding fees, in the order they were assessed.
-3. **Principal** — remaining outstanding principal.
+- Account overview and balances
+- Transaction list and transaction details
+- Transfer review and confirmation
 
-Each component is reduced by `min(remaining_amount, component_balance)` in that
-order. Any amount left after principal is fully repaid is an overpayment and is
-returned to the payer (or credited per the loan's terms); it never reduces the
-pool receivable.
+These journeys must remain usable on constrained connections. Optional,
+nonessential content may be deferred, but transaction details, security and
+authorization checks, and stale-data warnings are never removed.
 
-### Accrual boundary
+### Low-bandwidth rendering
 
-Accrued interest is computed from the loan's `lastAccrualTimestamp` up to the
-repayment's block timestamp (`block.timestamp` on-chain; the same value supplied
-to the backend preview). Interest for the interval is accrued exactly once and
-`lastAccrualTimestamp` is advanced to the boundary on settlement. No interest
-accrues for zero-length intervals.
+The frontend exposes a supported connection state model for core journeys:
 
-### Rounding and dust
+| State        | Meaning                                                        |
+| ------------ | -------------------------------------------------------------- |
+| `normal`     | Full rendering; all assets and optional content are loaded.    |
+| `constrained`| Reduced assets; optional content is deferred or lazy-loaded.    |
+| `offline`    | No network; cached data is shown with an explicit stale warning.|
 
-- Interest is computed with integer arithmetic and rounded **down** to the
-  smallest unit; the residual (dust) stays with the borrower and is never
-  charged retroactively.
-- Component reductions are exact integers; the sum of component reductions
-  equals the amount applied and never exceeds the amount transferred.
-- Dust below one unit is not carried forward as a separate balance; it is
-  absorbed by the next accrual interval.
+Detection uses the browser's `navigator.connection` hints (effective type,
+save-data) where available, falling back to `normal` when unsupported. The
+state is advisory: it changes what is rendered, never what is authorized.
 
-### Invariant
+#### Rendering rules
 
-No successful settlement call may reduce the pool receivable by more than the
-amount actually transferred. Contract and backend MUST return identical
-component balances for shared test vectors, including payments below accrued
-interest, exactly accrued interest, one unit below payoff, overpayment, and
-repeated small payments.
+- **Always rendered** in every state: transaction details (amount in exact
+  minor units, currency, counterparty, timestamp, status), security and
+  authorization checks, and explicit stale-data warnings when data may be
+  outdated.
+- **Deferred when `constrained` or `offline`**: decorative images, secondary
+  widgets, and noncritical supplementary data. Deferred content must not block
+  the core journey.
+- **`offline`**: only cached data is shown, and it is always accompanied by a
+  user-visible stale-data warning. Actions that require authoritative state
+  (e.g. submitting a transfer) are disabled and rejected client-side.
 
-## Documentation alignment
+#### Failure behavior
 
-Borrower-facing semantics in `docs/loan-cost-disclosure.md` and the loan
-state-machine documentation MUST reflect the allocation order, accrual
-boundary, and rounding rules above whenever they change.
+- Invalid or stale actions are rejected before any request is sent, so no
+  partial financial side effects occur.
+- When a request fails due to connectivity, the UI surfaces the failure and
+  keeps the last known data visible with a stale warning; it does not silently
+  retry financial mutations.
+- Authorization and consent requirements are unchanged by connection state;
+  constrained rendering never bypasses security checks.
+
+## Backend API
+
+- Money is represented as integer minor units with an explicit currency code.
+- Mutating endpoints are idempotent via client-supplied idempotency keys.
+- Stale or invalid mutations are rejected with a typed error and produce no
+  partial financial side effects.
+
+## Compatibility and migration
+
+Low-bandwidth rendering is a frontend-only concern and introduces no public
+API, event, or persistence schema changes. No migration is required. Clients
+that do not support connection hints simply operate in `normal` state.
+
+## Validation
+
+Focused automated coverage exercises the successful path plus boundary,
+retry/idempotency, access-control, and dependency-failure cases for the core
+journeys, including constrained and offline rendering states.
