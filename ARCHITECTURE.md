@@ -1,60 +1,91 @@
 # Architecture
 
-This document describes the high-level architecture of the protocol, the
-contract/backend boundary, and the money semantics shared between them.
+This document describes the high-level architecture of the project and the
+contracts that govern cross-cutting capabilities. It is the authoritative
+reference for state machines, authorization rules, and audit requirements.
 
-## Components
+## Analytics: Governed Data-Access Request Workflow
 
-- `contracts/` — on-chain pool, loan lifecycle, and settlement logic.
-- `backend/` — off-chain previews, disclosures, and money calculations.
-- `docs/` — borrower-facing documentation, including
-  `docs/loan-cost-disclosure.md`.
+Sensitive analytical datasets are accessed only through a governed request
+workflow. The workflow is auditable end to end: every state transition is
+recorded with actor, timestamp, reason, and dataset scope, and expired grants
+are removed automatically.
 
-## Repayment allocation (versioned)
+### Supported states
 
-Partial and final repayments follow a single deterministic allocation rule,
-identified by `ALLOCATION_RULE_VERSION` (currently `1`). Contract settlement and
-backend previews MUST use the same version; a mismatch is a bug.
+| State       | Meaning                                                        |
+| ----------- | -------------------------------------------------------------- |
+| `requested` | Requester submitted a purpose, dataset scope, and expiry.       |
+| `approved`  | A designated approver accepted the request.                    |
+| `granted`   | Access was provisioned by the grantor/system.                   |
+| `denied`    | An approver rejected the request.                               |
+| `revoked`   | A previously granted access was withdrawn.                      |
+| `expired`   | A granted access passed its expiry and was removed.             |
 
-Allocation order for an amount actually transferred:
+Allowed transitions:
 
-1. **Accrued interest** — interest accrued up to the accrual boundary.
-2. **Fees** — outstanding fees, in the order they were assessed.
-3. **Principal** — remaining outstanding principal.
+- `requested -> approved | denied`
+- `approved -> granted`
+- `granted -> revoked | expired`
 
-Each component is reduced by `min(remaining_amount, component_balance)` in that
-order. Any amount left after principal is fully repaid is an overpayment and is
-returned to the payer (or credited per the loan's terms); it never reduces the
-pool receivable.
+Any other transition (including re-approving a `denied` request, granting an
+unapproved request, or acting on an `expired`/`revoked` grant) is rejected as
+invalid or stale. Rejections are atomic: no partial grant, revocation, or
+financial side effect is applied.
 
-### Accrual boundary
+### Input constraints
 
-Accrued interest is computed from the loan's `lastAccrualTimestamp` up to the
-repayment's block timestamp (`block.timestamp` on-chain; the same value supplied
-to the backend preview). Interest for the interval is accrued exactly once and
-`lastAccrualTimestamp` is advanced to the boundary on settlement. No interest
-accrues for zero-length intervals.
+A request is valid only when all of the following hold:
 
-### Rounding and dust
+- **Stated purpose** is present and non-empty.
+- **Dataset scope** is a minimal, explicit selection (no wildcard/all-datasets
+  grants).
+- **Expiry** is bounded: it must be in the future and within the configured
+  maximum grant window.
+- **Approver** is designated and is distinct from the requester.
 
-- Interest is computed with integer arithmetic and rounded **down** to the
-  smallest unit; the residual (dust) stays with the borrower and is never
-  charged retroactively.
-- Component reductions are exact integers; the sum of component reductions
-  equals the amount applied and never exceeds the amount transferred.
-- Dust below one unit is not carried forward as a separate balance; it is
-  absorbed by the next accrual interval.
+Invalid input is rejected at submission time with a validation error; nothing
+is persisted.
 
-### Invariant
+### Authorization and consent
 
-No successful settlement call may reduce the pool receivable by more than the
-amount actually transferred. Contract and backend MUST return identical
-component balances for shared test vectors, including payments below accrued
-interest, exactly accrued interest, one unit below payoff, overpayment, and
-repeated small payments.
+- Only authorized approvers may move a request to `approved` or `denied`.
+- Only the grantor or the system may move `approved -> granted`.
+- A requester cannot approve or grant their own request (no self-approval).
+- Revocation requires an authorized actor and a recorded reason.
 
-## Documentation alignment
+### Audit log
 
-Borrower-facing semantics in `docs/loan-cost-disclosure.md` and the loan
-state-machine documentation MUST reflect the allocation order, accrual
-boundary, and rounding rules above whenever they change.
+Every `granted`, `revoked`, and `expired` transition appends an immutable audit
+record containing:
+
+- actor (requester, approver, grantor, or `system` for expiry)
+- timestamp
+- reason
+- dataset scope
+- resulting state
+
+Audit records are append-only and are the source of truth for access history.
+
+### Expiry
+
+A scheduled job (or equivalent system actor) transitions `granted` requests
+whose expiry has passed to `expired`, removes the underlying permission, and
+writes an audit record with actor `system`. Expiry is idempotent: re-running the
+job on an already-expired grant is a no-op.
+
+### Compatibility and migration
+
+This workflow introduces new persisted records (requests and audit entries).
+Existing access grants are treated as legacy and are not retroactively
+re-validated; they are migrated to `granted` records with a recorded migration
+reason and their existing expiry. Public API representations expose the state
+enum above; adding new states is a backward-compatible change, while removing
+or renaming states requires a versioned migration.
+
+### Validation
+
+Focused automated coverage should exercise the successful path plus boundary
+cases (expiry bounds, empty purpose, wildcard scope), retry/idempotency (expiry
+job re-runs), access control (self-approval, unauthorized approver), and
+dependency failure (audit write failure rolls back the transition).

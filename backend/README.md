@@ -1,93 +1,116 @@
 # Backend
 
-Node.js service for the lending platform. It exposes the REST API, runs database
-migrations, and hosts the scheduled jobs.
+This directory contains the backend services for the project.
 
-## Supported toolchain
+## Analytics: Historical Contract-State Snapshots
 
-| Tool | Supported version |
-| --- | --- |
-| Node.js | 20.x LTS (18.x works, 22.x untested) |
-| npm | 10.x (ships with Node 20) |
-| PostgreSQL | 15.x or 16.x |
-| Docker | 24.x+ (only needed for the container workflow) |
+For audit queries, the analytics service persists **bounded, immutable contract-state
+snapshots** at documented ledger checkpoints. Each snapshot is linked to the source
+event range it was derived from and is validated against direct contract reads.
 
-If `node --version` reports anything older than 18, install Node 20 LTS before
-continuing. The scripts below assume `npm`; `yarn` and `pnpm` are not supported.
+### Supported states
 
-## Clean-checkout quick start
+A snapshot captures the contract state at a single ledger checkpoint. Supported
+snapshot states are:
 
-These are the exact commands a fresh clone needs. They are executed on every
-pull request by `.github/workflows/verify-contributor-setup.yml`, so if a step
-here drifts from `package.json` the workflow fails and points at this section.
+- `pending` — snapshot record created, reconstruction not yet validated.
+- `validated` — reconstruction matched the direct contract read at the checkpoint.
+- `mismatch` — reconstruction diverged from the direct contract read; the snapshot is
+  retained for audit but flagged as unreliable.
+- `failed` — reconstruction or validation could not complete (dependency failure).
 
-```bash
-# 1. Install dependencies (uses the committed lockfile)
-npm ci
+Only `validated` snapshots are served to audit queries by default; `mismatch` and
+`failed` snapshots are retained for inspection and are never silently promoted.
 
-# 2. Create your local environment file from the checked-in example
-cp .env.example .env
+### Input constraints
 
-# 3. Run database migrations
-npm run migrate
+Snapshot requests are rejected (without any partial persistence) when:
 
-# 4. Seed development data
-npm run seed
+- the requested ledger checkpoint is outside the documented, bounded checkpoint range;
+- the source event range is empty or its start is after its end;
+- the event range does not fall within the checkpoint window it claims to describe;
+- a snapshot already exists for the same checkpoint and event range (idempotent replay
+  returns the existing immutable snapshot rather than writing a new one).
 
-# 5. Run the focused test suite
-npm test
-```
+### Authorization / consent
 
-Every script referenced above (`migrate`, `seed`, `test`) must exist in
-`package.json`. The verification workflow parses this file and fails with the
-section name and the missing script if one is renamed or removed.
+Creating or invalidating snapshots requires the analytics operator role. Read access to
+snapshots follows the same authorization as the underlying audit queries. No snapshot
+is created on behalf of a user without an explicit operator action.
 
-## Environment variables
+### Failure behavior
 
-Copy `.env.example` to `.env` and fill in local values. The verification
-workflow checks that every variable documented here also appears in
-`.env.example`, so add new variables to both places.
+Snapshot creation is transactional: either the snapshot record and its event-range link
+are persisted together, or nothing is written. Validation failures mark the snapshot
+`mismatch`/`failed` rather than deleting it, preserving the audit trail. Stale requests
+(checkpoint already superseded by a newer validated snapshot) are rejected without
+side effects.
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `DATABASE_URL` | yes | PostgreSQL connection string, e.g. `postgres://user:pass@localhost:5432/lending` |
-| `PORT` | no | HTTP port, defaults to `3000` |
-| `NODE_ENV` | no | `development`, `test`, or `production` |
-| `JWT_SECRET` | yes | Signing key for session tokens; use any local-only value |
+### Persistence and compatibility
 
-Never commit real credentials. The workflow only uses throwaway local values and
-performs no external or value-bearing transactions.
+Snapshots are stored alongside the existing event/indexer schema and reference the
+source event range by ledger bounds. The snapshot table is additive; existing event and
+indexer records are unchanged. Consumers that do not read snapshots are unaffected.
+Any future change to the stored snapshot schema must be documented here with its
+migration implications before rollout.
 
-## Container workflow
+## Analytics: Governed Data-Access Request Workflow
 
-```bash
-docker compose up --build
-```
+Analysts who need sensitive analytical data must go through a governed, auditable
+access-request workflow. Every request states a purpose, selects a minimal dataset,
+carries a bounded expiry, and names an approver. Grants and revocations are logged and
+expired permissions are removed automatically.
 
-This starts PostgreSQL and the API together. Run the migration and seed steps
-from inside the API container if you use this path instead of a local database.
+### Supported states
 
-## Troubleshooting
+An access request moves through the following states:
 
-**`npm ci` fails with `EUSAGE` or lockfile errors.**
-Your `package-lock.json` is out of sync or you are on the wrong Node version.
-Run `node --version` and confirm 20.x, then `git checkout package-lock.json` and
-retry. Do not run `npm install` to "fix" it — that rewrites the lockfile.
+- `requested` — created by the requester with purpose, dataset, expiry, and approver.
+- `approved` — an authorized approver (distinct from the requester) accepted the request.
+- `granted` — the grantor/system materialized the permission for the approved request.
+- `denied` — an authorized approver rejected the request.
+- `revoked` — a previously granted permission was withdrawn before expiry.
+- `expired` — the permission passed its expiry and was removed automatically.
 
-**`npm run migrate` cannot reach the database.**
-PostgreSQL is not running or `DATABASE_URL` is wrong. Start it with
-`docker compose up -d db`, then verify the host/port in `.env` match the
-container. On macOS with Homebrew, `brew services start postgresql@16`.
+Allowed transitions are `requested → approved | denied`, `approved → granted`,
+`granted → revoked | expired`. Any other transition (e.g. `denied → granted`,
+`revoked → granted`, `expired → granted`) is rejected as invalid or stale without any
+partial side effects.
 
-**`npm run seed` fails with duplicate key errors.**
-The database already contains seeded rows. Reset it with
-`npm run migrate:reset` (development only) and run `npm run seed` again.
+### Input constraints
 
-**`npm test` fails on a fresh checkout but passes locally.**
-You likely have stale build output or a dirty `.env`. Remove `node_modules` and
-`.env`, then repeat the quick start from step 1. Tests must pass without any
-network access or external services.
+Requests are rejected (without any partial persistence) when:
 
-**A documented command no longer exists.**
-The verification workflow reports the file, section, and missing script. Update
-this README and `package.json` together in the same pull request.
+- the stated purpose is missing or empty;
+- the dataset selection is empty or not a subset of the minimal dataset allowlist;
+- the expiry is missing, in the past, or beyond the bounded maximum lifetime;
+- the designated approver is missing or is the same principal as the requester.
+
+### Authorization / consent
+
+Only principals holding the approver role may approve or deny a request, and the
+approver must be the designated approver on the request. Only the grantor role (or the
+system, on approval) may grant. A requester can never approve or grant their own
+request. Revocation requires the grantor role or the original approver.
+
+### Audit logging
+
+Every grant and revocation writes an immutable audit record capturing the actor, the
+timestamp, the reason, and the dataset scope. Expiry-driven removals are logged the same
+way with the system as actor. Audit records are append-only and are never mutated or
+deleted.
+
+### Failure behavior
+
+State transitions are transactional: the request state change and its audit record are
+persisted together, or nothing is written. Invalid or stale actions (wrong state, wrong
+actor, expired request) are rejected without partial financial or permission side
+effects. Automatic expiry removal is idempotent — replaying it for an already-expired
+grant is a no-op.
+
+### Persistence and compatibility
+
+Access requests, grants, and audit records are stored in additive tables; existing
+event and indexer records are unchanged. Consumers that do not read access requests are
+unaffected. Any future change to the stored request/grant/audit schema must be
+documented here with its migration implications before rollout.
