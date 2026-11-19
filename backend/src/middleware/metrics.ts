@@ -61,6 +61,62 @@ export const webhookRetryQueueDepthGauge = new client.Gauge({
   registers: [metricsRegistry],
 });
 
+// ---------------------------------------------------------------------------
+// Queue backpressure saturation metrics (issue #860)
+// ---------------------------------------------------------------------------
+
+/**
+ * Current number of pending rows in the Soroban write queue.
+ * Values at or above SOROBAN_QUEUE_HARD_LIMIT indicate the queue is saturated.
+ */
+export const sorobanWriteQueueDepthGauge = new client.Gauge({
+  name: 'soroban_write_queue_depth',
+  help: 'Number of pending rows in the Soroban on-chain write queue.',
+  registers: [metricsRegistry],
+});
+
+/**
+ * Current backpressure saturation ratio for the Soroban write queue (0–1).
+ * Value = soroban_write_queue_depth / SOROBAN_QUEUE_HARD_LIMIT.
+ */
+export const sorobanWriteQueueSaturationGauge = new client.Gauge({
+  name: 'soroban_write_queue_saturation_ratio',
+  help: 'Soroban write-queue saturation as a fraction of the hard-capacity limit (0=empty, 1=fully saturated).',
+  registers: [metricsRegistry],
+});
+
+/**
+ * Overall queue saturation ratio across all job classes (0–1).
+ * Maximum of the per-queue saturation ratios.
+ */
+export const overallQueueSaturationGauge = new client.Gauge({
+  name: 'queue_overall_saturation_ratio',
+  help: 'Maximum saturation ratio across all job-class queues (0=empty, 1=fully saturated).',
+  registers: [metricsRegistry],
+});
+
+/**
+ * Number of financial write requests rejected due to queue saturation.
+ * Incremented each time the admission-control middleware returns 503.
+ */
+export const queueAdmissionRejectionsCounter = new client.Counter({
+  name: 'queue_admission_rejections_total',
+  help: 'Financial write requests rejected by the queue backpressure admission-control middleware.',
+  labelNames: ['job_class'] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Number of background job ticks shed due to queue pressure.
+ * Incremented each time shouldBackgroundJobRun() returns run=false.
+ */
+export const queueBackgroundShedsCounter = new client.Counter({
+  name: 'queue_background_sheds_total',
+  help: 'Background job ticks shed by the queue backpressure gate.',
+  labelNames: ['job_class'] as const,
+  registers: [metricsRegistry],
+});
+
 export const scoreReconciliationLastRunTimestampGauge = new client.Gauge({
   name: 'score_reconciliation_last_run_timestamp',
   help: 'Unix timestamp in seconds for the last score reconciliation run.',
@@ -357,6 +413,28 @@ export function recordCacheHit(keyPattern: string): void {
 
 export function recordCacheMiss(keyPattern: string): void {
   cacheMissRateCounter.inc({ key_pattern: keyPattern });
+}
+
+/**
+ * Update the queue-depth and saturation-ratio gauges from a backpressure
+ * snapshot.  Call this after every backpressure refresh pass so Prometheus
+ * always has an up-to-date view of queue capacity.
+ *
+ * @param sorobanDepth      Current pending row count in soroban_write_queue.
+ * @param webhookDepth      Current retry row count in webhook_deliveries.
+ * @param saturationRatio   Overall saturation ratio (max across all queues).
+ */
+export function recordQueueSaturation(
+  sorobanDepth: number,
+  webhookDepth: number,
+  saturationRatio: number,
+): void {
+  sorobanWriteQueueDepthGauge.set(sorobanDepth);
+  webhookRetryQueueDepthGauge.set(webhookDepth);
+  sorobanWriteQueueSaturationGauge.set(
+    Math.min(saturationRatio, 1),
+  );
+  overallQueueSaturationGauge.set(Math.min(saturationRatio, 1));
 }
 
 export function recordLoanApproval(loanType: string = 'standard'): void {

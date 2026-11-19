@@ -48,6 +48,10 @@ import {
   startSorobanWriteReplayProcessor,
   stopSorobanWriteReplayProcessor,
 } from './services/sorobanWriteReplayProcessor.js';
+import {
+  startQueueBackpressureRefresh,
+  stopQueueBackpressureRefresh,
+} from './services/queueBackpressure.js';
 
 const port = process.env.PORT || 3001;
 
@@ -97,6 +101,9 @@ const server = app.listen(port, () => {
 
   // Drain Soroban writes queued while the RPC was unavailable (#74)
   startSorobanWriteReplayProcessor();
+
+  // Start queue backpressure saturation refresh loop (#860)
+  startQueueBackpressureRefresh();
 
   // Start webhook retry processor (5m/15m/45m backoff via WebhookService.processRetries)
   startWebhookRetryProcessor();
@@ -165,6 +172,7 @@ const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
     stopDefaultCheckerScheduler();
     stopWebhookRetryProcessor();
     stopSorobanWriteReplayProcessor();
+    stopQueueBackpressureRefresh();
     stopScoreReconciliationScheduler();
     stopCrossContractReconciler();
     stopNotificationCleanupScheduler();
