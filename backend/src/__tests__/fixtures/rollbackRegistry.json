@@ -1,0 +1,48 @@
+{
+  "_comment": "Registry of every expand-contract migration pair that must have a passing rollback rehearsal before release. Each entry is checked by the CI gate (scripts/check-rollback-coverage.mjs). Add a new entry here whenever a new expand migration is merged; the gate will fail until a matching rehearsal test exists.",
+  "expandContractPairs": [
+    {
+      "id": "notifications-read-at",
+      "description": "Replace notifications.read (boolean) with notifications.read_at (timestamptz)",
+      "expandMigration": "1806000000000_notifications-read-at-expand",
+      "contractMigration": "1806100000000_notifications-drop-read",
+      "expandDir": "migrations",
+      "contractDir": "migrations-contract",
+      "contractMigrationsTable": "pgmigrations_contract",
+      "targetTable": "notifications",
+      "oldColumn": "read",
+      "newColumn": "read_at",
+      "rehearsalTest": "src/__tests__/rollbackRehearsal.test.ts",
+      "rollbackSupported": true,
+      "mixedVersionWindowSupported": true,
+      "workerCompatibilityChecked": true,
+      "notes": "Sync trigger keeps both columns consistent during the mixed-version window. Contract phase is gated and irreversible at the data layer but down() restores the column from read_at."
+    }
+  ],
+  "workerCompatibilityMatrix": [
+    {
+      "id": "indexer-soroban-write-queue",
+      "description": "sorobanWriteReplayProcessor drains soroban_write_queue; must tolerate a rollback that removes queue rows written by the new schema version",
+      "affectedWorker": "sorobanWriteReplayProcessor",
+      "migration": "1804000000000_soroban-write-queue",
+      "rollbackSupported": true,
+      "rehearsalTest": "src/__tests__/rollbackRehearsal.test.ts"
+    },
+    {
+      "id": "adaptive-indexer-scheduler-state",
+      "description": "adaptiveScheduler reads/writes indexer_scheduler_state; rollback to previous schema must not corrupt the scheduler_mode enum",
+      "affectedWorker": "adaptiveIndexerScheduler",
+      "migration": "1805000000000_adaptive-indexer-scheduler-state",
+      "rollbackSupported": true,
+      "rehearsalTest": "src/__tests__/rollbackRehearsal.test.ts"
+    },
+    {
+      "id": "webhook-dead-letter",
+      "description": "webhookRetryProcessor moves exhausted retries to dead-letter queue; rollback must not leave orphaned rows",
+      "affectedWorker": "webhookRetryProcessor",
+      "migration": "1806000000000_webhook-dead-letter",
+      "rollbackSupported": true,
+      "rehearsalTest": "src/__tests__/rollbackRehearsal.test.ts"
+    }
+  ]
+}

@@ -362,3 +362,17 @@ jobs:
         working-directory: contracts
         continue-on-error: true
       - name: Generate
+
+  # ── 13. Rollback rehearsal (issue #861) ──────────────────────────────────────
+  # Static coverage gate runs on every PR; the live rehearsal runs whenever
+  # migration files, the registry, or the rehearsal test itself changes.
+  # The release pipeline is blocked when any registered expand-contract pair
+  # has no passing rehearsal (coverage-gate job) or when the live rehearsal
+  # fails (rehearsal job).
+  rollback-rehearsal:
+    needs: [supply-chain-audit, migration-paths]
+    uses: ./.github/workflows/reusable-rollback-rehearsal.yml
+    permissions:
+      contents: read
+    with:
+      force-run: ${{ github.event_name == 'push' }}
