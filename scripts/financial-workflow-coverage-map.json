@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "description": "Machine-readable cross-layer financial workflow coverage map. Enumerates critical borrower, lender, remittance, settlement, and recovery journeys and the required contract, backend, frontend, and e2e test evidence paths. Consumed by scripts/check-financial-workflow-coverage.mjs to fail CI when changed financial paths lose required evidence.",
+  "layers": ["contract", "backend", "frontend", "e2e"],
+  "journeys": [
+    {
+      "id": "borrower.loan-application",
+      "category": "borrower",
+      "title": "Borrower submits a loan application",
+      "description": "Borrower creates a loan application with requested principal, term, and purpose; server validates input constraints and persists an authoritative application record.",
+      "states": ["draft", "submitted", "under_review", "approved", "rejected", "withdrawn"],
+      "inputConstraints": [
+        "principal must be a positive integer in minor units",
+        "termMonths must be within the product's allowed range",
+        "purpose must be a supported enum value",
+        "borrower must be authenticated and KYC-verified"
+      ],
+      "authorization": "Authenticated borrower acting on their own account; no cross-borrower access.",
+      "failureBehavior": "Invalid or stale submissions are rejected with a typed error and no partial application record is persisted.",
+      "evidence": {
+        "contract": [
+          "contracts/loan-application.schema.json",
+          "contracts/tests/loan-application.contract.test.ts"
+        ],
+        "backend": [
+          "backend/tests/loan-application.service.test.ts",
+          "backend/tests/loan-application.routes.test.ts"
+        ],
+        "frontend": [
+          "frontend/tests/loan-application-form.test.tsx"
+        ],
+        "e2e": [
+          "e2e/tests/borrower-loan-application.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "borrower.repayment-schedule",
+      "category": "borrower",
+      "title": "Borrower views repayment schedule and makes a repayment",
+      "description": "Borrower retrieves the authoritative repayment schedule and submits a repayment; the payment is idempotent and applied exactly once in minor units.",
+      "states": ["scheduled", "due", "partially_paid", "paid", "overdue"],
+      "inputConstraints": [
+        "amount must be a positive integer in minor units",
+        "amount must not exceed remaining balance",
+        "idempotency key required on repayment submission"
+      ],
+      "authorization": "Authenticated borrower may only view and repay their own loans.",
+      "failureBehavior": "Duplicate idempotency keys return the original result; insufficient or invalid amounts are rejected without mutating the balance.",
+      "evidence": {
+        "contract": [
+          "contracts/repayment.schema.json",
+          "contracts/tests/repayment.contract.test.ts"
+        ],
+        "backend": [
+          "backend/tests/repayment.service.test.ts",
+          "backend/tests/repayment.idempotency.test.ts"
+        ],
+        "frontend": [
+          "frontend/tests/repayment-schedule.test.tsx"
+        ],
+        "e2e": [
+          "e2e/tests/borrower-repayment.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "lender.loan-funding",
+      "category": "lender",
+      "title": "Lender funds an approved loan",
+      "description": "Lender commits funds to an approved loan application; commitment is recorded in minor units and reflected in lender portfolio and borrower loan state.",
+      "states": ["approved", "funding", "funded", "cancelled"],
+      "inputConstraints": [
+        "commitment amount must be a positive integer in minor units",
+        "commitment must not exceed remaining funding requirement",
+        "lender must have sufficient available balance"
+      ],
+      "authorization": "Authenticated lender with an active funding account; cannot fund on behalf of another lender.",
+      "failureBehavior": "Insufficient balance or stale application state rejects the commitment with no partial ledger entries.",
+      "evidence": {
+        "contract": [
+          "contracts/loan-funding.schema.json",
+          "contracts/tests/loan-funding.contract.test.ts"
+        ],
+        "backend": [
+          "backend/tests/loan-funding.service.test.ts",
+          "backend/tests/loan-funding.access-control.test.ts"
+        ],
+        "frontend": [
+          "frontend/tests/lender-funding-panel.test.tsx"
+        ],
+        "e2e": [
+          "e2e/tests/lender-loan-funding.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "lender.portfolio-report",
+      "category": "lender",
+      "title": "Lender views portfolio and earnings report",
+      "description": "Lender retrieves an aggregated portfolio view with outstanding principal, interest earned, and delinquency summary in minor units.",
+      "states": ["active", "delinquent", "closed"],
+      "inputConstraints": [
+        "date range must be valid and ordered",
+        "reporting currency must be supported"
+      ],
+      "authorization": "Authenticated lender may only access their own portfolio data.",
+      "failureBehavior": "Invalid date ranges are rejected; dependency failures surface a typed error without returning partial aggregates.",
+      "evidence": {
+        "contract": [
+          "contracts/portfolio-report.schema.json",
+          "contracts/tests/portfolio-report.contract.test.ts"
+        ],
+        "backend": [
+          "backend/tests/portfolio-report.service.test.ts",
+          "backend/tests/portfolio-report.dependency-failure.test.ts"
+        ],
+        "frontend": [
+          "frontend/tests/lender-portfolio.test.tsx"
+        ],
+        "e2e": [
+          "e2e/tests/lender-portfolio.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "remittance.initiate-transfer",
+      "category": "remittance",
+      "title": "Borrower initiates a cross-border remittance",
+      "description": "Borrower initiates a remittance transfer with explicit source/destination currencies and amounts in minor units; transfer is idempotent and consent-gated.",
+      "states": ["initiated", "pending_consent", "processing", "completed", "failed", "cancelled"],
+      "inputConstraints": [
+        "amount must be a positive integer in minor units",
+        "source and destination currencies must be supported",
+        "recipient must be a validated beneficiary",
+        "idempotency key required"
+      ],
+      "authorization": "Authenticated borrower with explicit consent captured for the transfer; beneficiary must belong to the borrower.",
+      "failureBehavior": "Missing consent, unsupported currency, or duplicate idempotency key rejects the transfer without debiting the source account.",
+      "evidence": {
+        "contract": [
+          "contracts/remittance.schema.json",
+          "contracts/tests/remittance.contract.test.ts"
+        ],
+        "backend": [
+          "backend/tests/remittance.service.test.ts",
+          "backend/tests/remittance.idempotency.test.ts",
+          "backend/tests/remittance.consent.test.ts"
+        ],
+        "frontend": [
+          "frontend/tests/remittance-form.test.tsx"
+        ],
+        "e2e": [
+          "e2e/tests/remittance-initiate.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "remittance.status-tracking",
+      "category": "remittance",
+      "title": "Borrower tracks remittance status",
+      "description": "Borrower polls or subscribes to remittance status updates; status transitions are consistent across API, events, and UI.",
+      "states": ["initiated", "processing", "completed", "failed", "cancelled"],
+      "inputConstraints": [
+        "transfer id must reference an existing transfer owned by the borrower"
+      ],
+      "authorization": "Authenticated borrower may only view their own transfers.",
+      "failureBehavior": "Unknown or foreign transfer ids return not-found without leaking existence.",
+      "evidence": {
+        "contract": [
+          "contracts/remittance-status.schema.json",
+          "contracts/tests/remittance-status.contract.test.ts"
+        ],
+        "backend": [
+          "backend/tests/remittance-status.service.test.ts",
+          "backend/tests/remittance-status.access-control.test.ts"
+        ],
+        "frontend": [
+          "frontend/tests/remittance-status.test.tsx"
+        ],
+        "e2e": [
+          "e2e/tests/remittance-status.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "settlement.daily-batch",
+      "category": "settlement",
+      "title": "Daily settlement batch reconciles lender and borrower ledgers",
+      "description": "Settlement job aggregates the day's transactions and produces balanced ledger entries in minor units; reruns are idempotent per settlement date.",
+      "states": ["pending", "running", "balanced", "imbalanced", "failed"],
+      "inputConstraints": [
+        "settlement date must be a valid business day",
+        "batch must be idempotent per settlement date"
+      ],
+      "authorization": "System/service account only; not user-invocable.",
+      "failureBehavior": "Imbalanced batches halt and alert without posting partial ledger entries; retries resume from last committed checkpoint.",
+      "evidence": {
+        "contract": [
+          "contracts/settlement-batch.schema.json",
+          "contracts/tests/settlement-batch.contract.test.ts"
+        ],
+        "backend": [
+          "backend/tests/settlement.service.test.ts",
+          "backend/tests/settlement.idempotency.test.ts",
+          "backend/tests/settlement.dependency-failure.test.ts"
+        ],
+        "frontend": [
+          "frontend/tests/settlement-dashboard.test.tsx"
+        ],
+        "e2e": [
+          "e2e/tests/settlement-daily-batch.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "settlement.payout-disbursement",
+      "category": "settlement",
+      "title": "Disbursement of settled funds to borrowers",
+      "description": "Settled funds are disbursed to borrower accounts; disbursement is idempotent and reflected consistently in ledger, API, and UI.",
+      "states": ["queued", "disbursing", "disbursed", "failed", "reversed"],
+      "inputConstraints": [
+        "disbursement amount must equal settled amount in minor units",
+        "idempotency key required per disbursement"
+      ],
+      "authorization": "System/service account only; borrower sees read-only status.",
+      "failureBehavior": "Failed disbursements are retried idempotently; partial disbursements are reversed before retry.",
+      "evidence": {
+        "contract": [
+          "contracts/disbursement.schema.json",
+          "contracts/tests/disbursement.contract.test.ts"
+        ],
+        "backend": [
+          "backend/tests/disbursement.service.test.ts",
+          "backend/tests/disbursement.idempotency.test.ts"
+        ],
+        "frontend": [
+          "frontend/tests/disbursement-status.test.tsx"
+        ],
+        "e2e": [
+          "e2e/tests/settlement-disbursement.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "recovery.delinquency-escalation",
+      "category": "recovery",
+      "title": "Delinquent loan escalation and recovery workflow",
+      "description": "Overdue loans escalate through recovery stages; each stage transition is auditable and consistent across API, events, and UI.",
+      "states": ["current", "delinquent", "in_recovery", "written_off", "recovered"],
+      "inputConstraints": [
+        "escalation requires days-past-due threshold met",
+        "stage transitions must be monotonic"
+      ],
+      "authorization": "Recovery operator role required for manual transitions; borrower sees read-only status.",
+      "failureBehavior": "Out-of-order or stale transitions are rejected without mutating loan state.",
+      "evidence": {
+        "contract": [
+          "contracts/recovery.schema.json",
+          "contracts/tests/recovery.contract.test.ts"
+        ],
+        "backend": [
+          "backend/tests/recovery.service.test.ts",
+          "backend/tests/recovery.access-control.test.ts"
+        ],
+        "frontend": [
+          "frontend/tests/recovery-dashboard.test.tsx"
+        ],
+        "e2e": [
+          "e2e/tests/recovery-escalation.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "recovery.write-off-and-recovery",
+      "category": "recovery",
+      "title": "Loan write-off and subsequent recovery",
+      "description": "Unrecoverable loans are written off and later partial recoveries are recorded against the written-off balance in minor units.",
+      "states": ["in_recovery", "written_off", "partially_recovered", "recovered"],
+      "inputConstraints": [
+        "write-off requires approval and reason code",
+        "recovery amount must be a positive integer in minor units and not exceed written-off balance"
+      ],
+      "authorization": "Recovery operator with write-off approval permission; borrower sees read-only status.",
+      "failureBehavior": "Recovery exceeding written-off balance is rejected; write-off without approval is rejected with no ledger mutation.",
+      "evidence": {
+        "contract": [
+          "contracts/write-off.schema.json",
+          "contracts/tests/write-off.contract.test.ts"
+        ],
+        "backend": [
+          "backend/tests/write-off.service.test.ts",
+          "backend/tests/write-off.access-control.test.ts"
+        ],
+        "frontend": [
+          "frontend/tests/write-off-panel.test.tsx"
+        ],
+        "e2e": [
+          "e2e/tests/recovery-write-off.spec.ts"
+        ]
+      }
+    }
+  ]
+}
