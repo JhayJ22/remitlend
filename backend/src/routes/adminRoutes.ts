@@ -45,6 +45,15 @@ import {
   getRequest as getPrivilegedRequest,
 } from '../services/privilegedActionService.js';
 import { AppError } from '../errors/AppError.js';
+import {
+  recordChange,
+  listChanges,
+  getChange,
+  recoverChange,
+  createSnapshot,
+  reviewSnapshot,
+  listSnapshots,
+} from '../controllers/configIntegrityController.js';
 
 const router = Router();
 
@@ -720,5 +729,267 @@ router.post(
     res.status(result.status === 'executed' ? 200 : 502).json({ success: true, data: result });
   }),
 );
+
+export default router;
+
+// ── Config integrity monitoring (#854) ───────────────────────────────────────
+
+/**
+ * @swagger
+ * /admin/config-changes:
+ *   post:
+ *     summary: Record a privileged configuration change
+ *     description: >
+ *       Appends an immutable record of a config change. When no approval_ref
+ *       is supplied the change is flagged as 'unauthorized' and an alert is
+ *       dispatched to configured channels. Never modifies existing records.
+ *     tags: [Admin, ConfigIntegrity]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [config_key, new_value]
+ *             properties:
+ *               config_key:
+ *                 type: string
+ *                 example: "loan.interest_rate_percent"
+ *               prior_value:
+ *                 description: Value before this change (null for initial write)
+ *               new_value:
+ *                 description: Value after this change
+ *               approval_ref:
+ *                 type: string
+ *                 nullable: true
+ *                 description: Dual-control approval reference (privileged_action_requests.id or ticket)
+ *               source:
+ *                 type: string
+ *                 enum: [api, direct, recovery, contract]
+ *               effective_at:
+ *                 type: string
+ *                 format: date-time
+ *               requires_approval:
+ *                 type: boolean
+ *                 default: true
+ *     responses:
+ *       201:
+ *         description: Change recorded
+ *       400:
+ *         description: Validation error
+ *       401:
+ *         description: Unauthorized
+ */
+router.post(
+  '/config-changes',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  auditLog,
+  recordChange,
+);
+
+/**
+ * @swagger
+ * /admin/config-changes:
+ *   get:
+ *     summary: List privileged configuration changes
+ *     tags: [Admin, ConfigIntegrity]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: config_key
+ *         schema: { type: string }
+ *       - in: query
+ *         name: actor
+ *         schema: { type: string }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: [applied, unauthorized, recovered] }
+ *       - in: query
+ *         name: source
+ *         schema: { type: string, enum: [api, direct, recovery, contract] }
+ *       - in: query
+ *         name: from
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: to
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 50, maximum: 200 }
+ *       - in: query
+ *         name: cursor
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Paginated list of changes
+ */
+router.get('/config-changes', requireJwtAuth, requireRoles('admin'), listChanges);
+
+/**
+ * @swagger
+ * /admin/config-changes/{id}:
+ *   get:
+ *     summary: Get a single config change record
+ *     tags: [Admin, ConfigIntegrity]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Change record
+ *       404:
+ *         description: Not found
+ */
+router.get('/config-changes/:id', requireJwtAuth, requireRoles('admin'), getChange);
+
+/**
+ * @swagger
+ * /admin/config-changes/{id}/recover:
+ *   post:
+ *     summary: Recover a config key to a reviewed snapshot value
+ *     description: >
+ *       Requires a reviewed snapshot and a valid approval reference. Records
+ *       a new change log row with source='recovery'. All prior active rows
+ *       for the key are marked 'recovered'; originals are never deleted.
+ *     tags: [Admin, ConfigIntegrity]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [snapshot_id, approval_ref]
+ *             properties:
+ *               snapshot_id:
+ *                 type: string
+ *                 format: uuid
+ *               approval_ref:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Recovery applied and new change row created
+ *       400:
+ *         description: Snapshot not reviewed or validation error
+ *       404:
+ *         description: Snapshot not found
+ */
+router.post(
+  '/config-changes/:id/recover',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  auditLog,
+  recoverChange,
+);
+
+/**
+ * @swagger
+ * /admin/config-snapshots:
+ *   post:
+ *     summary: Capture a reviewed configuration snapshot
+ *     description: >
+ *       Saves the current (or supplied) value of a config key as a snapshot
+ *       that can later be used as a recovery target. Set is_reviewed=true
+ *       only after a second admin has verified the value.
+ *     tags: [Admin, ConfigIntegrity]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [config_key, value]
+ *             properties:
+ *               config_key:
+ *                 type: string
+ *               value:
+ *                 description: The value to snapshot
+ *               review_ref:
+ *                 type: string
+ *                 nullable: true
+ *               is_reviewed:
+ *                 type: boolean
+ *                 default: false
+ *     responses:
+ *       201:
+ *         description: Snapshot created
+ */
+router.post(
+  '/config-snapshots',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  auditLog,
+  createSnapshot,
+);
+
+/**
+ * @swagger
+ * /admin/config-snapshots/{id}/review:
+ *   put:
+ *     summary: Mark a snapshot as reviewed (second-admin approval)
+ *     tags: [Admin, ConfigIntegrity]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               review_ref:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Snapshot marked reviewed
+ *       404:
+ *         description: Not found
+ */
+router.put(
+  '/config-snapshots/:id/review',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  auditLog,
+  reviewSnapshot,
+);
+
+/**
+ * @swagger
+ * /admin/config-snapshots:
+ *   get:
+ *     summary: List configuration snapshots
+ *     tags: [Admin, ConfigIntegrity]
+ *     parameters:
+ *       - in: query
+ *         name: config_key
+ *         schema: { type: string }
+ *       - in: query
+ *         name: is_reviewed
+ *         schema: { type: boolean }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 50, maximum: 200 }
+ *     responses:
+ *       200:
+ *         description: List of snapshots
+ */
+router.get('/config-snapshots', requireJwtAuth, requireRoles('admin'), listSnapshots);
 
 export default router;
