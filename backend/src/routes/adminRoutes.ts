@@ -38,6 +38,10 @@ import {
 
 import { listDiscrepancies } from '../services/discrepancyLedgerService.js';
 import {
+  listTransactionReconciliations,
+  resolveOrphanedTransaction,
+} from '../controllers/orphanedTxController.js';
+import {
   createRequest as createPrivilegedRequest,
   approveRequest as approvePrivilegedRequest,
   revokeRequest as revokePrivilegedRequest,
@@ -722,3 +726,26 @@ router.post(
 );
 
 export default router;
+
+// ── Orphaned transaction reconciliation (issue #858) ──────────────────────
+
+/**
+ * GET /api/v1/admin/transactions/reconciliation
+ * Lists all orphaned-tx reconciliation records with optional state filter.
+ */
+router.get(
+  '/transactions/reconciliation',
+  requireApiKey('admin:reconciliation'),
+  listTransactionReconciliations,
+);
+
+/**
+ * POST /api/v1/admin/transactions/reconciliation/:id/resolve
+ * Manually resolves a reconciliation record. Requires a resolution note.
+ */
+router.post(
+  '/transactions/reconciliation/:id/resolve',
+  requireApiKey('admin:reconciliation'),
+  strictRateLimiter,
+  resolveOrphanedTransaction,
+);

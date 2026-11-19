@@ -58,6 +58,12 @@ export enum ErrorCode {
   LOAN_NOT_ACTIVE = 'LOAN_NOT_ACTIVE',
   INVALID_LOAN_ID = 'INVALID_LOAN_ID',
   INVALID_TX_XDR = 'INVALID_TX_XDR',
+
+  // Orphaned Transaction Reconciliation Errors (issue #858)
+  TX_NOT_FOUND = 'TX_NOT_FOUND',
+  TX_RESUBMIT_BLOCKED = 'TX_RESUBMIT_BLOCKED',
+  TX_FINALITY_PENDING = 'TX_FINALITY_PENDING',
+  TX_ORPHANED = 'TX_ORPHANED',
 }
 
 /**
@@ -306,6 +312,43 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 400,
     description: 'The provided transaction XDR is invalid or malformed',
     suggestedAction: 'Provide a valid signed transaction XDR',
+  },
+
+  // Orphaned Transaction Reconciliation (issue #858)
+  [ErrorCode.TX_NOT_FOUND]: {
+    code: ErrorCode.TX_NOT_FOUND,
+    message: 'Transaction not found',
+    httpStatus: 404,
+    description: 'No transaction submission or reconciliation record found for the given identifier',
+    suggestedAction: 'Verify the tx_hash or reconciliation id and retry',
+  },
+  [ErrorCode.TX_RESUBMIT_BLOCKED]: {
+    code: ErrorCode.TX_RESUBMIT_BLOCKED,
+    message: 'Resubmission is blocked in the current transaction state',
+    httpStatus: 409,
+    description:
+      'Resubmission is only permitted when the reconciliation state is `orphaned`. ' +
+      'If the state is `finality_pending`, wait for the finality window to elapse. ' +
+      'If the state is `confirmed` or `failed_on_chain`, the transaction does not need resubmission.',
+    suggestedAction: 'Check the reconciliation state and retry after the finality window',
+  },
+  [ErrorCode.TX_FINALITY_PENDING]: {
+    code: ErrorCode.TX_FINALITY_PENDING,
+    message: 'Transaction is within the finality window',
+    httpStatus: 409,
+    description:
+      'The transaction was not found on-chain but the finality window has not yet elapsed. ' +
+      'The network may still include the transaction. Resubmission is blocked to prevent double-execution.',
+    suggestedAction: 'Wait for the finality window to elapse and check the status again',
+  },
+  [ErrorCode.TX_ORPHANED]: {
+    code: ErrorCode.TX_ORPHANED,
+    message: 'Transaction is orphaned',
+    httpStatus: 410,
+    description:
+      'The transaction was not found on-chain after the finality window elapsed. ' +
+      'It is safe to resubmit via POST /:txHash/resubmit with a new signed tx_hash.',
+    suggestedAction: 'Re-sign and resubmit the transaction via the resubmit endpoint',
   },
 };
 

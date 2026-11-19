@@ -22,6 +22,7 @@ import notificationsRoutes from './routes/notificationsRoutes.js';
 import eventRoutes from './routes/eventRoutes.js';
 import remittanceRoutes from './routes/remittanceRoutes.js';
 import transactionRoutes from './routes/transactionRoutes.js';
+import orphanedTxRoutes from './routes/orphanedTxRoutes.js';
 import { registerStatusRoutes } from './routes/statusRoutes.js';
 import internalRoutes from './routes/internalRoutes.js';
 import { requireApiKey } from './middleware/auth.js';
@@ -388,6 +389,9 @@ app.use('/api/events', eventRoutes);
 app.use('/api/remittances', remittanceRoutes);
 app.use('/api/transactions', transactionRoutes);
 
+// Orphaned transaction reconciliation routes (issue #858)
+app.use('/api/transactions', orphanedTxRoutes);
+
 // Versioned API routes (v1 - current)
 app.use('/api/v1', simulationRoutes);
 app.use('/api/v1/score', scoreRoutes);
@@ -397,6 +401,9 @@ app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/remittances', remittanceRoutes);
 app.use('/api/v1/transactions', transactionRoutes);
+
+// Orphaned transaction reconciliation routes (issue #858)
+app.use('/api/v1/transactions', orphanedTxRoutes);
 app.use('/api/v1/pool', poolRoutes);
 app.use('/api/v1/notifications', notificationsRoutes);
 app.use('/api/v1/events', eventRoutes);
