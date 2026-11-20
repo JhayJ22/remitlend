@@ -28,6 +28,7 @@ import {
 import { getPendingGovernance } from '../controllers/adminGovernanceController.js';
 import { getContractVerificationStatus } from '../controllers/adminContractVerificationController.js';
 import { query } from '../db/connection.js';
+import { createSupportedAsset } from '../services/assetAllowlistService.js';
 
 import { buildRejectLoanTx } from '../controllers/loanController.js';
 import { listAuditLogs } from '../controllers/authController.js';
@@ -47,6 +48,59 @@ import {
 import { AppError } from '../errors/AppError.js';
 
 const router = Router();
+
+const onboardAssetSchema = z.object({
+  assetCode: z.string().regex(/^[A-Za-z0-9]{1,12}$/),
+  issuer: z.string().regex(/^G[A-Z2-7]{55}$/),
+  tokenAddress: z.string().regex(/^C[A-Z2-7]{55}$/),
+  decimals: z.number().int().min(0).max(18),
+  minLoanAmount: z.string().regex(/^\d+$/),
+  maxLoanAmount: z.string().regex(/^\d+$/),
+});
+
+/**
+ * @swagger
+ * /admin/assets:
+ *   post:
+ *     summary: Onboard a Stellar asset onto the loan/pool allowlist
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [assetCode, issuer, tokenAddress, decimals, minLoanAmount, maxLoanAmount]
+ *             properties:
+ *               assetCode: { type: string, example: USDC }
+ *               issuer: { type: string, description: Stellar issuer account (G...) }
+ *               tokenAddress: { type: string, description: Soroban token contract (C...) }
+ *               decimals: { type: integer, minimum: 0, maximum: 18 }
+ *               minLoanAmount: { type: string, description: Smallest unit, integer string }
+ *               maxLoanAmount: { type: string, description: Smallest unit, integer string }
+ *     responses:
+ *       201:
+ *         description: Asset onboarded
+ *       400:
+ *         description: Validation error or asset already onboarded
+ */
+router.post(
+  '/assets',
+  requireJwtAuth,
+  requireRoles('admin'),
+  auditLog,
+  validateBody(onboardAssetSchema),
+  asyncHandler(async (req, res) => {
+    const body = req.body as z.infer<typeof onboardAssetSchema>;
+    if (BigInt(body.maxLoanAmount) < BigInt(body.minLoanAmount)) {
+      throw AppError.badRequest('maxLoanAmount must be >= minLoanAmount');
+    }
+    const asset = await createSupportedAsset(body);
+    res.status(201).json({ success: true, asset });
+  }),
+);
 
 router.get('/audit-logs', requireJwtAuth, requireRoles('admin'), listAuditLogs);
 

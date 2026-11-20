@@ -330,3 +330,12 @@ ls -lh target/wasm32-unknown-unknown/release/*.wasm | awk '{print $9, $5}'
 - [ ] Size budget adjustment based on complexity metrics
 - [ ] Integration with performance benchmarks
 - [ ] Automated dependency audit for size impact
+
+## WASM Size Budget Check (hard gate)
+
+After the wasm32 build, `reusable-contracts.yml` runs `scripts/check-wasm-size-budgets.sh`, which compares every built `.wasm` against `wasm_budgets_bytes` in `contracts/size-budgets.json`.
+
+- **Fails** (with `actual` vs `budget` bytes) if a WASM exceeds its budget, or has no entry in `wasm_budgets_bytes`. Every new contract crate that builds a WASM needs an entry.
+- `scripts/test-wasm-size-budgets.sh` runs first in CI and proves the gate works: it passes within budget and fails when a budget is lowered below the actual size or missing.
+- **Re-baseline** after an intentional size change: build, then run `bash scripts/check-wasm-size-budgets.sh --update contracts/target/wasm32-unknown-unknown/release contracts/size-budgets.json` (sets each budget to current size + 10%) and commit the JSON.
+- To reproduce a failure locally, temporarily lower an entry in `wasm_budgets_bytes` and re-run the check.

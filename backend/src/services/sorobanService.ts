@@ -10,6 +10,7 @@ import {
 } from '@stellar/stellar-sdk';
 import logger from '../utils/logger.js';
 import { AppError } from '../errors/AppError.js';
+import { assertAssetSupported } from './assetAllowlistService.js';
 import { getTraceContext } from '../utils/requestContext.js';
 import { formatTraceparent, outboundTraceContext } from '../utils/traceContext.js';
 import {
@@ -374,6 +375,7 @@ class SorobanService {
     tokenAddress: string,
     amount: number,
   ): Promise<{ unsignedTxXdr: string; networkPassphrase: string }> {
+    await assertAssetSupported(tokenAddress);
     const server = this.getRpcServer();
     const contractId = this.getLendingPoolContractId();
     const passphrase = this.getNetworkPassphrase();
@@ -522,7 +524,9 @@ class SorobanService {
   async buildApproveLoanTx(
     adminPublicKey: string,
     loanId: number,
+    tokenAddress: string,
   ): Promise<{ unsignedTxXdr: string; networkPassphrase: string }> {
+    await assertAssetSupported(tokenAddress);
     const server = this.getRpcServer();
     const contractId = this.getLoanManagerContractId();
     const passphrase = this.getNetworkPassphrase();

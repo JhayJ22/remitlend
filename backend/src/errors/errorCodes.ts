@@ -17,6 +17,7 @@ export enum ErrorCode {
   INVALID_CHALLENGE = 'INVALID_CHALLENGE',
   MISSING_FIELD = 'MISSING_FIELD',
   VALIDATION_ERROR = 'VALIDATION_ERROR',
+  ASSET_NOT_SUPPORTED = 'ASSET_NOT_SUPPORTED',
 
   // Authentication Errors (401)
   UNAUTHORIZED = 'UNAUTHORIZED',
@@ -82,6 +83,13 @@ export const ERROR_CODE_REGISTRY: Record<ErrorCode, ErrorCodeMetadata> = {
     httpStatus: 400,
     description: 'The provided amount is invalid or not a positive number',
     suggestedAction: 'Provide a valid positive number for the amount field',
+  },
+  [ErrorCode.ASSET_NOT_SUPPORTED]: {
+    code: ErrorCode.ASSET_NOT_SUPPORTED,
+    message: 'Asset not supported',
+    httpStatus: 400,
+    description: 'The requested token is not on the protocol asset allowlist',
+    suggestedAction: 'Use an onboarded asset (see docs/ASSET_ONBOARDING.md)',
   },
   [ErrorCode.INVALID_PUBLIC_KEY]: {
     code: ErrorCode.INVALID_PUBLIC_KEY,

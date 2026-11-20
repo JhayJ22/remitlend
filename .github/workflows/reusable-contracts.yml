@@ -74,6 +74,11 @@ jobs:
             fi
           done
         working-directory: contracts
+      - name: Enforce per-contract WASM size budgets
+        run: |
+          bash ../scripts/test-wasm-size-budgets.sh
+          bash ../scripts/check-wasm-size-budgets.sh ./target/"$WASM_TARGET"/release ./size-budgets.json
+        working-directory: contracts
       - name: Analyze per-function contract sizes
         run: bash ../scripts/analyze-contract-sizes.sh ./target/"$WASM_TARGET"/release
         working-directory: contracts

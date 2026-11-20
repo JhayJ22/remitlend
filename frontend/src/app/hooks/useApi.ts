@@ -471,6 +471,8 @@ export interface LoanAmortizationScheduleRow {
   date: string;
   principalPortion: number;
   interestPortion: number;
+  /** Fee component of the payment; absent when the schedule carries no fees. */
+  feePortion?: number;
   totalDue: number;
   runningBalance: number;
 }
