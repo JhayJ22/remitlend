@@ -1,4 +1,5 @@
 import { rpc as SorobanRpc, scValToNative, xdr } from '@stellar/stellar-sdk';
+import { appendAuditLogWithClient } from './auditLogService.js';
 import { type PoolClient, query, withTransaction } from '../db/connection.js';
 import logger from '../utils/logger.js';
 import { createRequestId, runWithRequestContext } from '../utils/requestContext.js';
@@ -736,25 +737,21 @@ export class EventIndexer {
           insertedEvents.push(event);
 
           if (this.isAdminConfigEventType(event.eventType)) {
-            await client.query(
-              `INSERT INTO audit_logs (actor, action, target, payload, ip_address, status)
-               VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
-              [
-                event.address ?? 'SYSTEM',
-                `ADMIN_CONFIG_${event.eventType}`,
-                `contract:${event.contractId}`,
-                JSON.stringify({
-                  eventId: event.eventId,
-                  eventType: event.eventType,
-                  loanId: event.loanId ?? null,
-                  amount: event.amount ?? null,
-                  ledger: event.ledger,
-                  txHash: event.txHash,
-                }),
-                'internal-indexer',
-                200,
-              ],
-            );
+            await appendAuditLogWithClient(client, {
+              actor: event.address ?? 'SYSTEM',
+              action: `ADMIN_CONFIG_${event.eventType}`,
+              target: `contract:${event.contractId}`,
+              payload: {
+                eventId: event.eventId,
+                eventType: event.eventType,
+                loanId: event.loanId ?? null,
+                amount: event.amount ?? null,
+                ledger: event.ledger,
+                txHash: event.txHash,
+              },
+              ipAddress: 'internal-indexer',
+              status: 200,
+            });
           }
 
           /**
@@ -768,23 +765,19 @@ export class EventIndexer {
            *   ip_address — null (on-chain action, no HTTP request IP)
            */
           if (event.eventType === 'LoanApprv') {
-            await client.query(
-              `INSERT INTO audit_logs (actor, action, target, payload, ip_address, status)
-               VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
-              [
-                event.adminAddress ?? 'SYSTEM',
-                'loan_approved',
-                `loan:${event.loanId ?? 'unknown'}`,
-                JSON.stringify({
-                  eventId: event.eventId,
-                  loanId: event.loanId ?? null,
-                  borrower: event.address ?? null,
-                  txHash: event.txHash,
-                }),
-                null,
-                200, // Loan approved on-chain
-              ],
-            );
+            await appendAuditLogWithClient(client, {
+              actor: event.adminAddress ?? 'SYSTEM',
+              action: 'loan_approved',
+              target: `loan:${event.loanId ?? 'unknown'}`,
+              payload: {
+                eventId: event.eventId,
+                loanId: event.loanId ?? null,
+                borrower: event.address ?? null,
+                txHash: event.txHash,
+              },
+              ipAddress: null,
+              status: 200, // Loan approved on-chain
+            });
           }
 
           /**

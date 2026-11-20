@@ -12,6 +12,9 @@ const mockSet = jest
   .fn<(key: string, value: unknown) => Promise<void>>()
   .mockResolvedValue(undefined);
 const mockGet = jest.fn<(key: string) => Promise<null>>().mockResolvedValue(null);
+const mockInvalidateByPattern = jest
+  .fn<(pattern: string) => Promise<number>>()
+  .mockResolvedValue(0);
 
 jest.unstable_mockModule('../services/cacheService.js', () => ({
   cacheService: {
@@ -20,17 +23,21 @@ jest.unstable_mockModule('../services/cacheService.js', () => ({
     delete: mockDelete,
     ping: jest.fn<() => Promise<string>>().mockResolvedValue('ok'),
     invalidatePattern: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    invalidateByPattern: mockInvalidateByPattern,
   },
 }));
 
+const cacheKeysModule = await import('../utils/cacheKeys.js');
 const {
   CacheKeys,
+  CachePatterns,
   SCORE_CACHE_VERSION,
   invalidateOnRepay,
   invalidateOnLoanRequest,
   invalidateOnDeposit,
   invalidateOnWithdraw,
-} = await import('../utils/cacheKeys.js');
+} = cacheKeysModule;
+const { WRITE_INVALIDATIONS, CACHE_CONTRACTS } = await import('../utils/cacheContracts.js');
 
 const BORROWER = 'Gborrower123';
 const DEPOSITOR = 'GDEPOSITOR456';
@@ -41,6 +48,7 @@ describe('cacheKeys helpers', () => {
     mockDelete.mockClear();
     mockSet.mockClear();
     mockGet.mockClear();
+    mockInvalidateByPattern.mockClear();
   });
 
   describe('CacheKeys generators', () => {
@@ -139,5 +147,65 @@ describe('cacheKeys helpers', () => {
       // Cache entry should be gone; next read recomputes from DB
       expect(await mockGet(CacheKeys.borrowerLoans(BORROWER))).toBeNull();
     });
+  });
+
+  describe('write → GET invalidation matrix (#794)', () => {
+    /** Representative key each cached GET reads, per resource. */
+    const readKey: Record<string, { key?: string; pattern?: string }> = {
+      pool_stats: { key: CacheKeys.poolStats() },
+      borrower_loans: { key: CacheKeys.borrowerLoans(BORROWER) },
+      score_response: { key: CacheKeys.scoreResponse(BORROWER) },
+      score_breakdown: { key: CacheKeys.scoreBreakdown(BORROWER) },
+      pool_share_price: { pattern: CachePatterns.poolSharePrice() },
+      user_profile: { key: CacheKeys.userProfile(BORROWER) },
+    };
+
+    it('every resource with an API write has a write→GET mapping', () => {
+      const mapped = new Set(WRITE_INVALIDATIONS.flatMap((w) => w.resources));
+      for (const [resource, contract] of Object.entries(CACHE_CONTRACTS)) {
+        if (contract.invalidationTrigger.startsWith('TTL expiry only')) continue;
+        expect(mapped).toContain(resource);
+      }
+    });
+
+    it.each(WRITE_INVALIDATIONS.map((w) => [w.write, w] as const))(
+      '%s busts the keys its GETs read and leaves no stale entry',
+      async (_name, w) => {
+        const fn = (cacheKeysModule as Record<string, unknown>)[w.invalidator] as (
+          ...args: unknown[]
+        ) => Promise<void>;
+        expect(typeof fn).toBe('function');
+        expect(w.reads.length).toBeGreaterThan(0);
+
+        // Warm cache for every key the write should bust.
+        const cache = new Map<string, unknown>();
+        for (const r of w.resources) {
+          const k = readKey[r]?.key;
+          if (k) cache.set(k, { warm: true });
+        }
+        cache.set('pool:share-price:TOKEN', { warm: true });
+        mockGet.mockImplementation(async (k: string) => (cache.get(k) ?? null) as null);
+        mockDelete.mockImplementation(async (k: string) => {
+          cache.delete(k);
+        });
+        mockInvalidateByPattern.mockImplementation(async (p: string) => {
+          const prefix = p.replace(/\*$/, '');
+          let n = 0;
+          for (const k of [...cache.keys()]) if (k.startsWith(prefix) && cache.delete(k)) n++;
+          return n;
+        });
+
+        await fn(BORROWER, LOAN_ID);
+
+        for (const r of w.resources) {
+          const { key, pattern } = readKey[r] ?? {};
+          if (key) expect(await mockGet(key)).toBeNull();
+          if (pattern) {
+            expect(mockInvalidateByPattern).toHaveBeenCalledWith(pattern);
+            expect(await mockGet('pool:share-price:TOKEN')).toBeNull();
+          }
+        }
+      },
+    );
   });
 });

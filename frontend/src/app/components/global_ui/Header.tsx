@@ -22,7 +22,13 @@ import { useLoans, useRemittances } from "../../hooks/useApi";
 import { useContractToast } from "../../hooks/useContractToast";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { useTranslations, useLocale } from "next-intl";
-import { useKeyboardShortcuts, createGlobalShortcuts, createNavigationShortcuts, createWalletShortcuts, createSearchShortcut } from "../../hooks/useKeyboardShortcuts";
+import {
+  useKeyboardShortcuts,
+  createGlobalShortcuts,
+  createNavigationShortcuts,
+  createWalletShortcuts,
+  createSearchShortcut,
+} from "../../hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsHelp } from "../ui/KeyboardShortcutsHelp";
 import { DisconnectWalletDialog } from "./DisconnectWalletDialog";
 import { useDisconnectWallet } from "../../hooks/useDisconnectWallet";
@@ -51,8 +57,15 @@ export function Header({ onMenuClick, className }: HeaderProps) {
   const isConnected = useWalletStore((state) => state.status === "connected");
   const walletAddress = useWalletStore((state) => state.address);
   const { connectWallet, disconnectWallet } = useWallet();
-  const { isConfirmOpen, requestDisconnect, cancelDisconnect, confirmDisconnect } =
-    useDisconnectWallet(`/${locale}`);
+  const {
+    isConfirmOpen,
+    isDisconnecting,
+    pendingQueueCount,
+    inFlightMutationCount,
+    requestDisconnect,
+    cancelDisconnect,
+    confirmDisconnect,
+  } = useDisconnectWallet(`/${locale}`);
   const user = useUserStore((state) => state.user);
   const gamificationStore = useGamificationStore();
   const toast = useContractToast();
@@ -454,6 +467,9 @@ export function Header({ onMenuClick, className }: HeaderProps) {
         isOpen={isConfirmOpen}
         onCancel={cancelDisconnect}
         onConfirm={handleConfirmDisconnect}
+        pendingQueueCount={pendingQueueCount}
+        inFlightMutationCount={inFlightMutationCount}
+        isDisconnecting={isDisconnecting}
       />
     </header>
   );

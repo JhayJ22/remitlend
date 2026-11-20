@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { appendAuditLogWithClient } from './auditLogService.js';
 import { query } from '../db/connection.js';
 import { withTransaction } from '../db/transaction.js';
 import { AppError } from '../errors/AppError.js';
@@ -172,8 +173,7 @@ export async function resolveDiscrepancy(input: ResolveInput): Promise<void> {
       [discrepancyId],
     );
     const row = found.rows[0] as
-      | { id: number; discrepancy_class: string; status: string }
-      | undefined;
+      { id: number; discrepancy_class: string; status: string } | undefined;
     if (!row) throw AppError.notFound('Discrepancy not found');
     if (!COMPARISON_RULES[row.discrepancy_class]?.resolvable) {
       throw AppError.badRequest('This discrepancy class does not support resolution');
@@ -190,10 +190,12 @@ export async function resolveDiscrepancy(input: ResolveInput): Promise<void> {
        WHERE id = $1`,
       [discrepancyId],
     );
-    await client.query(
-      `INSERT INTO audit_logs (actor, action, target, payload, status)
-       VALUES ($1, 'RESOLVE_DISCREPANCY', $2, $3::jsonb, 200)`,
-      [actor, `Discrepancy:${discrepancyId}`, JSON.stringify({ reason, evidence })],
-    );
+    await appendAuditLogWithClient(client, {
+      actor,
+      action: 'RESOLVE_DISCREPANCY',
+      target: `Discrepancy:${discrepancyId}`,
+      payload: { reason, evidence },
+      status: 200,
+    });
   });
 }

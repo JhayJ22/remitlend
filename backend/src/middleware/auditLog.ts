@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { query } from '../db/connection.js';
+import { appendAuditLog } from '../services/auditLogService.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -83,18 +83,14 @@ export const auditLog = (req: Request, res: Response, next: NextFunction): void 
       // Log the action asynchronously to avoid blocking the main request thread
       void (async () => {
         try {
-          await query(
-            `INSERT INTO audit_logs (actor, action, target, payload, ip_address, status)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [
-              actor,
-              action,
-              target ?? null,
-              payload ? JSON.stringify(payload) : null,
-              ipAddress ?? null,
-              res.statusCode,
-            ],
-          );
+          await appendAuditLog({
+            actor,
+            action,
+            target: target ?? null,
+            payload: payload ?? null,
+            ipAddress: ipAddress ?? null,
+            status: res.statusCode,
+          });
         } catch (err) {
           logger.error('Audit logging failure', {
             err,

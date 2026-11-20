@@ -16,6 +16,7 @@ An exposed secret can allow an attacker to:
 |---|---|
 | `JWT_SECRET` | Forge JWT tokens for any user, including admin. |
 | `INTERNAL_API_KEY` | Call any scoped internal API endpoint without a valid JWT. |
+| `AUDIT_LOG_KEY` | Re-forge the audit-log HMAC chain so edited or deleted entries pass verification. |
 | `LOAN_MANAGER_ADMIN_SECRET` | Submit on-chain admin transactions (approve loans, pause contracts). |
 | `SCORE_RECONCILIATION_SOURCE_SECRET` | Read-only Stellar key; can enumerate borrower scores. |
 | `SENDGRID_API_KEY` | Send arbitrary email from the RemitLend domain. |
@@ -33,6 +34,7 @@ An exposed secret can allow an attacker to:
 | Variable | Classification | Rotation policy | Notes |
 |---|---|---|---|
 | `JWT_SECRET` | **Secret** | Rotate every 90 days or on suspected compromise | Min 32 bytes, random. Invalidates all active sessions on rotation. |
+| `AUDIT_LOG_KEY` | **Secret — key custody** | Rotate only together with a chain checkpoint (see note) | Min 32 bytes, random. HMAC-SHA256 key for the tamper-evident `audit_logs` chain (#796). **Must differ from `JWT_SECRET`**; audit writes fail if the two match. Required when `NODE_ENV=production`. Keep it in the secrets manager, and give it to the backend only — never to DB administrators. Anyone who holds both this key and DB write access can rewrite history without detection. Before rotating, export and verify the chain up to the rotation time (`GET /admin/audit-logs/export`, `POST /admin/audit-logs/verify`) and archive that export: entries written under the old key can only be verified with the old key. |
 | `INTERNAL_API_KEY` | **Secret** | Rotate every 90 days or on staff offboarding | Comma-separated list of scoped keys; see `docs/SECURITY-MODEL.md`. |
 | `LOAN_MANAGER_ADMIN_SECRET` | **Secret — high risk** | Rotate on any suspected compromise | Stellar secret key (`S…`). Controls on-chain admin operations. Store in HSM/vault in production. |
 | `SCORE_RECONCILIATION_SOURCE_SECRET` | **Secret** | Rotate every 180 days | Read-only Stellar key for score reads. |

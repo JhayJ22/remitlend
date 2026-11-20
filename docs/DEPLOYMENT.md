@@ -254,6 +254,88 @@ docker compose \
 
 If the application exposes health endpoints, verify them from the deployment host or through the configured frontend/reverse proxy.
 
+## Blue-Green Deployment (Staging)
+
+Staging runs two copies of the app side by side — the **blue** and **green**
+slots — behind nginx. Only one slot is live at a time. `deploy-staging.yml`
+always deploys to the idle slot, checks it, and only then moves traffic
+(issue #797).
+
+| Slot  | Backend port | Frontend port | Compose project   |
+|-------|--------------|---------------|-------------------|
+| blue  | 3001         | 3000          | `remitlend-blue`  |
+| green | 3101         | 3100          | `remitlend-green` |
+
+Both slots bind to `127.0.0.1` and share the long-lived `db`/`redis` services
+from `docker-compose.staging.yml` over the `remitlend_default` network. The
+slot services are defined in `deploy/blue-green/docker-compose.slot.yml`, and
+`scripts/deploy/blue-green.sh` manages them. The workflow pipes that script
+over SSH, so the host needs only Docker, nginx, curl and `jq` or `python3`.
+
+### Pipeline
+
+1. **deploy-green** starts `staging-<sha>` in the idle slot. The live slot
+   keeps serving.
+2. **smoke-test** runs these checks directly against the idle slot's local port:
+   - `GET /health` → 200 (the check waits up to 90 s for the process to start)
+   - `GET /healthz/ready` → 200 (DB and Redis reachable)
+   - `GET /docs.json` → valid OpenAPI JSON (`openapi`/`swagger` plus `paths`)
+   - `POST /api/auth/challenge` → 200 (unauthenticated; the request uses a dummy public key)
+3. **switch-traffic** runs only if every check passes. It rewrites
+   `/etc/nginx/conf.d/remitlend-upstream.conf` to point at the new slot, runs
+   `nginx -t`, and reloads nginx. If the reload fails, the old upstream file
+   is restored. The old slot is **left running** as the rollback target. The
+   live and previous slots are recorded in `$DEPLOY_DIR/state/`.
+4. **deploy-failed** runs if the smoke tests or the switch fail. It confirms
+   the old slot is still live, saves the failed slot's logs, and tears that
+   slot down. It then sends an alert: a message to `STAGING_ALERT_WEBHOOK`
+   (if set) and a `deploy-failure` GitHub issue. Finally it marks the run as
+   failed. Traffic never moved, so no user saw the bad build.
+
+Only one staging deploy or rollback runs at a time (`concurrency: deploy-staging`).
+
+### Manual rollback
+
+To roll back, open **Actions → Rollback Staging → Run workflow** and enter a
+reason. The workflow runs `blue-green.sh rollback`, which:
+
+1. smoke-tests the previous slot (it is still running from the last deploy);
+2. switches nginx back to it, if the checks pass. If they fail, nothing is
+   switched and the run fails.
+
+To do the same from the host:
+
+```bash
+cd /opt/remitlend
+bash scripts/deploy/blue-green.sh active      # which slot is live
+bash scripts/deploy/blue-green.sh rollback    # smoke-test previous slot, then swap
+bash scripts/deploy/blue-green.sh switch blue # force a specific slot (must be running)
+```
+
+Rollback swaps only the application containers. Database migrations must stay
+backward compatible with the previous release, as described in
+[Expand-Contract Migrations](#expand-contract-migrations). Pending chain
+transactions are not resubmitted.
+
+### Required configuration
+
+| Name | Kind | Purpose |
+|------|------|---------|
+| `STAGING_ENABLED` | variable | `true` to run the blue-green jobs |
+| `STAGING_DEPLOY_DIR` | variable | Checkout location on the host (default `/opt/remitlend`) |
+| `STAGING_SSH_HOST` / `STAGING_SSH_USER` | secret | Deploy host and user. The user needs Docker access and passwordless `sudo` for `install`, `cp` and `nginx`. |
+| `STAGING_SSH_KEY` | secret | Private key for the deploy user |
+| `STAGING_SSH_KNOWN_HOSTS` | secret | Pinned host key (`ssh-keyscan` output) |
+| `STAGING_ALERT_WEBHOOK` | secret (optional) | Slack-compatible incoming webhook for failure alerts |
+
+The nginx site config must proxy to the managed upstream names:
+
+```nginx
+include /etc/nginx/conf.d/remitlend-upstream.conf;
+location /api/ { proxy_pass http://remitlend_backend; }
+location /     { proxy_pass http://remitlend_frontend; }
+```
+
 ## Viewing Logs
 
 Follow backend logs:

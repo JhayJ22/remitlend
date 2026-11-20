@@ -257,6 +257,47 @@ app.get(
 );
 
 /**
+ * GET /healthz/ready
+ *
+ * Readiness probe used by the blue-green deploy gate (#797) and load
+ * balancers: 200 only when this instance can serve traffic (DB + Redis
+ * reachable within 2s). Soroban RPC is intentionally excluded so a chain RPC
+ * blip does not flip every slot out of rotation.
+ */
+app.get(
+  '/healthz/ready',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const TIMEOUT_MS = 2000;
+    const withTimeout = <T>(p: Promise<T>, fallback: T): Promise<T> =>
+      Promise.race([
+        p,
+        new Promise<T>((resolve) => setTimeout(() => resolve(fallback), TIMEOUT_MS)),
+      ]);
+
+    const [database, redis] = await Promise.all([
+      withTimeout(
+        pool
+          .query('SELECT 1')
+          .then(() => 'ok' as const)
+          .catch(() => 'error' as const),
+        'error' as const,
+      ),
+      withTimeout(
+        cacheService.ping().catch(() => 'error' as const),
+        'error' as const,
+      ),
+    ]);
+
+    const ready = database === 'ok' && redis === 'ok';
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(ready ? 200 : 503).json({
+      status: ready ? 'ready' : 'not_ready',
+      checks: { database, redis },
+    });
+  }),
+);
+
+/**
  * GET /metrics
  *
  * Prometheus metrics endpoint exposing operational and business metrics.

@@ -58,6 +58,11 @@ export const envSchema = z.object({
 
   INTERNAL_API_KEY: requiredString(),
 
+  /** HMAC key for the tamper-evident audit log chain (#796). Must differ from JWT_SECRET. */
+  AUDIT_LOG_KEY: optionalString().refine((v) => v === undefined || v.length >= 32, {
+    message: 'AUDIT_LOG_KEY must be at least 32 characters',
+  }),
+
   // ── Stellar ──────────────────────────────────────────────────────────────
   STELLAR_NETWORK: z.enum(['testnet', 'mainnet']).default('testnet'),
   STELLAR_RPC_URL: requiredString().url(),

@@ -23,9 +23,21 @@ jest.unstable_mockModule('../db/connection.js', () => ({
   withTransaction: jest.fn(),
 }));
 
+const profileCache = new Map<string, unknown>();
+const cacheDeleteMock = jest.fn(async (key: string) => {
+  profileCache.delete(key);
+  return true;
+});
+
 jest.unstable_mockModule('../services/cacheService.js', () => ({
   cacheService: {
     ping: jest.fn<() => Promise<string>>().mockResolvedValue('ok'),
+    get: jest.fn(async (key: string) => profileCache.get(key) ?? null),
+    set: jest.fn(async (key: string, value: unknown) => {
+      profileCache.set(key, value);
+    }),
+    delete: cacheDeleteMock,
+    invalidateByPattern: jest.fn(async () => 0),
   },
 }));
 
@@ -74,6 +86,8 @@ function profileRow(overrides: Record<string, unknown> = {}) {
 describe('/user/profile', () => {
   beforeEach(() => {
     queryMock.mockReset();
+    profileCache.clear();
+    cacheDeleteMock.mockClear();
   });
 
   it("returns the authenticated user's profile and creates an empty row on first call", async () => {
@@ -156,6 +170,41 @@ describe('/user/profile', () => {
       expect.stringContaining('UPDATE user_profiles'),
       expect.arrayContaining(['Ada Lovelace', 'ada@example.com', '+15551234567', publicKey]),
     );
+  });
+
+  it('serves no stale profile after PATCH (cache busted on write)', async () => {
+    const row = (name: string | null) => ({
+      rows: [profileRow({ display_name: name })],
+      rowCount: 1,
+      command: 'SELECT',
+      oid: 0,
+      fields: [],
+    });
+    queryMock.mockResolvedValueOnce(row(null));
+
+    const first = await request(app)
+      .get('/user/profile')
+      .set('Authorization', `Bearer ${bearerToken()}`);
+    expect(first.body.displayName).toBe('');
+
+    // Second GET is a cache hit: no DB query.
+    const calls = queryMock.mock.calls.length;
+    await request(app).get('/user/profile').set('Authorization', `Bearer ${bearerToken()}`);
+    expect(queryMock.mock.calls.length).toBe(calls);
+
+    queryMock.mockResolvedValueOnce(row(null)).mockResolvedValueOnce(row('Grace'));
+    const patch = await request(app)
+      .patch('/user/profile')
+      .set('Authorization', `Bearer ${bearerToken()}`)
+      .send({ displayName: 'Grace' });
+    expect(patch.status).toBe(200);
+    expect(cacheDeleteMock).toHaveBeenCalledWith(`user:profile:${publicKey}`);
+
+    queryMock.mockResolvedValueOnce(row('Grace'));
+    const after = await request(app)
+      .get('/user/profile')
+      .set('Authorization', `Bearer ${bearerToken()}`);
+    expect(after.body.displayName).toBe('Grace');
   });
 
   it('rejects invalid patch payloads', async () => {

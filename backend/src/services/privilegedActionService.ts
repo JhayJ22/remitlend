@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { appendAuditLog } from './auditLogService.js';
 import { query } from '../db/connection.js';
 import { AppError } from '../errors/AppError.js';
 import logger from '../utils/logger.js';
@@ -64,11 +65,13 @@ export function computePayloadHash(actionType: string, payload: Record<string, u
 
 async function audit(actor: string, action: string, requestId: number, detail: object) {
   try {
-    await query(
-      `INSERT INTO audit_logs (actor, action, target, payload, status)
-       VALUES ($1, $2, $3, $4::jsonb, 200)`,
-      [actor, action, `PrivilegedAction:${requestId}`, JSON.stringify(detail)],
-    );
+    await appendAuditLog({
+      actor,
+      action,
+      target: `PrivilegedAction:${requestId}`,
+      payload: detail,
+      status: 200,
+    });
   } catch (error) {
     logger.error('Failed to write dual-control audit entry', { error, action, requestId });
   }

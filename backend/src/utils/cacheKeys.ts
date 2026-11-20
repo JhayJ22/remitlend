@@ -46,6 +46,18 @@ export const CacheKeys = {
   legacyScoreResponse: (userId: string) => `score:userId:${userId}`,
   legacyScoreBreakdown: (publicKey: string) => `score:breakdown:${publicKey}`,
 
+  // Per-token on-chain share price (GET /pool/:token/share-price)
+  poolSharePrice: (token: string) => `pool:share-price:${token}`,
+
+  // Authenticated user's profile (GET /user/profile)
+  userProfile: (publicKey: string) => `user:profile:${publicKey}`,
+
+  // On-chain score history (GET /score/:walletAddress/history)
+  scoreHistoryOnchain: (walletAddress: string) => `score:history:onchain:${walletAddress}`,
+
+  // RemittanceNFT metadata (GET /score/:walletAddress/nft)
+  scoreNft: (walletAddress: string) => `score:nft:${walletAddress}`,
+
   // Idempotency / unsigned-tx keys – loan
   pendingLoanTx: (borrower: string, amount: number) => `pending_loan_tx:${borrower}:${amount}`,
 
@@ -58,6 +70,16 @@ export const CacheKeys = {
 
   pendingWithdrawTx: (depositor: string, token: string, amount: number) =>
     `pending_withdraw_tx:${depositor}:${token}:${amount}`,
+} as const;
+
+/**
+ * Glob patterns for families of read keys that cannot be enumerated from the
+ * write's inputs (e.g. share price for every token after a pool write).
+ * Passed to `cacheService.invalidateByPattern`.
+ */
+export const CachePatterns = {
+  poolSharePrice: () => 'pool:share-price:*',
+  borrowerLoans: () => 'borrower:loans:*',
 } as const;
 
 /**
@@ -86,6 +108,7 @@ export async function invalidateOnRepay(borrower: string, _loanId: number): Prom
     cacheService.delete(CacheKeys.poolStats()),
     cacheService.delete(CacheKeys.borrowerLoans(borrower)),
     cacheService.delete(CacheKeys.scoreBreakdown(borrower)),
+    cacheService.invalidateByPattern(CachePatterns.poolSharePrice()),
   ]);
 }
 
@@ -105,13 +128,49 @@ export async function invalidateOnLoanRequest(borrower: string): Promise<void> {
  * Call this after the DB transaction commits inside depositToPool.
  */
 export async function invalidateOnDeposit(_depositor: string): Promise<void> {
-  await cacheService.delete(CacheKeys.poolStats());
+  await Promise.all([
+    cacheService.delete(CacheKeys.poolStats()),
+    cacheService.invalidateByPattern(CachePatterns.poolSharePrice()),
+  ]);
 }
 
 /**
- * Invalidate all cache keys that become stale after a pool withdrawal.
- * Call this after the DB transaction commits inside withdrawFromPool.
+ * Invalidate all cache keys that become stale after a pool withdrawal
+ * (regular or emergency).
  */
 export async function invalidateOnWithdraw(_depositor: string): Promise<void> {
-  await cacheService.delete(CacheKeys.poolStats());
+  await Promise.all([
+    cacheService.delete(CacheKeys.poolStats()),
+    cacheService.invalidateByPattern(CachePatterns.poolSharePrice()),
+  ]);
+}
+
+/**
+ * Invalidate borrower-scoped loan reads after a write that changes a single
+ * loan's state (collateral, refinance, extend, cancel, default contest).
+ */
+export async function invalidateOnLoanMutation(borrower: string): Promise<void> {
+  await Promise.all([
+    cacheService.delete(CacheKeys.poolStats()),
+    cacheService.delete(CacheKeys.borrowerLoans(borrower)),
+  ]);
+}
+
+/**
+ * Invalidate after a write whose affected borrower is not known from the
+ * request (liquidation by a third party, generic signed-tx submission).
+ */
+export async function invalidateOnUnscopedLoanWrite(): Promise<void> {
+  await Promise.all([
+    cacheService.delete(CacheKeys.poolStats()),
+    cacheService.invalidateByPattern(CachePatterns.borrowerLoans()),
+    cacheService.invalidateByPattern(CachePatterns.poolSharePrice()),
+  ]);
+}
+
+/**
+ * Invalidate the cached profile after PATCH /user/profile commits.
+ */
+export async function invalidateOnProfileUpdate(publicKey: string): Promise<void> {
+  await cacheService.delete(CacheKeys.userProfile(publicKey));
 }
