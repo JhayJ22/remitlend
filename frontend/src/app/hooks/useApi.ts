@@ -2086,3 +2086,37 @@ export function useReleaseCollateral() {
     },
   });
 }
+
+// ── Protocol-wide analytics (#787/#788) ──────────────────────────────────────
+
+export interface ProtocolStats {
+  from: string;
+  to: string;
+  bucket: "day" | "week" | "month";
+  loansByStatus: Record<string, number>;
+  volumeByBucket: { timestamp: string; totalOriginated: string; totalRepaid: string }[];
+  defaultRateByCorridor: Record<string, number>;
+  scoreDistribution: { bucket: string; count: number }[];
+}
+
+export function useProtocolStats(
+  days: number,
+  options?: Omit<UseQueryOptions<ProtocolStats>, "queryKey" | "queryFn">,
+) {
+  return useQuery<ProtocolStats>({
+    queryKey: ["analytics", "protocol-stats", days],
+    queryFn: () => {
+      const to = new Date();
+      to.setSeconds(0, 0);
+      const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+      const bucket = days <= 30 ? "day" : days <= 90 ? "week" : "month";
+      const qs = new URLSearchParams({
+        from: from.toISOString(),
+        to: to.toISOString(),
+        bucket,
+      });
+      return apiFetch<ProtocolStats>(`/analytics/protocol-stats?${qs.toString()}`);
+    },
+    ...options,
+  });
+}

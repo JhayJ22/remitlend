@@ -25,6 +25,10 @@ export const CacheKeys = {
   // Pool stats aggregate (getPoolStats)
   poolStats: () => 'pool:stats',
 
+  // Protocol-wide analytics (GET /analytics/protocol-stats); key varies by window + bucket
+  protocolStats: (from: string, to: string, bucket: string) =>
+    `analytics:protocol-stats:${from}:${to}:${bucket}`,
+
   // Per-borrower loans aggregate (getBorrowerLoans)
   borrowerLoans: (borrower: string) => `borrower:loans:${borrower}`,
 

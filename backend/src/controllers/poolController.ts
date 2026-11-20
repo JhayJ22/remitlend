@@ -323,12 +323,12 @@ export const submitPoolTransaction = asyncHandler(async (req: Request, res: Resp
     async (stellarResult: unknown, client) => {
       const sr = stellarResult as { txHash: string; status: string };
       await client.query(
-        `INSERT INTO transaction_submissions (tx_hash, status, submitted_at, submitted_by, transaction_type)
-           VALUES ($1, $2, NOW(), $3, $4)
+        `INSERT INTO transaction_submissions (tx_hash, status, submitted_at, submitted_by, transaction_type, envelope_xdr)
+           VALUES ($1, $2, NOW(), $3, $4, $5)
            ON CONFLICT (tx_hash) DO UPDATE SET
              status = EXCLUDED.status,
              submitted_at = EXCLUDED.submitted_at`,
-        [sr.txHash, sr.status, req.user?.publicKey || null, 'pool'],
+        [sr.txHash, sr.status, req.user?.publicKey || null, 'pool', signedTxXdr],
       );
 
       logger.withContext().info('Pool transaction submission recorded', {

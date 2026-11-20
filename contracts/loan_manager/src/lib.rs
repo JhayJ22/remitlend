@@ -163,6 +163,12 @@ pub enum DataKey {
     MigratedVersion,
     /// risk parameter → change proposed but not yet executed or cancelled
     PendingRiskChange(RiskParam),
+    /// Max extensions per loan (default MAX_EXTENSIONS)
+    MaxExtensions,
+    /// Extension fee in bps of remaining principal (default EXTENSION_FEE_BPS)
+    ExtensionFeeBps,
+    /// Minimum score required to refinance (defaults to MinScore)
+    RefinanceMinScore,
 }
 
 /// Collateral expressed in debt-denominated units.
@@ -207,7 +213,7 @@ impl LoanManager {
     const DEFAULT_SCORE_PENALTY_POINTS: u32 = 50;
     const NFT_MAX_SCORE: u32 = 850;
     const DEFAULT_MIN_REPAYMENT_AMOUNT: i128 = 100;
-    const MAX_EXTENSIONS: u32 = 3;
+    const MAX_EXTENSIONS: u32 = 2;
     const EXTENSION_FEE_BPS: u32 = 100; // 1% of remaining principal
     /// Default minimum interest rate (configurable via set_rate_bounds). #631
     const MIN_RATE_BPS: u32 = 1; // Minimum 0.01% interest rate
@@ -2006,11 +2012,16 @@ impl LoanManager {
         let nft_client = NftClient::new(&env, &nft_contract);
 
         let current_score = nft_client.get_score(&loan.borrower);
-        let min_score: u32 = env
+        let base_min_score: u32 = env
             .storage()
             .instance()
             .get(&DataKey::MinScore)
             .unwrap_or(500);
+        let min_score: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::RefinanceMinScore)
+            .unwrap_or(base_min_score);
         if current_score < min_score {
             return Err(LoanError::InsufficientScore);
         }
@@ -2330,6 +2341,42 @@ impl LoanManager {
         env.storage().instance().set(&DataKey::MinScore, &min_score);
         Self::bump_instance_ttl(&env);
         events::min_score_updated(&env, admin, old_score, min_score);
+        Ok(())
+    }
+
+    /// Admin: maximum number of extensions a loan may receive.
+    pub fn set_max_extensions(env: Env, max_extensions: u32) -> Result<(), LoanError> {
+        Self::admin(&env).require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxExtensions, &max_extensions);
+        Self::bump_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Admin: extension fee in bps of remaining principal (max 100%).
+    pub fn set_extension_fee_bps(env: Env, fee_bps: u32) -> Result<(), LoanError> {
+        if fee_bps > Self::MAX_RATIO_BPS {
+            return Err(LoanError::InvalidConfiguration);
+        }
+        Self::admin(&env).require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::ExtensionFeeBps, &fee_bps);
+        Self::bump_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Admin: minimum credit score required to refinance.
+    pub fn set_refinance_min_score(env: Env, min_score: u32) -> Result<(), LoanError> {
+        if min_score > Self::NFT_MAX_SCORE {
+            return Err(LoanError::InvalidConfiguration);
+        }
+        Self::admin(&env).require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::RefinanceMinScore, &min_score);
+        Self::bump_instance_ttl(&env);
         Ok(())
     }
 
@@ -2804,14 +2851,24 @@ impl LoanManager {
         }
 
         // Check extension limit
-        if loan.extension_count >= Self::MAX_EXTENSIONS {
-            return Err(LoanError::InvalidConfiguration);
+        let max_extensions: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxExtensions)
+            .unwrap_or(Self::MAX_EXTENSIONS);
+        if loan.extension_count >= max_extensions {
+            return Err(LoanError::MaxExtensionsReached);
         }
+        let extension_fee_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ExtensionFeeBps)
+            .unwrap_or(Self::EXTENSION_FEE_BPS);
 
         // Calculate extension fee (1% of remaining principal)
         let remaining_principal = Self::remaining_principal(&loan);
         let extension_fee = remaining_principal
-            .checked_mul(Self::EXTENSION_FEE_BPS as i128)
+            .checked_mul(extension_fee_bps as i128)
             .ok_or(())
             .and_then(|v| money::round_div(v, 10_000, money::RoundingMode::Floor).map_err(|_| ()))
             .expect("extension fee overflow");

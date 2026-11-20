@@ -141,3 +141,12 @@ describe('cacheKeys helpers', () => {
     });
   });
 });
+
+describe('protocol stats cache key', () => {
+  it('varies by from, to and bucket', () => {
+    const base = CacheKeys.protocolStats('2026-01-01', '2026-02-01', 'day');
+    expect(base).not.toBe(CacheKeys.protocolStats('2026-01-02', '2026-02-01', 'day'));
+    expect(base).not.toBe(CacheKeys.protocolStats('2026-01-01', '2026-02-02', 'day'));
+    expect(base).not.toBe(CacheKeys.protocolStats('2026-01-01', '2026-02-01', 'month'));
+  });
+});

@@ -2293,18 +2293,21 @@ fn test_extend_loan_max_extensions_limit() {
     let loan_id = manager.request_loan(&borrower, &1000, &17280);
     manager.approve_loan(&loan_id);
 
-    // Extend 3 times (max)
-    manager.extend_loan(&borrower, &loan_id, &1000);
+    // Extend 2 times (default max)
     manager.extend_loan(&borrower, &loan_id, &1000);
     manager.extend_loan(&borrower, &loan_id, &1000);
 
-    // Verify extension count is 3
     let loan = manager.get_loan(&loan_id);
-    assert_eq!(loan.extension_count, 3);
+    assert_eq!(loan.extension_count, 2);
 
-    // Fourth extension should fail
+    // Third extension should fail
     let result = manager.try_extend_loan(&borrower, &loan_id, &1000);
-    assert_eq!(result, Err(Ok(LoanError::InvalidConfiguration)));
+    assert_eq!(result, Err(Ok(LoanError::MaxExtensionsReached)));
+
+    // Admin can raise the cap
+    manager.set_max_extensions(&3);
+    manager.extend_loan(&borrower, &loan_id, &1000);
+    assert_eq!(manager.get_loan(&loan_id).extension_count, 3);
 }
 
 #[test]
@@ -2376,8 +2379,8 @@ fn test_extend_loan_multiple_extensions() {
     let loan_initial = manager.get_loan(&loan_id);
     let mut expected_due_date = loan_initial.due_date;
 
-    // Extend 3 times
-    for i in 1..=3 {
+    // Extend 2 times (default max)
+    for i in 1..=2 {
         let extension_ledgers = 500u32;
         manager.extend_loan(&borrower, &loan_id, &extension_ledgers);
         expected_due_date += extension_ledgers;
