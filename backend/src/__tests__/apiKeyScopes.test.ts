@@ -203,4 +203,45 @@ describe('requireApiKey – scope support', () => {
       ).toThrow();
     });
   });
+
+  describe('admin:recovery scope (#866)', () => {
+    beforeEach(() => {
+      process.env.INTERNAL_API_KEY = 'admin:recovery:recovery-secret';
+    });
+
+    it('is accepted on the admin:recovery scope', async () => {
+      const requireApiKey = await loadMiddleware();
+      const next = makeNext();
+      requireApiKey('admin:recovery')(
+        makeReq('recovery-secret') as Request,
+        makeRes() as Response,
+        next,
+      );
+      expect(next.calls[0]![0]).toBeUndefined();
+    });
+
+    it('is rejected on admin:loans (different scope)', async () => {
+      const requireApiKey = await loadMiddleware();
+      const next = makeNext();
+      expect(() =>
+        requireApiKey('admin:loans')(
+          makeReq('recovery-secret') as Request,
+          makeRes() as Response,
+          next,
+        ),
+      ).toThrow(AppError);
+    });
+
+    it('legacy key is accepted on admin:recovery scope', async () => {
+      process.env.INTERNAL_API_KEY = 'legacy-plain-key';
+      const requireApiKey = await loadMiddleware();
+      const next = makeNext();
+      requireApiKey('admin:recovery')(
+        makeReq('legacy-plain-key') as Request,
+        makeRes() as Response,
+        next,
+      );
+      expect(next.calls[0]![0]).toBeUndefined();
+    });
+  });
 });

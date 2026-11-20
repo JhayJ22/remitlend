@@ -44,6 +44,14 @@ import {
   executeRequest as executePrivilegedRequest,
   getRequest as getPrivilegedRequest,
 } from '../services/privilegedActionService.js';
+import {
+  createRecoveryActionHandler,
+  listRecoveryActionsHandler,
+  getRecoveryActionHandler,
+  executeRecoveryActionHandler,
+  rejectRecoveryActionHandler,
+  getRecoveryMetaHandler,
+} from '../controllers/operatorRecoveryController.js';
 import { AppError } from '../errors/AppError.js';
 
 const router = Router();
@@ -721,4 +729,280 @@ router.post(
   }),
 );
 
+// ---------------------------------------------------------------------------
+// Signed operator recovery actions (#866)
+// ---------------------------------------------------------------------------
+
+const createRecoveryActionSchema = z.object({
+  action_type: z.enum([
+    'reconciliation_retry',
+    'reconciliation_resolve',
+    'cross_contract_reconcile',
+    'loan_state_replay',
+    'loan_event_retry',
+  ]),
+  reason_code: z.enum([
+    'indexer_lag',
+    'contract_event_missed',
+    'db_write_failure',
+    'duplicate_event',
+    'stale_snapshot',
+    'manual_reconciliation',
+    'operator_requested',
+  ]),
+  /** Minimum 3 chars; external ticket or dual-approval request ID. */
+  approval_reference: z.string().min(3),
+  /**
+   * HMAC-SHA256 hex of
+   * `${operator_id}|${action_type}|${idempotency_key}|${canonical_payload}`
+   * keyed with the operator's admin:recovery API key.
+   */
+  operator_signature: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/, 'operator_signature must be a 64-character lowercase hex string'),
+  /** Schema-validated action payload; no arbitrary balance fields allowed. */
+  payload: z.record(z.string(), z.unknown()),
+  /** Free-text justification, min 10 chars. */
+  reason_note: z.string().min(10),
+  /**
+   * Optional: idempotency_key may also be supplied in the request body when
+   * the client cannot set the Idempotency-Key header; the middleware-supplied
+   * header value takes precedence.
+   */
+  idempotency_key: z.string().optional(),
+});
+
+const rejectRecoverySchema = z.object({
+  reason: z.string().min(5),
+});
+
+/**
+ * @swagger
+ * /admin/recovery-actions/meta:
+ *   get:
+ *     summary: Supported action types and reason codes for recovery actions
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Metadata for recovery action creation
+ */
+router.get(
+  '/recovery-actions/meta',
+  requireJwtAuth,
+  requireRoles('admin'),
+  getRecoveryMetaHandler,
+);
+
+/**
+ * @swagger
+ * /admin/recovery-actions:
+ *   get:
+ *     summary: List operator recovery actions
+ *     description: >
+ *       Returns a paginated, immutable list of all operator recovery action
+ *       records. Supports filtering by operator_id, action_type, status, and
+ *       approval_reference. Use cursor (last seen id) for keyset pagination.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Recovery action records
+ */
+router.get(
+  '/recovery-actions',
+  requireJwtAuth,
+  requireRoles('admin'),
+  listRecoveryActionsHandler,
+);
+
+/**
+ * @swagger
+ * /admin/recovery-actions:
+ *   post:
+ *     summary: Submit a signed operator recovery action
+ *     description: >
+ *       Creates an immutable recovery action record. The operator MUST supply
+ *       an HMAC-SHA256 signature (operator_signature) keyed with their
+ *       admin:recovery scoped API key, an external approval_reference, a
+ *       bounded reason_code, and an Idempotency-Key header.
+ *
+ *       Arbitrary balance edits are rejected — no payload field that maps to a
+ *       direct financial mutation is accepted.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - action_type
+ *               - reason_code
+ *               - approval_reference
+ *               - operator_signature
+ *               - payload
+ *               - reason_note
+ *             properties:
+ *               action_type:
+ *                 type: string
+ *                 enum:
+ *                   - reconciliation_retry
+ *                   - reconciliation_resolve
+ *                   - cross_contract_reconcile
+ *                   - loan_state_replay
+ *                   - loan_event_retry
+ *               reason_code:
+ *                 type: string
+ *                 enum:
+ *                   - indexer_lag
+ *                   - contract_event_missed
+ *                   - db_write_failure
+ *                   - duplicate_event
+ *                   - stale_snapshot
+ *                   - manual_reconciliation
+ *                   - operator_requested
+ *               approval_reference:
+ *                 type: string
+ *                 minLength: 3
+ *               operator_signature:
+ *                 type: string
+ *                 pattern: '^[0-9a-f]{64}$'
+ *               payload:
+ *                 type: object
+ *               reason_note:
+ *                 type: string
+ *                 minLength: 10
+ *     responses:
+ *       201:
+ *         description: Recovery action created
+ *       400:
+ *         description: Validation error or balance-edit detected
+ *       401:
+ *         description: Operator signature verification failed
+ *       409:
+ *         description: Duplicate idempotency_key
+ */
+router.post(
+  '/recovery-actions',
+  requireJwtAuth,
+  requireRoles('admin'),
+  requireApiKey('admin:recovery'),
+  strictRateLimiter,
+  auditLog,
+  validateBody(createRecoveryActionSchema),
+  createRecoveryActionHandler,
+);
+
+/**
+ * @swagger
+ * /admin/recovery-actions/{id}:
+ *   get:
+ *     summary: Get a single recovery action record
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Recovery action record
+ *       404:
+ *         description: Not found
+ */
+router.get(
+  '/recovery-actions/:id',
+  requireJwtAuth,
+  requireRoles('admin'),
+  getRecoveryActionHandler,
+);
+
+/**
+ * @swagger
+ * /admin/recovery-actions/{id}/execute:
+ *   post:
+ *     summary: Execute an approved recovery action
+ *     description: >
+ *       Transitions the action from pending → executing → completed/failed
+ *       exactly once. A concurrent or replayed call returns 409.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Recovery action completed
+ *       409:
+ *         description: Already executed or in a non-executable state
+ *       502:
+ *         description: Execution failed; see outcome_error in response body
+ */
+router.post(
+  '/recovery-actions/:id/execute',
+  requireJwtAuth,
+  requireRoles('admin'),
+  requireApiKey('admin:recovery'),
+  strictRateLimiter,
+  auditLog,
+  executeRecoveryActionHandler,
+);
+
+/**
+ * @swagger
+ * /admin/recovery-actions/{id}/reject:
+ *   post:
+ *     summary: Reject (cancel) a pending recovery action
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [reason]
+ *             properties:
+ *               reason:
+ *                 type: string
+ *                 minLength: 5
+ *     responses:
+ *       200:
+ *         description: Recovery action rejected
+ *       409:
+ *         description: Action is not in pending state
+ */
+router.post(
+  '/recovery-actions/:id/reject',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  auditLog,
+  validateBody(rejectRecoverySchema),
+  rejectRecoveryActionHandler,
+);
+
 export default router;
+

@@ -2,7 +2,12 @@ export const USER_ROLES = ['admin', 'borrower', 'lender'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
 export const ROLE_SCOPES: Record<UserRole, string[]> = {
-  admin: ['admin:all'],
+  /**
+   * admin:all grants every endpoint. The admin:recovery scope is also listed
+   * explicitly so it is discoverable as a first-class capability that can be
+   * issued as a narrowly-scoped API key (admin:recovery:<secret>).
+   */
+  admin: ['admin:all', 'admin:recovery'],
   borrower: [
     'read:loans',
     'write:loans',
