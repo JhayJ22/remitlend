@@ -107,3 +107,26 @@ async function sendFailoverRecoveryAlert(event: FailoverEvent): Promise<void> {
     logger.debug('Failed to send recovery alert', { error });
   }
 }
+
+/** Emit a CRITICAL alert (logged, and POSTed to FAILOVER_ALERT_WEBHOOK when configured). */
+export async function emitCriticalAlert(alert: {
+  title: string;
+  description: string;
+  details?: Record<string, unknown>;
+}): Promise<void> {
+  logger.error(`CRITICAL ALERT: ${alert.title}`, { description: alert.description, ...alert.details });
+  const webhookUrl = process.env.FAILOVER_ALERT_WEBHOOK;
+  if (!webhookUrl) return;
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ severity: 'critical', ...alert }),
+    });
+    if (!response.ok) {
+      logger.error('Critical alert webhook failed', { status: response.status });
+    }
+  } catch (error) {
+    logger.error('Failed to send critical alert', { error });
+  }
+}

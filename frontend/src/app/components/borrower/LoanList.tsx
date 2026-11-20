@@ -8,7 +8,7 @@ import { LoanCard } from "./LoanCard";
 import { PaginationControls } from "../ui/PaginationControls";
 import type { BorrowerLoan } from "../../hooks/useApi";
 import { EmptyState } from "../ui/EmptyState";
-import { useWindowedList } from "../../hooks/useWindowedList";
+import { useWindowedList, windowedItemAria } from "../../hooks/useWindowedList";
 
 interface LoanListProps {
   loans: BorrowerLoan[];
@@ -57,7 +57,8 @@ export function LoanList({
   const { startIndex, endIndex, totalHeight, offsetY, containerRef, scrollTo } = useWindowedList({
     itemCount: loans.length,
     itemHeight: rowHeight,
-    overscan: 100,
+    overscan: 5,
+    storageKey: "loan-list",
   });
 
   // Reset paging + scroll when the caller signals a filter/sort change.
@@ -95,8 +96,14 @@ export function LoanList({
         >
           <div style={{ height: totalHeight, position: "relative" }}>
             <div style={{ transform: `translateY(${offsetY}px)` }}>
-              {windowedLoans.map((loan) => (
-                <div key={loan.id} role="listitem" style={{ height: rowHeight }} className="pb-4">
+              {windowedLoans.map((loan, i) => (
+                <div
+                  key={loan.id}
+                  role="listitem"
+                  {...windowedItemAria(startIndex + i, loans.length)}
+                  style={{ height: rowHeight }}
+                  className="pb-4"
+                >
                   <LoanCard loan={loan} variant={variant} />
                 </div>
               ))}

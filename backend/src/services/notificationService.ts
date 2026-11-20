@@ -10,7 +10,8 @@ export type NotificationType =
   | 'repayment_confirmed'
   | 'loan_defaulted'
   | 'loan_liquidated'
-  | 'score_changed';
+  | 'score_changed'
+  | 'api_key_expiring';
 
 export type NotificationStatus = 'unread' | 'read' | 'archived';
 
@@ -103,6 +104,10 @@ function buildEmailTemplate(
     score_changed: {
       subject: 'Your credit score has changed — RemitLend',
       html: `<h2>Credit Score Update</h2><p>${message}</p><p>Log in to see your updated score and history.</p>`,
+    },
+    api_key_expiring: {
+      subject: 'Your API key is expiring soon — RemitLend',
+      html: `<h2>API Key Expiring</h2><p>${message}</p><p>Rotate the key before it expires to avoid interruption.</p>`,
     },
   };
 

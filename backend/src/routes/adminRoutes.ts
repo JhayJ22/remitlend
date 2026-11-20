@@ -28,6 +28,7 @@ import {
 import { getPendingGovernance } from '../controllers/adminGovernanceController.js';
 import { getContractVerificationStatus } from '../controllers/adminContractVerificationController.js';
 import { query } from '../db/connection.js';
+import { getReconciliationStatus } from '../services/crossContractReconciler.js';
 
 import { buildRejectLoanTx } from '../controllers/loanController.js';
 import { listAuditLogs } from '../controllers/authController.js';
@@ -633,6 +634,26 @@ router.post(
       initiator: req.user!.publicKey,
     });
     res.status(202).json({ success: true, data: created });
+  }),
+);
+
+/**
+ * @swagger
+ * /admin/reconciliation/status:
+ *   get:
+ *     summary: Last cross-contract reconciliation run (time, duration, divergence count)
+ *     tags: [Admin]
+ *     responses:
+ *       200:
+ *         description: Reconciler status
+ */
+router.get(
+  '/reconciliation/status',
+  requireJwtAuth,
+  requireRoles('admin'),
+  requireApiKey('admin:reconciliation'),
+  asyncHandler(async (_req, res) => {
+    res.json({ success: true, data: await getReconciliationStatus() });
   }),
 );
 

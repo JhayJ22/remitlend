@@ -30,6 +30,7 @@ pub trait LendingPoolInterface {
 }
 
 mod events;
+pub mod migration;
 pub mod upgrade_proxy;
 
 #[contracterror]
@@ -865,7 +866,7 @@ impl LoanManager {
 
     fn collateral_amount(env: &Env, loan_id: u32) -> i128 {
         let loan_key = DataKey::Loan(loan_id);
-        if let Some(loan) = env.storage().persistent().get::<DataKey, Loan>(&loan_key) {
+        if let Some(loan) = <migration::LoanMigrations as migration::MigrationHelper>::load_loan(env, loan_id) {
             Self::bump_persistent_ttl(env, &loan_key);
             loan.collateral_amount
         } else {
@@ -877,11 +878,9 @@ impl LoanManager {
         use soroban_sdk::token::TokenClient;
 
         let loan_key = DataKey::Loan(loan_id);
-        let mut loan: Loan = env
-            .storage()
-            .persistent()
-            .get(&loan_key)
-            .unwrap_or_else(|| panic!("loan not found"));
+        let mut loan: Loan =
+            <migration::LoanMigrations as migration::MigrationHelper>::load_loan(env, loan_id)
+                .unwrap_or_else(|| panic!("loan not found"));
 
         let collateral = loan.collateral_amount;
         if collateral <= 0 {
@@ -908,11 +907,9 @@ impl LoanManager {
         use soroban_sdk::token::TokenClient;
 
         let loan_key = DataKey::Loan(loan_id);
-        let mut loan: Loan = env
-            .storage()
-            .persistent()
-            .get(&loan_key)
-            .unwrap_or_else(|| panic!("loan not found"));
+        let mut loan: Loan =
+            <migration::LoanMigrations as migration::MigrationHelper>::load_loan(env, loan_id)
+                .unwrap_or_else(|| panic!("loan not found"));
 
         let collateral = loan.collateral_amount;
         if collateral <= 0 {
@@ -1011,6 +1008,11 @@ impl LoanManager {
         env.storage().instance().get(&DataKey::Version).unwrap_or(0)
     }
 
+    /// Read-only: storage schema version currently recorded on-chain.
+    pub fn get_storage_version(env: Env) -> u32 {
+        <migration::LoanMigrations as migration::MigrationHelper>::storage_version(&env)
+    }
+
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
         Self::admin(&env).require_auth();
         let old_version = Self::version(env.clone());
@@ -1087,6 +1089,7 @@ impl LoanManager {
         env.storage()
             .instance()
             .set(&DataKey::MigratedVersion, &Self::CURRENT_VERSION);
+        migration::on_upgrade(&env);
         Self::bump_instance_ttl(&env);
     }
 
@@ -1299,11 +1302,9 @@ impl LoanManager {
 
     pub fn get_loan(env: Env, loan_id: u32) -> Result<Loan, LoanError> {
         let loan_key = DataKey::Loan(loan_id);
-        let mut loan: Loan = env
-            .storage()
-            .persistent()
-            .get(&loan_key)
-            .ok_or(LoanError::LoanNotFound)?;
+        let mut loan: Loan =
+            <migration::LoanMigrations as migration::MigrationHelper>::load_loan(&env, loan_id)
+                .ok_or(LoanError::LoanNotFound)?;
         Self::bump_persistent_ttl(&env, &loan_key);
         let _ = Self::current_total_debt(&env, &mut loan)?;
         Ok(loan)

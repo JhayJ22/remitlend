@@ -3907,3 +3907,47 @@ fn test_set_rate_oracle_emits_rate_oracle_updated_event() {
         "RateOracleUpdated event should be emitted"
     );
 }
+
+#[test]
+fn test_lazy_migration_reads_legacy_loan_and_reports_storage_version() {
+    use crate::migration::{LoanV1, LEGACY_DEFAULT_TERM_LEDGERS, STORAGE_SCHEMA_VERSION};
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let (manager, _nft, _pool, _token, _admin) = setup_test(&env);
+    let borrower = Address::generate(&env);
+
+    // Never migrated: reports the legacy schema version.
+    assert_eq!(manager.get_storage_version(), 1);
+
+    // Write a loan in the old (v1) layout, as a pre-upgrade contract would have.
+    let legacy = LoanV1 {
+        borrower: borrower.clone(),
+        amount: 500,
+        collateral_amount: 0,
+        principal_paid: 0,
+        interest_paid: 0,
+        accrued_interest: 0,
+        late_fee_paid: 0,
+        accrued_late_fee: 0,
+        interest_rate_bps: 1200,
+        due_date: 1_000_000,
+        last_interest_ledger: 0,
+        last_late_fee_ledger: 0,
+        status: LoanStatus::Approved,
+        interest_residual: 0,
+    };
+    env.as_contract(&manager.address, || {
+        env.storage().persistent().set(&DataKey::Loan(77), &legacy);
+    });
+
+    // Lazy migration: reading must not panic and fills new fields with defaults.
+    let loan = manager.get_loan(&77);
+    assert_eq!(loan.amount, 500);
+    assert_eq!(loan.extension_count, 0);
+    assert_eq!(loan.term_ledgers, LEGACY_DEFAULT_TERM_LEDGERS);
+
+    // migrate() records the new schema version.
+    manager.migrate();
+    assert_eq!(manager.get_storage_version(), STORAGE_SCHEMA_VERSION);
+}

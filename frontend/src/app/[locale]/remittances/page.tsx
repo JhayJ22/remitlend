@@ -23,6 +23,7 @@ import { useRemittancesPage, type Remittance } from "../../hooks/useApi";
 import { Card, CardHeader, CardTitle, CardContent } from "../../components/ui/Card";
 import { ErrorBoundary } from "../../components/global_ui/ErrorBoundary";
 import { Spinner } from "../../components/global_ui/Spinner";
+import { useWindowedList, windowedItemAria } from "../../hooks/useWindowedList";
 import { PaginationControls } from "../../components/ui/PaginationControls";
 import Link from "next/link";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -68,6 +69,8 @@ const STATUS_CONFIG: Record<
 
 type StatusFilter = "all" | Remittance["status"];
 
+/** Fixed rendered row height (px) for the windowed remittance list. */
+const REMITTANCE_ROW_HEIGHT = 72;
 const PAGE_SIZE = 20;
 
 function ConnectWalletPrompt() {
@@ -114,6 +117,19 @@ export default function RemittancesPage() {
   );
 
   const remittances = remittancesPage?.items ?? [];
+  const {
+    startIndex: wStart,
+    endIndex: wEnd,
+    totalHeight: wHeight,
+    offsetY: wOffset,
+    containerRef: wRef,
+  } = useWindowedList({
+    itemCount: remittances.length,
+    itemHeight: REMITTANCE_ROW_HEIGHT,
+    overscan: 5,
+    storageKey: "remittance-list",
+  });
+  const windowedRemittances = remittances.slice(wStart, wEnd + 1);
   const totalPages = Math.max(
     page,
     remittancesPage?.pageInfo.hasNext
@@ -364,14 +380,22 @@ export default function RemittancesPage() {
                 </span>
               </div>
 
-              <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                {remittances.map((remittance) => {
+              <div ref={wRef} className="max-h-[70vh] overflow-y-auto" role="list">
+              <div style={{ height: wHeight, position: "relative" }}>
+              <div
+                className="divide-y divide-zinc-100 dark:divide-zinc-800"
+                style={{ transform: `translateY(${wOffset}px)` }}
+              >
+                {windowedRemittances.map((remittance, i) => {
                   const config = STATUS_CONFIG[remittance.status];
                   const Icon = config.icon;
 
                   return (
                     <div
                       key={remittance.id}
+                      role="listitem"
+                      {...windowedItemAria(wStart + i, remittances.length)}
+                      style={{ height: REMITTANCE_ROW_HEIGHT }}
                       className="grid grid-cols-12 items-center gap-4 px-6 py-4 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/30"
                     >
                       <div className="col-span-4 flex min-w-0 items-center gap-3">
@@ -409,6 +433,8 @@ export default function RemittancesPage() {
                     </div>
                   );
                 })}
+              </div>
+              </div>
               </div>
             </div>
           )}

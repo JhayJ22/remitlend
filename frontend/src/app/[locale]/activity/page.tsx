@@ -130,7 +130,7 @@ export default function ActivityPage() {
   } = useWindowedList({
     itemCount: allActivity.length,
     itemHeight: ACTIVITY_ROW_HEIGHT,
-    overscan: 100,
+    overscan: 5,
   });
 
   // Preserve scroll position across re-renders, reset it only on filter change.

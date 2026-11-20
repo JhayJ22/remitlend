@@ -204,3 +204,14 @@ describe('requireApiKey – scope support', () => {
     });
   });
 });
+
+describe('API key expiry and rotation (#792)', () => {
+  it('parseExpiry rejects past dates and dates beyond one year', async () => {
+    const { parseExpiry } = await import('../services/apiKeyService.js');
+    const now = Date.now();
+    expect(() => parseExpiry(new Date(now - 1000).toISOString(), now)).toThrow(/future/);
+    expect(() => parseExpiry(new Date(now + 400 * 86400000).toISOString(), now)).toThrow(/1 year/);
+    expect(() => parseExpiry('garbage', now)).toThrow(/ISO 8601/);
+    expect(parseExpiry(new Date(now + 86400000).toISOString(), now)).toBeInstanceOf(Date);
+  });
+});

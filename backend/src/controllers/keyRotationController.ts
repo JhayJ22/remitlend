@@ -14,6 +14,9 @@ import type { Request, Response, NextFunction } from 'express';
 import { keyRotationService } from '../services/keyRotationService.js';
 import { query } from '../db/connection.js';
 import { AppError } from '../errors/AppError.js';
+import cron from 'node-cron';
+import { notificationService } from '../services/notificationService.js';
+import logger from '../utils/logger.js';
 
 /**
  * Start a new key rotation batch.
@@ -373,4 +376,47 @@ export async function listKeyRotationBatches(
   } catch (err) {
     next(err);
   }
+}
+
+const EXPIRY_NOTICE_DAYS = 7;
+
+/**
+ * Notifies owners of API keys that expire within 7 days (once per key).
+ * Returns the number of notifications sent.
+ */
+export async function notifyExpiringApiKeys(): Promise<number> {
+  const res = await query(
+    `SELECT id, owner, key_prefix, expires_at FROM api_keys
+     WHERE revoked_at IS NULL AND expiry_notified_at IS NULL
+       AND expires_at > now() AND expires_at <= now() + ($1 || ' days')::interval`,
+    [String(EXPIRY_NOTICE_DAYS)],
+  );
+  let sent = 0;
+  for (const row of res.rows as Array<Record<string, unknown>>) {
+    try {
+      await notificationService.createNotification({
+        userId: String(row.owner),
+        type: 'api_key_expiring',
+        title: 'API key expiring soon',
+        message: `Your API key ${String(row.key_prefix)}… expires on ${new Date(row.expires_at as string).toISOString()}. Rotate it before then.`,
+      });
+      await query(`UPDATE api_keys SET expiry_notified_at = now() WHERE id = $1`, [row.id]);
+      sent += 1;
+    } catch (error) {
+      logger.error('Failed to send API key expiry notification', { keyId: row.id, error });
+    }
+  }
+  return sent;
+}
+
+let expiryTask: ReturnType<typeof cron.schedule> | undefined;
+
+export function startApiKeyExpiryCron(): void {
+  if (expiryTask || process.env.NODE_ENV === 'test') return;
+  expiryTask = cron.schedule('0 * * * *', () => void notifyExpiringApiKeys());
+}
+
+export function stopApiKeyExpiryCron(): void {
+  expiryTask?.stop();
+  expiryTask = undefined;
 }

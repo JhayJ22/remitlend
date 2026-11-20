@@ -96,3 +96,18 @@ describeIf('expand-contract: notifications.read -> read_at', () => {
     expect(cols.rowCount).toBe(0);
   }, 60_000);
 });
+
+describe('contract storage-version helper (#793)', () => {
+  it('loan_manager and remittance_nft expose get_storage_version and a MigrationHelper', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const root = resolve(process.cwd(), '../contracts');
+    for (const c of ['loan_manager', 'remittance_nft']) {
+      const lib = readFileSync(resolve(root, c, 'src/lib.rs'), 'utf8');
+      const mig = readFileSync(resolve(root, c, 'src/migration.rs'), 'utf8');
+      expect(lib).toMatch(/pub fn get_storage_version\(env: Env\) -> u32/);
+      expect(mig).toMatch(/pub trait MigrationHelper/);
+      expect(mig).toMatch(/migrate_v1_to_v2/);
+    }
+  });
+});
