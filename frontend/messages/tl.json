@@ -376,5 +376,22 @@
     "notScheduled": "Hindi naka-iskedyul",
     "unknown": "Hindi alam",
     "executableNow": "Maaaring ipatupad ngayon"
+  },
+  "Privacy": {
+    "title": "Pagkapribado",
+    "description": "Kontrolin kung paano ipinapakita ang sensitibong data ng account sa device na ito.",
+    "reducedDataMode": "Reduced Data Mode",
+    "reducedDataModeDesc": "Itinatago ang mga identifier ng account at balanse sa sensitibong mga screen. Hindi makikita ang mga nakatagong halaga sa kinopyang teksto, screenshots, at accessible names.",
+    "whenEnabled": "Kapag naka-enable",
+    "addressesMasked": "Ang mga wallet address ay ipinapakita bilang mask sa halip na totoong address",
+    "balancesMasked": "Ang mga balanse at halaga ay ipinapakita bilang mask sa halip na totoong halaga",
+    "scoresMasked": "Ang credit scores ay ipinapakita bilang mask sa halip na totoong numero",
+    "copyDisabled": "Naka-disable ang copy buttons sa mga nakatagong halaga",
+    "revealHint": "Gamitin ang eye toggle sa anumang nakatagong halaga para pansamantalang ipakita ito",
+    "localOnly": "Ang preference na ito ay naka-store lamang sa device na ito. Hindi nito naaapektuhan ang data ng account mo sa blockchain o backend.",
+    "reveal": "Ipakita",
+    "hide": "Itago",
+    "hidden": "nakatago",
+    "copyDisabledHint": "Naka-disable ang copy (nakatago)"
   }
 }

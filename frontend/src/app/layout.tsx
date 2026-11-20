@@ -14,6 +14,7 @@ import { CommandPalette } from "./components/global_ui/CommandPalette";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { THEME_STORAGE_KEY } from "./lib/theme";
+import { PRIVACY_STORAGE_KEY } from "./stores/usePrivacyStore";
 import { getSiteUrl } from "./lib/metadata";
 import { WebVitalsReporter } from "./components/providers/WebVitalsReporter";
 import { ObservabilityProvider } from "./components/providers/ObservabilityProvider";
@@ -49,6 +50,13 @@ export default async function RootLayout({
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var root=document.documentElement;var stored=localStorage.getItem("${THEME_STORAGE_KEY}");if(!stored){var m=document.cookie.split("; ").find(function(r){return r.indexOf("${THEME_STORAGE_KEY}=")===0});if(m){stored=m.split("=")[1];}}if(stored==="system"){var resolved=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";root.dataset.theme="system";root.classList.toggle("dark",resolved==="dark");}else if(stored==="dark"||stored==="light"){root.dataset.theme=stored;root.classList.toggle("dark",stored==="dark");}else{var theme=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";root.dataset.theme=theme;root.classList.toggle("dark",theme==="dark");}}catch(e){}})()`,
+          }}
+        />
+        {/* Reduced-data mode anti-FOUC (#838): set data-privacy before first
+            paint so sensitive values are masked immediately, not flashed. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var root=document.documentElement;var raw=localStorage.getItem("${PRIVACY_STORAGE_KEY}");var enabled=false;if(raw){try{var p=JSON.parse(raw);enabled=p&&p.state&&p.state.reducedDataMode===true;}catch(e){}}root.dataset.privacy=enabled?"reduced":"full";}catch(e){}})()`,
           }}
         />
       </head>

@@ -376,5 +376,22 @@
     "notScheduled": "Not scheduled",
     "unknown": "Unknown",
     "executableNow": "Executable now"
+  },
+  "Privacy": {
+    "title": "Privacy",
+    "description": "Control how sensitive account data is displayed on this device.",
+    "reducedDataMode": "Reduced Data Mode",
+    "reducedDataModeDesc": "Mask account identifiers and balances on sensitive screens. Hidden values are absent from copied text, screenshots, and accessible names.",
+    "whenEnabled": "When enabled",
+    "addressesMasked": "Wallet addresses show as a mask instead of the real address",
+    "balancesMasked": "Balances and amounts show as a mask instead of the real value",
+    "scoresMasked": "Credit scores show as a mask instead of the real number",
+    "copyDisabled": "Copy buttons on masked values are disabled",
+    "revealHint": "Use the eye toggle on any masked value to temporarily reveal it",
+    "localOnly": "This preference is stored locally on this device only. It does not affect your account data on the blockchain or backend.",
+    "reveal": "Reveal",
+    "hide": "Hide",
+    "hidden": "hidden",
+    "copyDisabledHint": "Copy disabled (hidden)"
   }
 }

@@ -62,3 +62,12 @@ export { useThemeStore, selectTheme, selectThemeHydrated } from "./useThemeStore
 export { THEME_STORAGE_KEY } from "../lib/theme";
 export type { ThemeStore } from "./useThemeStore";
 export type { Theme } from "../lib/theme";
+
+export {
+  usePrivacyStore,
+  selectReducedDataMode,
+  selectPrivacyHydrated,
+  readReducedDataModeFromStorage,
+  PRIVACY_STORAGE_KEY,
+} from "./usePrivacyStore";
+export type { PrivacyStore } from "./usePrivacyStore";

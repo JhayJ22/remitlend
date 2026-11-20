@@ -18,6 +18,9 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { useLogout } from "../../hooks/useLogout";
 import { GamificationSettings } from "../../components/gamification/GamificationSettings";
+import { Toggle } from "../../components/ui/Toggle";
+import { usePrivacyStore, selectReducedDataMode } from "../../stores/usePrivacyStore";
+import { EyeOff } from "lucide-react";
 import { useThemeStore } from "../../stores/useThemeStore";
 import {
   useWalletStore,
@@ -55,6 +58,7 @@ const SECTIONS = [
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "security", label: "Security", icon: Shield },
   { id: "display", label: "Display", icon: Monitor },
+  { id: "privacy", label: "Privacy", icon: EyeOff },
   { id: "gamification", label: "Gamification", icon: Crown },
 ] as const;
 
@@ -601,6 +605,50 @@ function SecuritySection() {
 
 // ─── Display section ──────────────────────────────────────────────────────────
 
+function PrivacySection() {
+  const reducedDataMode = usePrivacyStore(selectReducedDataMode);
+  const setReducedDataMode = usePrivacyStore((s) => s.setReducedDataMode);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Privacy</CardTitle>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+          Control how sensitive account data is displayed on this device.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+          <Toggle
+            checked={reducedDataMode}
+            onChange={setReducedDataMode}
+            label="Reduced Data Mode"
+            description="Mask account identifiers and balances on sensitive screens. Hidden values are absent from copied text, screenshots, and accessible names."
+          />
+        </div>
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900 space-y-2">
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            When enabled:
+          </p>
+          <ul className="text-xs text-zinc-500 dark:text-zinc-400 space-y-1 ml-4 list-disc">
+            <li>Wallet addresses show as "G••••••••" instead of the real address</li>
+            <li>Balances and amounts show as "••••••••" instead of the real value</li>
+            <li>Credit scores show as "•••" instead of the real number</li>
+            <li>Copy buttons on masked values are disabled</li>
+            <li>Use the eye toggle on any masked value to temporarily reveal it</li>
+          </ul>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 pt-2">
+            This preference is stored locally on this device only. It does not
+            affect your account data on the blockchain or backend.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Display section ──────────────────────────────────────────────────────────
+
 function DisplaySection() {
   const LANGUAGES = [
     { code: "en", label: "English" },
@@ -726,6 +774,8 @@ export default function SettingsPage() {
         return <SecuritySection />;
       case "display":
         return <DisplaySection />;
+      case "privacy":
+        return <PrivacySection />;
       case "gamification":
         return <GamificationSettings />;
     }

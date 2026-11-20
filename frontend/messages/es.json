@@ -376,5 +376,22 @@
     "notScheduled": "No programado",
     "unknown": "Desconocido",
     "executableNow": "Ejecutable ahora"
+  },
+  "Privacy": {
+    "title": "Privacidad",
+    "description": "Controla cómo se muestran los datos confidenciales de la cuenta en este dispositivo.",
+    "reducedDataMode": "Modo de Datos Reducido",
+    "reducedDataModeDesc": "Oculta identificadores de cuenta y saldos en pantallas sensibles. Los valores ocultos no aparecen en texto copiado, capturas de pantalla ni nombres accesibles.",
+    "whenEnabled": "Cuando está habilitado",
+    "addressesMasked": "Las direcciones de wallet se muestran como una máscara en lugar de la dirección real",
+    "balancesMasked": "Saldos y montos se muestran como una máscara en lugar del valor real",
+    "scoresMasked": "Las puntuaciones de crédito se muestran como una máscara en lugar del número real",
+    "copyDisabled": "Los botones de copiar en valores ocultos están deshabilitados",
+    "revealHint": "Usa el interruptor de ojo en cualquier valor oculto para revelarlo temporalmente",
+    "localOnly": "Esta preferencia se almacena localmente solo en este dispositivo. No afecta los datos de su cuenta en la blockchain o backend.",
+    "reveal": "Revelar",
+    "hide": "Ocultar",
+    "hidden": "oculto",
+    "copyDisabledHint": "Copia deshabilitada (oculto)"
   }
 }
