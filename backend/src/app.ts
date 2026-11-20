@@ -39,6 +39,7 @@ import { shutdownCoordinator } from './middleware/shutdownHandler.js';
 import { reportCSPViolation } from './controllers/cspReportController.js';
 import { pauseGuard } from './middleware/pauseGuard.js';
 import { deprecationHeadersMiddleware } from './middleware/deprecationHeaders.js';
+import { cacheInvalidationHeaderMiddleware } from './middleware/cacheInvalidationHeader.js';
 import { asyncHandler } from './utils/asyncHandler.js';
 import { AppError } from './errors/AppError.js';
 import logger from './utils/logger.js';
@@ -186,6 +187,11 @@ app.use(idempotencyMiddleware);
 // Pause guard: reject state-mutating requests when contracts are paused
 // Issue #1381: Cross-layer emergency pause coordination
 app.use(pauseGuard);
+
+// Cache invalidation header propagation (#853): ensure Cache-Invalidation-Token
+// headers set by deletion endpoints survive compression and carry no-store
+// directives so proxies do not cache projection-invalidating responses.
+app.use(cacheInvalidationHeaderMiddleware);
 
 app.post(
   '/api/v1/csp-report',

@@ -32,6 +32,12 @@ import { query } from '../db/connection.js';
 import { buildRejectLoanTx } from '../controllers/loanController.js';
 import { listAuditLogs } from '../controllers/authController.js';
 import {
+  deleteUserProjectionCache,
+  bulkDeleteUserProjectionCache,
+  revokeUserProjectionCache,
+  verifyUserProjectionDeletion,
+} from '../controllers/projectionDeletionController.js';
+import {
   listLoanStateEventsEndpoint,
   replayLoanStateEndpoint,
 } from '../controllers/loanStateEventController.js';
@@ -719,6 +725,211 @@ router.post(
     const result = await executePrivilegedRequest(privilegedId(req.params.id), req.user!.publicKey);
     res.status(result.status === 'executed' ? 200 : 502).json({ success: true, data: result });
   }),
+);
+
+// ── Secure deletion of cached financial projections (#853) ────────────────────
+
+/**
+ * @swagger
+ * /admin/cache/projections/{userId}:
+ *   delete:
+ *     summary: Securely delete all cached financial projections for a user
+ *     description: >
+ *       Deletes every Redis key that backs a user-visible financial projection
+ *       for the given wallet address, including versioned SWR score keys, legacy
+ *       key formats, on-chain score history, NFT metadata, and borrower loan
+ *       aggregates. The authoritative source of truth (database / chain) is
+ *       never modified.
+ *
+ *       Returns 200 when all keys are confirmed deleted. Returns 207 when at
+ *       least one key deletion could not be confirmed (Redis unreachable) — in
+ *       that case the response body contains per-key outcomes and the
+ *       authoritative data remains correct.
+ *
+ *       Sets `Cache-Invalidation-Token: projections:{userId}` on the response
+ *       so the browser-side read cache can evict matching in-memory entries.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stellar wallet address of the subject
+ *     responses:
+ *       200:
+ *         description: All projection cache keys confirmed deleted
+ *         headers:
+ *           Cache-Invalidation-Token:
+ *             schema:
+ *               type: string
+ *             description: Comma-separated eviction tokens for browser caches
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ProjectionDeletionResult'
+ *       207:
+ *         description: Partial deletion — Redis unreachable for one or more keys
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ProjectionDeletionResult'
+ *       400:
+ *         description: Invalid userId
+ *       401:
+ *         description: Missing or invalid JWT
+ *       403:
+ *         description: Caller does not have admin role
+ */
+router.delete(
+  '/cache/projections/:userId',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  auditLog,
+  deleteUserProjectionCache,
+);
+
+/**
+ * @swagger
+ * /admin/cache/projections:
+ *   delete:
+ *     summary: Bulk-delete cached financial projections for multiple users
+ *     description: >
+ *       Deletes all projection cache keys for each userId in the request body.
+ *       At most 100 subjects per request. Subjects are processed in parallel;
+ *       failure for one subject does not abort the others.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [userIds]
+ *             properties:
+ *               userIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 maxItems: 100
+ *     responses:
+ *       200:
+ *         description: All keys confirmed deleted
+ *       207:
+ *         description: Partial deletion — some Redis keys unconfirmed
+ *       400:
+ *         description: Validation error
+ *       403:
+ *         description: Caller does not have admin role
+ */
+router.delete(
+  '/cache/projections',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  auditLog,
+  bulkDeleteUserProjectionCache,
+);
+
+/**
+ * @swagger
+ * /admin/cache/projections/revoke:
+ *   post:
+ *     summary: Revoke cached projections with an explicit compliance reason
+ *     description: >
+ *       Identical to DELETE but writes a REVOKE audit record with an explicit
+ *       reason string so compliance tools can filter revocations from routine
+ *       invalidations independently.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [userId, reason]
+ *             properties:
+ *               userId:
+ *                 type: string
+ *               reason:
+ *                 type: string
+ *                 maxLength: 500
+ *     responses:
+ *       200:
+ *         description: Projections revoked and audit record written
+ *       207:
+ *         description: Partial deletion — Redis unreachable for some keys
+ *       400:
+ *         description: Validation error
+ *       403:
+ *         description: Caller does not have admin role
+ */
+router.post(
+  '/cache/projections/revoke',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  auditLog,
+  revokeUserProjectionCache,
+);
+
+/**
+ * @swagger
+ * /admin/cache/projections/{userId}/verify:
+ *   get:
+ *     summary: Verify no stale projection cache remains for a user
+ *     description: >
+ *       Read-only check: returns `verified: true` when no projection keys
+ *       survive in Redis, or `verified: false` with the list of surviving keys
+ *       when stale entries remain after a deletion attempt.
+ *       This endpoint is idempotent and performs no deletions.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Verification result
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     subject:
+ *                       type: string
+ *                     survivingKeys:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                     verified:
+ *                       type: boolean
+ *       400:
+ *         description: Invalid userId
+ *       403:
+ *         description: Caller does not have admin role
+ */
+router.get(
+  '/cache/projections/:userId/verify',
+  requireJwtAuth,
+  requireRoles('admin'),
+  verifyUserProjectionDeletion,
 );
 
 export default router;
