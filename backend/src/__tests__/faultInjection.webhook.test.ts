@@ -27,11 +27,25 @@ jest.unstable_mockModule('../db/connection.js', () => ({
   default: { query: mockQuery },
   query: mockQuery,
   getClient: jest.fn(),
+  withTransaction: jest.fn(),
   closePool: jest.fn(),
+}));
+
+// DNS is mocked so tests never hit the network. Hostnames containing
+// "internal-ip" resolve to an RFC 1918 address (DNS-based SSRF).
+const mockLookup = jest.fn(async (hostname: string) =>
+  hostname.includes('internal-ip')
+    ? [{ address: '10.0.0.5', family: 4 }]
+    : [{ address: '93.184.216.34', family: 4 }],
+);
+jest.unstable_mockModule('node:dns/promises', () => ({
+  lookup: mockLookup,
+  default: { lookup: mockLookup },
 }));
 
 // ─── Module under test ────────────────────────────────────────────────────────
 const { WebhookService } = await import('../services/webhookService.js');
+const { EgressPolicyViolation, validateWebhookUrl } = await import('../services/webhookEgress.js');
 
 // ─── Shared fixture ───────────────────────────────────────────────────────────
 
@@ -131,5 +145,82 @@ describe('Fault injection – Outbound HTTP / fetch (WebhookService)', () => {
 
     // fetch must be called for both subscribers
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  // ─── Egress policy (#784) ──────────────────────────────────────────────────
+
+  it.each([
+    ['RFC 1918 10.x', 'https://10.1.2.3/hook'],
+    ['RFC 1918 172.16-31.x', 'https://172.20.0.1/hook'],
+    ['RFC 1918 192.168.x', 'https://192.168.1.10/hook'],
+    ['loopback', 'https://127.0.0.1/hook'],
+    ['localhost', 'https://localhost/hook'],
+    ['link-local / cloud metadata', 'https://169.254.169.254/latest/meta-data'],
+    ['IPv6 loopback', 'https://[::1]/hook'],
+    ['IPv4-mapped IPv6 private', 'https://[::ffff:10.0.0.1]/hook'],
+    ['hostname resolving to private IP', 'https://internal-ip.example/hook'],
+    ['plain HTTP', 'http://consumer.example/hook'],
+  ])('rejects %s destinations with EgressPolicyViolation', async (_label, url) => {
+    await expect(validateWebhookUrl(url)).rejects.toBeInstanceOf(EgressPolicyViolation);
+  });
+
+  it('accepts public HTTPS destinations', async () => {
+    await expect(validateWebhookUrl('https://consumer.example/hook')).resolves.toBeUndefined();
+  });
+
+  it('enforces WEBHOOK_EGRESS_ALLOWLIST when configured', async () => {
+    process.env.WEBHOOK_EGRESS_ALLOWLIST = '*.trusted.example,exact.example';
+    try {
+      await expect(validateWebhookUrl('https://api.trusted.example/hook')).resolves.toBeUndefined();
+      await expect(validateWebhookUrl('https://exact.example/hook')).resolves.toBeUndefined();
+      await expect(validateWebhookUrl('https://consumer.example/hook')).rejects.toBeInstanceOf(
+        EgressPolicyViolation,
+      );
+    } finally {
+      delete process.env.WEBHOOK_EGRESS_ALLOWLIST;
+    }
+  });
+
+  it.each([
+    ['private IP', 'https://192.168.0.10/hook'],
+    ['non-HTTPS', 'http://consumer.example/hook'],
+  ])('dead-letters %s deliveries without calling fetch', async (_label, callbackUrl) => {
+    const fetchMock = jest.fn<typeof fetch>();
+    global.fetch = fetchMock as typeof fetch;
+    mockQuery.mockReset();
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 7, callback_url: callbackUrl, secret: null }] })
+      .mockResolvedValue({ rows: [] });
+
+    await new WebhookService().dispatch(BASE_EVENT);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const insertCall = mockQuery.mock.calls.find(
+      (c) => typeof c[0] === 'string' && (c[0] as string).includes('INSERT INTO webhook_deliveries'),
+    );
+    expect(insertCall).toBeDefined();
+    expect(insertCall![0]).toContain('dead_lettered_at');
+    const params = insertCall![1] as unknown[];
+    expect(String(params[3])).toMatch(/^EgressPolicyViolation:/);
+    expect(params[5]).toBeInstanceOf(Date);
+  });
+
+  it('dead-letters a retry whose destination now violates policy', async () => {
+    const fetchMock = jest.fn<typeof fetch>();
+    global.fetch = fetchMock as typeof fetch;
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    await WebhookService.retryWebhookDelivery(
+      42, 7, 'https://10.0.0.9/hook', undefined, 'evt-1', 'LoanApproved', { eventId: 'evt-1' }, 1,
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const update = mockQuery.mock.calls.find(
+      (c) => typeof c[0] === 'string' && (c[0] as string).includes('UPDATE webhook_deliveries'),
+    );
+    expect(update).toBeDefined();
+    expect(update![0]).toContain('dead_lettered_at = $3');
+    expect(update![0]).toContain('next_retry_at = NULL');
   });
 });

@@ -139,14 +139,45 @@ spec:
 
 ### 4. Webhook URL allowlisting (application layer)
 
-Outbound webhook delivery is a controlled egress vector. The backend validates
-webhook subscriber URLs against the following rules before delivery:
+Outbound webhook delivery is a controlled egress vector (SSRF risk: subscriber
+URLs are user-supplied). Rules are defined once in `WEBHOOK_EGRESS_RULES`
+(`backend/src/services/webhookEgress.ts`) and enforced by `validateWebhookUrl()`
+at subscription time **and** before every delivery attempt (initial + retries).
 
-- Must use `https://` (no plain HTTP, no `file://`, no `data:`)
-- Must not resolve to RFC 1918 / link-local ranges (SSRF guard)
-- Must not be `169.254.169.254` (cloud metadata endpoint)
+### Webhook destinations
 
-These checks are implemented in `backend/src/services/webhookService.ts`.
+| Rule | Enforcement |
+|------|-------------|
+| Scheme | HTTPS only (`https:`); `http://`, `file://`, `data:` etc. rejected |
+| Port | `443` (or omitted) only |
+| Credentials / fragment | URLs with `user:pass@` or `#fragment` rejected |
+| Hostnames | `localhost`, `.localhost`, `.local`, `.internal` rejected |
+| Resolved addresses | **Every** A/AAAA record must be globally routable (see CIDRs below); IPv4-mapped IPv6 is checked as IPv4 |
+| Allowlist (optional) | When `WEBHOOK_EGRESS_ALLOWLIST` is set (comma-separated, `*.example.com` wildcards), the hostname must match an entry |
+
+Blocked IPv4 ranges (RFC 1918, loopback, link-local / cloud metadata, CGNAT,
+documentation, benchmarking, multicast, reserved):
+
+`0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`, `169.254.0.0/16`,
+`172.16.0.0/12`, `192.0.0.0/24`, `192.0.2.0/24`, `192.88.99.0/24`,
+`192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`, `203.0.113.0/24`,
+`224.0.0.0/4`, `240.0.0.0/4`
+
+IPv6: only global unicast (`2000::/3`) is allowed, excluding documentation
+(`2001:db8::/32`, `3fff::/20`), Teredo/`2001::/23` and 6to4 (`2002::/16`).
+
+**Violation handling.** A destination that fails validation raises
+`EgressPolicyViolation` (`code: EGRESS_POLICY_VIOLATION`). The delivery is
+**not sent and not retried**: it is written to `webhook_deliveries` with
+`dead_lettered_at` set and `dead_letter_reason = "EgressPolicyViolation: …"`,
+so it appears in the admin dead-letter listing. Transient DNS failures are *not*
+policy violations and follow the normal retry schedule.
+
+**Drift check.** `node scripts/check-egress-policy.mjs` (CI job
+`egress-policy-check`) fails if the rules above diverge from
+`WEBHOOK_EGRESS_RULES` or if a delivery path stops calling the validator.
+
+Tests: `backend/src/__tests__/faultInjection.webhook.test.ts`.
 
 ---
 

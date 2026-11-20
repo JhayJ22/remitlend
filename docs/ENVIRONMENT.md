@@ -62,6 +62,8 @@ stricter rate limit (10 requests/minute/IP) to prevent abuse.
 | `REMITTANCE_NFT_CONTRACT_ID` | ✓ | ✓ | ✓ | — | Deployed remittance NFT contract address | `backend/src/config/contracts.ts` |
 | `LENDING_POOL_CONTRACT_ID` | ✓ | ✓ | ✓ | — | Deployed lending pool contract address | `backend/src/config/stellar.ts` |
 | `MULTISIG_GOVERNANCE_CONTRACT_ID` | ✓ | ✓ | ✓ | — | Deployed multisig governance contract address | `backend/src/config/contracts.ts` |
+| `GOVERNANCE_SWEEP_SOURCE_SECRET` | — | — | — | `LOAN_MANAGER_ADMIN_SECRET` | Fee-paying account for the nightly governance `sweep_expired` call | `backend/src/cron/governanceSweepJob.ts` |
+| `GOVERNANCE_SWEEP_MAX_COUNT` | — | — | — | `50` | Proposals examined per nightly `sweep_expired` call (contract caps at 100) | `backend/src/cron/governanceSweepJob.ts` |
 | `POOL_TOKEN_ADDRESS` | ✓ | ✓ | ✓ | — | Pool token contract address | `backend/src/config/stellar.ts` |
 | `STELLAR_USDC_ISSUER` | — | ✓ | ✓ | — | USDC asset issuer address | `backend/src/config/stellar.ts` |
 | `STELLAR_EURC_ISSUER` | — | ✓ | ✓ | — | EURC asset issuer address | `backend/src/config/stellar.ts` |

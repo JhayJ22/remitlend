@@ -19,7 +19,12 @@ const MIN_TIMELOCK_SECONDS: u64 = 86_400;
 const MAX_SIGNERS: u32 = 20;
 
 /// Time-to-live for proposals before they expire (7 days in seconds).
-const PROPOSAL_TTL_SECONDS: u64 = 604_800;
+pub(crate) const PROPOSAL_TTL_SECONDS: u64 = 604_800;
+
+/// Upper bound on proposals examined by a single `sweep_expired` call,
+/// regardless of the caller-supplied `max_count` (keeps the call within
+/// Soroban resource limits).
+const MAX_SWEEP_BATCH: u32 = 100;
 
 // ─── Storage keys ─────────────────────────────────────────────────────────────
 
@@ -29,6 +34,8 @@ const KEY_PENDING: Symbol = symbol_short!("PENDING");
 const KEY_TARGET: Symbol = symbol_short!("TARGET");
 const KEY_LAST_CANCELLED_AT: Symbol = symbol_short!("CANCEL_AT");
 const KEY_PROPOSAL_COUNT: Symbol = symbol_short!("COUNT");
+/// Next pause-proposal id `sweep_expired` will examine.
+const KEY_SWEEP_CURSOR: Symbol = symbol_short!("SWEEPCUR");
 
 const REPROPOSAL_COOLDOWN_SECONDS: u64 = 3600; // 1 hour
 const CURRENT_VERSION: u32 = 1;
@@ -147,6 +154,19 @@ pub struct ProposalExpiredEvent {
     pub expired_by: Address,
     pub proposal_timestamp: u64,
     pub expiry_timestamp: u64,
+}
+
+/// Emitted once per proposal removed by `sweep_expired`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalSweptEvent {
+    /// Proposal id (admin-transfer id or pause-proposal id, see `kind`).
+    pub proposal_id: u32,
+    /// `admin` for admin-transfer proposals, `pause` for emergency-pause proposals.
+    pub kind: Symbol,
+    pub proposed_at: u64,
+    pub expired_at: u64,
+    pub swept_at: u64,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -550,6 +570,93 @@ impl GovernanceContract {
             },
         );
         Ok(())
+    }
+
+    // ── Sweep ─────────────────────────────────────────────────────────────────
+
+    /// Purge up to `max_count` proposals whose TTL (`PROPOSAL_TTL_SECONDS`
+    /// after `proposed_at`) has elapsed, reclaiming their storage rent.
+    ///
+    /// Permissionless: it can only delete proposals that are already expired
+    /// and therefore can no longer be approved, finalized or executed.
+    /// Unexpired proposals are never touched.
+    ///
+    /// Examines the admin-transfer slot first, then pause proposals in id
+    /// order starting from a persisted cursor. Because ids are issued in
+    /// timestamp order and the TTL is constant, the scan stops at the first
+    /// unexpired pause proposal. `max_count` (clamped to `MAX_SWEEP_BATCH`)
+    /// bounds the number of proposal slots examined.
+    ///
+    /// Emits `ProposalSweptEvent` per removed proposal and returns the number
+    /// removed.
+    pub fn sweep_expired(env: Env, max_count: u32) -> u32 {
+        let budget = max_count.min(MAX_SWEEP_BATCH);
+        let now = env.ledger().timestamp();
+        let mut examined: u32 = 0;
+        let mut removed: u32 = 0;
+
+        if budget == 0 {
+            return 0;
+        }
+
+        // 1. Admin-transfer proposal (single slot).
+        if let Some(pending) = env
+            .storage()
+            .instance()
+            .get::<Symbol, PendingTransfer>(&KEY_PENDING)
+        {
+            examined += 1;
+            let expired_at = pending.proposed_at.saturating_add(PROPOSAL_TTL_SECONDS);
+            if now >= expired_at {
+                env.storage().instance().remove(&KEY_PENDING);
+                removed += 1;
+                Self::emit_swept(&env, pending.id, symbol_short!("admin"), pending.proposed_at, expired_at, now);
+            }
+        }
+
+        // 2. Emergency-pause proposals, oldest first.
+        let last_id = emergency_pause::last_pause_id(&env);
+        let mut cursor: u32 = env
+            .storage()
+            .instance()
+            .get(&KEY_SWEEP_CURSOR)
+            .unwrap_or(1)
+            .max(1);
+
+        while examined < budget && cursor <= last_id {
+            let key = emergency_pause::pause_proposal_key(&env, cursor);
+            match env.storage().persistent().get::<Symbol, PendingPause>(&key) {
+                None => {}
+                Some(proposal) => {
+                    let expired_at = proposal.proposed_at.saturating_add(PROPOSAL_TTL_SECONDS);
+                    if now < expired_at {
+                        // Every later id is newer, so nothing beyond is expired.
+                        break;
+                    }
+                    env.storage().persistent().remove(&key);
+                    removed += 1;
+                    Self::emit_swept(&env, proposal.id, symbol_short!("pause"), proposal.proposed_at, expired_at, now);
+                }
+            }
+            examined += 1;
+            cursor += 1;
+        }
+
+        env.storage().instance().set(&KEY_SWEEP_CURSOR, &cursor);
+        removed
+    }
+
+    fn emit_swept(env: &Env, proposal_id: u32, kind: Symbol, proposed_at: u64, expired_at: u64, swept_at: u64) {
+        env.events().publish(
+            (symbol_short!("GovSwept"), kind.clone()),
+            ProposalSweptEvent {
+                proposal_id,
+                kind,
+                proposed_at,
+                expired_at,
+                swept_at,
+            },
+        );
     }
 
     // ── Views ─────────────────────────────────────────────────────────────────

@@ -199,6 +199,20 @@ jobs:
       - name: Check every backend ErrorCode has a frontend message mapping
         run: node scripts/check-error-code-mappings.mjs
 
+  # ── 9b. Webhook egress policy drift check (issue #784) ────────────────────
+  egress-policy-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Use Node.js 20
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Check webhook egress rules match docs/EGRESS-POLICY.md
+        run: node scripts/check-egress-policy.mjs
+
   # ── 10. Contributor quick-start verification (issue #582) ────────────────────
   # Runs the documented clean-checkout workflow on a fresh runner so the
   # contributor guide cannot drift from package scripts, required env vars,

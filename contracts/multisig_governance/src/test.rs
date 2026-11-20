@@ -712,3 +712,123 @@ fn has_approved_tracks_approvals() {
     assert!(client.has_approved(&s1));
     assert!(client.has_approved(&s2));
 }
+
+// ─── sweep_expired (#785) ─────────────────────────────────────────────────────
+
+/// Writes a pause proposal straight into contract storage and bumps the id
+/// counter, mirroring what `propose_pause` persists.
+fn seed_pause_proposal(env: &Env, contract: &Address, id: u32, proposed_at: u64) {
+    env.as_contract(contract, || {
+        let signer = Address::generate(env);
+        let proposal = PendingPause {
+            id,
+            pause_action: true,
+            target_functions: Vec::new(env),
+            threshold: 1,
+            signers: Vec::from_slice(env, core::slice::from_ref(&signer)),
+            approvals: Map::new(env),
+            executable_after: proposed_at.saturating_add(emergency_pause::PAUSE_TIMELOCK_SECONDS),
+            proposed_at,
+            status: PauseStatus::Active,
+        };
+        env.storage()
+            .persistent()
+            .set(&emergency_pause::pause_proposal_key(env, id), &proposal);
+        let last = emergency_pause::last_pause_id(env);
+        if id > last {
+            env.storage()
+                .instance()
+                .set(&Symbol::new(env, emergency_pause::KEY_PAUSE_ID), &id);
+        }
+    });
+}
+
+fn pause_proposal_exists(env: &Env, contract: &Address, id: u32) -> bool {
+    env.as_contract(contract, || {
+        env.storage()
+            .persistent()
+            .has(&emergency_pause::pause_proposal_key(env, id))
+    })
+}
+
+#[test]
+fn pause_proposal_key_matches_legacy_format() {
+    let env = Env::default();
+    assert_eq!(emergency_pause::pause_proposal_key(&env, 1), Symbol::new(&env, "PAUSE1"));
+    assert_eq!(emergency_pause::pause_proposal_key(&env, 42), Symbol::new(&env, "PAUSE42"));
+    assert_eq!(
+        emergency_pause::pause_proposal_key(&env, u32::MAX),
+        Symbol::new(&env, "PAUSE4294967295")
+    );
+}
+
+#[test]
+fn sweep_removes_only_expired_proposals() {
+    let (env, client, _admin, _) = setup();
+    let contract = client.address.clone();
+    let s = Address::generate(&env);
+    let signers = Vec::from_slice(&env, core::slice::from_ref(&s));
+
+    set_ts(&env, 1000);
+    client.propose_admin_transfer(&Address::generate(&env), &signers, &1, &MIN_TIMELOCK_SECONDS);
+
+    seed_pause_proposal(&env, &contract, 1, 0);
+    seed_pause_proposal(&env, &contract, 2, 500);
+    seed_pause_proposal(&env, &contract, 3, PROPOSAL_TTL_SECONDS + 500); // still active
+
+    // Nothing is expired yet → nothing removed.
+    set_ts(&env, 1001);
+    assert_eq!(client.sweep_expired(&10), 0);
+    assert!(client.has_pending_transfer());
+    assert!(pause_proposal_exists(&env, &contract, 1));
+
+    // Admin transfer (t=1000) and pause #1/#2 are now past TTL; #3 is not.
+    set_ts(&env, PROPOSAL_TTL_SECONDS + 1000);
+    assert_eq!(client.sweep_expired(&10), 3);
+    assert_eq!(env.events().all().len(), 3); // one ProposalSwept per removal
+
+    assert!(!client.has_pending_transfer());
+    assert!(!pause_proposal_exists(&env, &contract, 1));
+    assert!(!pause_proposal_exists(&env, &contract, 2));
+    assert!(pause_proposal_exists(&env, &contract, 3));
+
+    // Idempotent: a second sweep finds nothing new.
+    assert_eq!(client.sweep_expired(&10), 0);
+    assert!(pause_proposal_exists(&env, &contract, 3));
+}
+
+#[test]
+fn sweep_respects_max_count_limit() {
+    let (env, client, _admin, _) = setup();
+    let contract = client.address.clone();
+
+    for id in 1..=5u32 {
+        seed_pause_proposal(&env, &contract, id, u64::from(id));
+    }
+    set_ts(&env, PROPOSAL_TTL_SECONDS + 100);
+
+    assert_eq!(client.sweep_expired(&0), 0);
+    assert!(pause_proposal_exists(&env, &contract, 1));
+
+    assert_eq!(client.sweep_expired(&2), 2);
+    assert!(!pause_proposal_exists(&env, &contract, 1));
+    assert!(!pause_proposal_exists(&env, &contract, 2));
+    assert!(pause_proposal_exists(&env, &contract, 3));
+
+    // Cursor resumes where the previous sweep stopped.
+    assert_eq!(client.sweep_expired(&10), 3);
+    for id in 1..=5u32 {
+        assert!(!pause_proposal_exists(&env, &contract, id));
+    }
+}
+
+#[test]
+fn sweep_is_permissionless() {
+    let (env, client, _admin, _) = setup();
+    let contract = client.address.clone();
+    seed_pause_proposal(&env, &contract, 1, 0);
+    set_ts(&env, PROPOSAL_TTL_SECONDS);
+
+    env.mock_auths(&[]); // no authorizations at all
+    assert_eq!(client.sweep_expired(&1), 1);
+}
