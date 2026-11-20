@@ -11,6 +11,7 @@ import {
   CreditCard,
   Clock,
   ShieldAlert,
+  BookOpen,
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -64,6 +65,7 @@ export function Sidebar({ onClose, className }: SidebarProps) {
     { name: t("liquidations"), href: `/${locale}/liquidations`, icon: ShieldAlert },
     { name: t("activity"), href: `/${locale}/activity`, icon: Clock },
     { name: t("wallet"), href: `/${locale}/wallet`, icon: CreditCard },
+    { name: t("glossary"), href: `/${locale}/glossary`, icon: BookOpen },
     ...(isAdmin
       ? [{ name: t("adminDisputes"), href: `/${locale}/admin/disputes`, icon: ShieldAlert }]
       : []),

@@ -86,7 +86,8 @@
     "wallet": "Wallet",
     "walletStatus": "Status ng Wallet",
     "disconnected": "Nakaputol",
-    "connected": "Nakakonekta"
+    "connected": "Nakakonekta",
+    "glossary": "Talasalitaan"
   },
   "Loans": {
     "title": "Mga Loan",
@@ -376,5 +377,102 @@
     "notScheduled": "Hindi naka-iskedyul",
     "unknown": "Hindi alam",
     "executableNow": "Maaaring ipatupad ngayon"
+  },
+  "Glossary": {
+    "pageTitle": "Talasalitaan ng Pananalapi",
+    "pageDescription": "Mga paliwanag sa simpleng wika ng mga terminong ginagamit sa RemitLend.",
+    "searchPlaceholder": "Maghanap ng mga termino…",
+    "noResults": "Walang termino ang tumutugma sa \"{query}\". Subukan ang mas malawak na paghahanap.",
+    "tooltipLabel": "Ano ang {term}?",
+    "terms": {
+      "apr": {
+        "term": "APR",
+        "definition": "Annual Percentage Rate (Taunang Porsyentong Rate) — ang taunang gastos ng isang pautang na ipinahayag bilang porsyento, kasama ang interes ngunit hindi ang compounding. Pinapahintulutan ka ng APR na ikumpara ang tunay na gastos ng iba't ibang pautang nang pantay-pantay."
+      },
+      "apy": {
+        "term": "APY",
+        "definition": "Annual Percentage Yield (Taunang Porsyentong Kita) — ang taunang kita sa isang deposito, isinasaalang-alang ang compounding. Ang mas mataas na APY ay nangangahulugang mas mabilis na lumalaki ang iyong pera. Ang APY ay palaging bahagyang mas mataas kaysa sa nabanggit na rate ng interes kapag may compounding."
+      },
+      "principal": {
+        "term": "Punong halaga",
+        "definition": "Ang orihinal na halaga ng pera na hiniram o idineposito mo, bago idagdag ang anumang interes o bayarin. Binabawasan ng iyong mga bayad ang natitirang punong halaga sa paglipas ng panahon."
+      },
+      "interest": {
+        "term": "Interes",
+        "definition": "Ang gastos na babayaran mo para sa paghiram ng pera, kinakalkula bilang porsyento ng natitirang punong halaga. Nag-iipon ang interes bawat araw na bukas ang iyong pautang at idinaragdag sa iyong kabuuang utang."
+      },
+      "accruedInterest": {
+        "term": "Naipon na interes",
+        "definition": "Interes na naipon sa iyong pautang mula nang huling bayad ngunit hindi pa nababayaran. Bahagi ito ng kabuuang halagang utang mo sa kasalukuyan."
+      },
+      "originationFee": {
+        "term": "Bayad sa paglikha ng pautang",
+        "definition": "Isang beses na bayad na sinisingil kapag nalilikha ang iyong pautang para masaklaw ang gastos sa pagproseso ng aplikasyon. Ibinabawas ito mula sa halagang ibinibigay sa iyo, kaya bahagyang mas mababa ang matatanggap mo kaysa sa hinalang mo."
+      },
+      "effectiveApr": {
+        "term": "Epektibong APR",
+        "definition": "Ang kabuuang taunang gastos ng iyong pautang kapag kasama na ang mga bayarin tulad ng origination fee, kasabay ng interes. Ang epektibong APR ay palaging mas mataas kaysa sa nominal na rate at ang pinaka-tumpak na paraan upang ikumpara ang buong gastos ng iba't ibang pautang."
+      },
+      "collateral": {
+        "term": "Kolateral",
+        "definition": "Isang asset (tulad ng cryptocurrency) na ila-lock mo upang ma-secure ang isang pautang. Kung hindi ka makabayad ng pautang, ang kolateral ay maaaring i-liquidate (ibenta) upang mabawi ang utang. Mas maraming kolateral kumpara sa iyong utang ay nangangahulugang mas malusog at mas ligtas na posisyon."
+      },
+      "collateralRatio": {
+        "term": "Ratio ng kolateral",
+        "definition": "Ang ratio ng halaga ng iyong nakalock na kolateral sa iyong kabuuang utang. Ang ratio na 1.5 ay nangangahulugang mayroon kang ₱1.50 ng kolateral para sa bawat ₱1.00 ng utang. Mas mataas ay mas ligtas; ang pagbaba sa ibaba ng liquidation threshold ay nagdudulot ng liquidation."
+      },
+      "healthFactor": {
+        "term": "Health factor",
+        "definition": "Isang numero na nagpapakita kung gaano kalapit na ma-liquidate ang iyong pautang. Ang health factor na higit sa 1.0 ay nangangahulugang ligtas ang iyong posisyon; sa 1.0 o mas mababa ay maaaring ma-liquidate. Magdagdag ng kolateral upang mapataas ang iyong health factor."
+      },
+      "liquidationThreshold": {
+        "term": "Liquidation threshold",
+        "definition": "Ang pinakamababang ratio ng kolateral na dapat mapanatili ng iyong pautang. Kung bumagsak ang halaga ng iyong kolateral at ang ratio ay bumaba sa o sa ibaba ng antas na ito, ang iyong kolateral ay maaaring awtomatikong ibenta upang mabayaran ang pautang."
+      },
+      "liquidation": {
+        "term": "Liquidasyon",
+        "definition": "Ang awtomatikong proseso ng pagbebenta ng ilan o lahat ng iyong kolateral upang mabayaran ang isang pautang kapag masyadong bumaba ang health factor. Pinoprotektahan ng liquidasyon ang mga nagpapahiram ngunit maaaring magresulta sa pagkalugi para sa nanghihiram."
+      },
+      "utilizationRate": {
+        "term": "Rate ng paggamit",
+        "definition": "Ang porsyento ng isang lending pool na kasalukuyang napautang. Halimbawa, ang 60% na rate ng paggamit ay nangangahulugang 60% ng mga idineposito ay aktibong kumikita ng interes sa pamamagitan ng mga pautang. Ang mas mataas na paggamit ay karaniwang nagpapataas ng APY para sa mga nagdedeposito ngunit maaaring limitahan ang agarang pag-withdraw."
+      },
+      "creditScore": {
+        "term": "Credit score",
+        "definition": "Isang on-chain na sukatan ng iyong pagiging maaasahan sa pagbabayad, kinakalkula mula sa iyong kasaysayan ng paghiram at pagbabayad. Ang mas mataas na puntos ay maaaring mag-unlock ng mas magandang mga tuntunin ng pautang, mas mababang bayarin, at mas mataas na limitasyon ng paghiram sa paglipas ng panahon."
+      },
+      "remittance": {
+        "term": "Remitansa",
+        "definition": "Isang paglipat ng pera na ipinapadala sa ibayong dagat, karaniwang sa pamilya o mga kaibigan. Sa RemitLend, ang mga remitansa ay naitala on-chain upang mabuo ang iyong kasaysayan ng kredito, na maaaring mapabuti ang iyong puntos at mag-unlock ng mas magandang mga tuntunin."
+      },
+      "amortization": {
+        "term": "Amortisasyon",
+        "definition": "Ang proseso ng pagbabayad ng pautang sa pamamagitan ng mga regular na nakatakdang bayad. Bawat bayad ay sumasaklaw sa interes na naipon mula nang huling bayad kasama ang isang bahagi ng punong halaga, kaya ang utang ay unti-unting bumababa sa buong termino ng pautang."
+      },
+      "lateFee": {
+        "term": "Bayad sa pagkahuli",
+        "definition": "Isang karagdagang bayarin na inilalapat sa iyong natitirang balanse kapag ang isang bayad ay natutulog na. Nag-iipon ang mga bayad sa pagkahuli habang nananatiling hindi nabayaran ang bayad, na nagpapataas ng iyong kabuuang utang."
+      },
+      "withdrawal": {
+        "term": "Pag-withdraw",
+        "definition": "Ang pagkuha ng iyong mga idineposito mula sa lending pool. Ang mga pag-withdraw ay maaaring sumailalim sa isang cooldown period — isang panahon ng paghihintay pagkatapos ng deposito — upang maprotektahan ang pool mula sa mabilis na pagpasok at paglabas ng pondo."
+      },
+      "cooldown": {
+        "term": "Cooldown ng pag-withdraw",
+        "definition": "Isang panahon ng paghihintay pagkatapos na gumawa ng deposito bago mo ma-withdraw ang mga pondong iyon. Pinoprotektahan ng cooldown ang pool mula sa mabilis na pag-ikot ng mga deposito at pag-withdraw, na nagpapanatili nitong matatag para sa lahat ng kalahok."
+      },
+      "yield": {
+        "term": "Kita",
+        "definition": "Ang mga kita na nagmumula sa pagdedeposito ng mga pondo sa lending pool. Ang kita ay nagmumula sa interes na binabayaran ng mga nanghihiram at ibinahagi nang proporsyonal sa mga nagdedeposito batay sa kanilang bahagi sa pool."
+      },
+      "shareOfPool": {
+        "term": "Bahagi ng pool",
+        "definition": "Ang porsyento ng kabuuang lending pool na kinakatawan ng iyong mga deposito. Tinutukoy ng iyong bahagi kung magkano ang kita ng pool na ipinamamahagi sa iyo. Kung ang pool ay 10,000 USDC at nagdeposito ka ng 1,000 USDC, ang iyong bahagi ay 10%."
+      },
+      "default": {
+        "term": "Default ng pautang",
+        "definition": "Ang isang pautang ay nag-default kapag hindi nakagawa ng kinakailangang bayad ang nanghihiram sa takdang petsa at naabot na ang threshold ng napalampas na bayad. Ang mga defaulted na pautang ay maaaring magdulot ng liquidasyon ng kolateral ng nanghihiram."
+      }
+    }
   }
 }

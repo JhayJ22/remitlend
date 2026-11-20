@@ -86,7 +86,8 @@
     "wallet": "Wallet",
     "walletStatus": "Wallet Status",
     "disconnected": "Disconnected",
-    "connected": "Connected"
+    "connected": "Connected",
+    "glossary": "Glossary"
   },
   "Loans": {
     "title": "Loans",
@@ -376,5 +377,102 @@
     "notScheduled": "Not scheduled",
     "unknown": "Unknown",
     "executableNow": "Executable now"
+  },
+  "Glossary": {
+    "pageTitle": "Financial Glossary",
+    "pageDescription": "Plain-language explanations of the terms used throughout RemitLend.",
+    "searchPlaceholder": "Search terms…",
+    "noResults": "No terms match \"{query}\". Try a broader search.",
+    "tooltipLabel": "What is {term}?",
+    "terms": {
+      "apr": {
+        "term": "APR",
+        "definition": "Annual Percentage Rate — the yearly cost of a loan expressed as a percentage, including interest but not compounding. The APR lets you compare the true cost of different loans on an equal footing."
+      },
+      "apy": {
+        "term": "APY",
+        "definition": "Annual Percentage Yield — the yearly return on a deposit, taking compounding into account. A higher APY means your money grows faster. APY is always slightly higher than the stated interest rate when compounding occurs."
+      },
+      "principal": {
+        "term": "Principal",
+        "definition": "The original amount of money you borrowed or deposited, before any interest or fees are added. Your repayments reduce the outstanding principal over time."
+      },
+      "interest": {
+        "term": "Interest",
+        "definition": "The cost you pay for borrowing money, calculated as a percentage of the outstanding principal. Interest accrues (builds up) every day your loan is open and is added to your total amount owed."
+      },
+      "accruedInterest": {
+        "term": "Accrued interest",
+        "definition": "Interest that has built up on your loan since the last payment but has not yet been paid. Accrued interest is part of the total amount you owe right now."
+      },
+      "originationFee": {
+        "term": "Origination fee",
+        "definition": "A one-time fee charged when your loan is created to cover the cost of processing the application. It is deducted from the amount disbursed to you, so the amount you receive is slightly less than the amount you requested."
+      },
+      "effectiveApr": {
+        "term": "Effective APR",
+        "definition": "The all-in annual cost of your loan once fees such as the origination fee are included alongside interest. The effective APR is always higher than the nominal rate and is the most accurate way to compare the full cost of different loans."
+      },
+      "collateral": {
+        "term": "Collateral",
+        "definition": "An asset (such as a cryptocurrency) that you lock up to secure a loan. If you cannot repay the loan, the collateral can be liquidated (sold) to recover the amount owed. More collateral relative to your debt means a healthier, safer position."
+      },
+      "collateralRatio": {
+        "term": "Collateral ratio",
+        "definition": "The ratio of your locked collateral value to your total debt. A ratio of 1.5 means you have $1.50 of collateral for every $1.00 of debt. Higher is safer; falling below the liquidation threshold triggers liquidation."
+      },
+      "healthFactor": {
+        "term": "Health factor",
+        "definition": "A number that shows how close your loan is to being liquidated. A health factor above 1.0 means your position is safe; at or below 1.0 it can be liquidated. Add more collateral to increase your health factor."
+      },
+      "liquidationThreshold": {
+        "term": "Liquidation threshold",
+        "definition": "The minimum collateral ratio your loan must maintain. If your collateral value falls so that the ratio drops to or below this level, your collateral can be automatically sold to repay the loan."
+      },
+      "liquidation": {
+        "term": "Liquidation",
+        "definition": "The automatic process of selling some or all of your collateral to repay a loan when the health factor drops too low. Liquidation protects lenders but can result in a financial loss for the borrower. Keeping your health factor well above 1.0 reduces this risk."
+      },
+      "utilizationRate": {
+        "term": "Utilization rate",
+        "definition": "The percentage of a lending pool that is currently loaned out. For example, a 60% utilization rate means 60% of deposited funds are actively earning interest through loans. Higher utilization typically raises the APY for lenders but may limit instant withdrawals."
+      },
+      "creditScore": {
+        "term": "Credit score",
+        "definition": "An on-chain measure of your repayment reliability, calculated from your borrowing and repayment history. A higher score can unlock better loan terms, lower fees, and increased borrowing limits over time."
+      },
+      "remittance": {
+        "term": "Remittance",
+        "definition": "A transfer of money sent across borders, typically to family or friends. On RemitLend, remittances are recorded on-chain to build your credit history, which can improve your score and unlock better loan terms."
+      },
+      "amortization": {
+        "term": "Amortization",
+        "definition": "The process of repaying a loan through regular scheduled payments. Each payment covers the interest accrued since the last payment plus a portion of the principal, so the amount owed decreases steadily over the loan term."
+      },
+      "lateFee": {
+        "term": "Late fee",
+        "definition": "An additional charge applied to your outstanding balance when a payment is overdue. Late fees accumulate while the payment remains unpaid, increasing your total amount owed."
+      },
+      "withdrawal": {
+        "term": "Withdrawal",
+        "definition": "Taking your deposited funds out of the lending pool. Withdrawals may be subject to a cooldown period — a waiting window after a deposit — to protect the pool from rapid in-and-out movements that could disrupt liquidity."
+      },
+      "cooldown": {
+        "term": "Withdrawal cooldown",
+        "definition": "A waiting period after you make a deposit before you can withdraw those funds. The cooldown protects the pool from rapid cycling of deposits and withdrawals, keeping it stable for all participants."
+      },
+      "yield": {
+        "term": "Yield",
+        "definition": "The earnings generated from depositing funds into the lending pool. Yield is paid out of the interest borrowers pay on their loans and distributed proportionally to depositors based on their share of the pool."
+      },
+      "shareOfPool": {
+        "term": "Share of pool",
+        "definition": "The percentage of the total lending pool that your deposits represent. Your share determines how much of the pool's interest earnings are distributed to you. If the pool is 10,000 USDC and you have deposited 1,000 USDC, your share is 10%."
+      },
+      "default": {
+        "term": "Loan default",
+        "definition": "A loan is in default when the borrower has not made the required repayment by the due date and the missed payment threshold has been reached. Defaulted loans may trigger liquidation of the borrower's collateral."
+      }
+    }
   }
 }
