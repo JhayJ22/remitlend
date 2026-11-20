@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { jobMetricsService } from '../services/jobMetricsService.js';
 import { applyScoreDecay, getInactiveBorrowers } from '../services/scoreDecayService.js';
+import { isConsentGranted } from '../services/consentLedgerService.js';
 import logger from '../utils/logger.js';
 
 // In-memory guard to prevent overlapping execution states
@@ -24,8 +25,18 @@ export async function runScoreDecayJob(): Promise<void> {
     logger.withContext().info('Starting scheduled score decay processing pass...');
 
     const borrowers = await getInactiveBorrowers();
+    let skipped = 0;
     for (const borrower of borrowers) {
       try {
+        // Enforce consent: skip users who have not granted (or have revoked)
+        // credit_score_processing consent.  This is the authoritative check;
+        // the job must not fall back to processing without a valid grant.
+        const allowed = await isConsentGranted(borrower.borrower, 'credit_score_processing');
+        if (!allowed) {
+          skipped++;
+          logger.withContext().info('Score decay skipped — consent not granted', { borrower: borrower.borrower });
+          continue;
+        }
         await applyScoreDecay(borrower);
       } catch (err) {
         logger
@@ -37,7 +48,10 @@ export async function runScoreDecayJob(): Promise<void> {
     await jobMetricsService.recordSuccess('score-decay-job', Date.now() - startTime);
     logger
       .withContext()
-      .info('Score decay processing pass completed successfully.', { processed: borrowers.length });
+      .info('Score decay processing pass completed successfully.', {
+        processed: borrowers.length - skipped,
+        skipped,
+      });
   } catch (error: any) {
     await jobMetricsService.recordFailure(
       'score-decay-job',

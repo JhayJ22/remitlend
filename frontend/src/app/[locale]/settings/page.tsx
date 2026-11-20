@@ -12,6 +12,10 @@ import {
   Key,
   CheckCheck,
   Copy,
+  FileText,
+  ChevronDown,
+  ChevronUp,
+  Clock,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
@@ -30,6 +34,14 @@ import {
   useNotificationPreferences,
   useUpdateNotificationPreferences,
   useUpdateUserProfile,
+  useConsentLedger,
+  useConsentHistory,
+  useConsentMeta,
+  useGrantConsent,
+  useRevokeConsent,
+  type ConsentPurpose,
+  type EffectiveConsent,
+  type ConsentRecord,
 } from "../../hooks/useApi";
 import { useToast } from "../../hooks/useToast";
 import { COPY_FEEDBACK_RESET_MS } from "../../components/ui";
@@ -53,6 +65,7 @@ const SECTIONS = [
   { id: "profile", label: "Profile", icon: User },
   { id: "wallet", label: "Wallet", icon: Wallet },
   { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "privacy", label: "Privacy & Data", icon: FileText },
   { id: "security", label: "Security", icon: Shield },
   { id: "display", label: "Display", icon: Monitor },
   { id: "gamification", label: "Gamification", icon: Crown },
@@ -682,6 +695,318 @@ function DisplaySection() {
   );
 }
 
+// ─── Privacy & Data section (#845) ───────────────────────────────────────────
+
+/** Human-readable labels for each processing purpose. */
+const PURPOSE_LABELS: Record<ConsentPurpose, { title: string; description: string; categories: string }> = {
+  credit_score_processing: {
+    title: "Credit Score Processing",
+    description:
+      "We use your loan repayment history and on-chain activity to compute your credit score. This score affects your borrowing limits and interest rates.",
+    categories: "Wallet address, loan history, credit score",
+  },
+  remittance_analytics: {
+    title: "Remittance Analytics",
+    description:
+      "We aggregate your remittance amounts and patterns to improve pool yield estimates and product features. Data is anonymised before use.",
+    categories: "Remittance history, wallet address",
+  },
+  marketing_communications: {
+    title: "Marketing Communications",
+    description:
+      "We may send you product updates, feature announcements, and promotional offers via email or SMS.",
+    categories: "Contact info (email, phone)",
+  },
+  third_party_sharing: {
+    title: "Third-Party Data Sharing",
+    description:
+      "We may share anonymised, aggregated data with regulated financial partners for credit risk and compliance purposes.",
+    categories: "Credit score, loan history, remittance history (anonymised)",
+  },
+};
+
+function formatDate(iso: string) {
+  return new Date(iso).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function ConsentPurposeRow({
+  purpose,
+  effective,
+  policyVersion,
+  onGrant,
+  onRevoke,
+  isGranting,
+  isRevoking,
+}: {
+  purpose: ConsentPurpose;
+  effective: EffectiveConsent | undefined;
+  policyVersion: string;
+  onGrant: (purpose: ConsentPurpose) => void;
+  onRevoke: (purpose: ConsentPurpose) => void;
+  isGranting: boolean;
+  isRevoking: boolean;
+}) {
+  const info = PURPOSE_LABELS[purpose];
+  const isGranted = effective?.status === "granted";
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+      <div className="flex items-center justify-between gap-4 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{info.title}</p>
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+                isGranted
+                  ? "bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-400"
+                  : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${isGranted ? "bg-green-500" : "bg-zinc-400"}`}
+              />
+              {isGranted ? "Consented" : "Not consented"}
+            </span>
+          </div>
+          {effective && (
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 flex items-center gap-1">
+              <Clock className="h-3 w-3" aria-hidden="true" />
+              {isGranted ? "Granted" : "Revoked"} {formatDate(effective.effectiveSince)} · Policy v
+              {effective.policyVersion}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            aria-label={`${expanded ? "Hide" : "Show"} details for ${info.title}`}
+            className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 dark:hover:text-zinc-300 dark:hover:bg-zinc-800 transition-colors"
+          >
+            {expanded ? (
+              <ChevronUp className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <ChevronDown className="h-4 w-4" aria-hidden="true" />
+            )}
+          </button>
+          {isGranted ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onRevoke(purpose)}
+              disabled={isRevoking}
+              aria-label={`Revoke consent for ${info.title}`}
+            >
+              {isRevoking ? "Revoking…" : "Revoke"}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => onGrant(purpose)}
+              disabled={isGranting}
+              aria-label={`Grant consent for ${info.title}`}
+            >
+              {isGranting ? "Granting…" : "Consent"}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 space-y-1.5">
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">{info.description}</p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500">
+            <span className="font-medium">Data involved:</span> {info.categories}
+          </p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500">
+            <span className="font-medium">Current policy version:</span> {policyVersion}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PrivacySection() {
+  const { data: consents, isLoading: consentsLoading } = useConsentLedger();
+  const { data: meta } = useConsentMeta();
+  const { data: history, isLoading: historyLoading } = useConsentHistory({ limit: 20 });
+  const grantMutation = useGrantConsent();
+  const revokeMutation = useRevokeConsent();
+  const { toast } = useToast();
+  const [pendingPurpose, setPendingPurpose] = useState<ConsentPurpose | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const effectiveMap = new Map<ConsentPurpose, EffectiveConsent>(
+    (consents ?? []).map((c) => [c.purpose, c]),
+  );
+  const policyVersion = meta?.currentPolicyVersion ?? "1.0";
+  const allPurposes: ConsentPurpose[] = meta?.purposes ?? [
+    "credit_score_processing",
+    "remittance_analytics",
+    "marketing_communications",
+    "third_party_sharing",
+  ];
+
+  const dataCategories: Record<ConsentPurpose, import("../../hooks/useApi").ConsentDataCategory[]> = {
+    credit_score_processing: ["wallet_address", "loan_history", "credit_score"],
+    remittance_analytics: ["remittance_history", "wallet_address"],
+    marketing_communications: ["contact_info"],
+    third_party_sharing: ["credit_score", "loan_history", "remittance_history"],
+  };
+
+  const handleGrant = (purpose: ConsentPurpose) => {
+    setPendingPurpose(purpose);
+    grantMutation.mutate(
+      {
+        purpose,
+        policy_version: policyVersion,
+        data_categories: dataCategories[purpose],
+      },
+      {
+        onSuccess: () => {
+          toast({ variant: "success", title: "Consent granted", description: PURPOSE_LABELS[purpose].title });
+        },
+        onError: (error) => {
+          toast({ variant: "destructive", title: "Could not grant consent", description: error.message });
+        },
+        onSettled: () => setPendingPurpose(null),
+      },
+    );
+  };
+
+  const handleRevoke = (purpose: ConsentPurpose) => {
+    setPendingPurpose(purpose);
+    revokeMutation.mutate(
+      { purpose },
+      {
+        onSuccess: () => {
+          toast({ variant: "success", title: "Consent revoked", description: PURPOSE_LABELS[purpose].title });
+        },
+        onError: (error) => {
+          toast({ variant: "destructive", title: "Could not revoke consent", description: error.message });
+        },
+        onSettled: () => setPendingPurpose(null),
+      },
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Privacy &amp; Data Processing</CardTitle>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+            Control how RemitLend uses your data. You can grant or revoke consent for each purpose
+            at any time. Changes take effect immediately in downstream processing jobs.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {consentsLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3, 4].map((i) => (
+                <div
+                  key={i}
+                  className="h-14 animate-pulse rounded-xl bg-zinc-100 dark:bg-zinc-800"
+                />
+              ))}
+            </div>
+          ) : (
+            allPurposes.map((purpose) => (
+              <ConsentPurposeRow
+                key={purpose}
+                purpose={purpose}
+                effective={effectiveMap.get(purpose)}
+                policyVersion={policyVersion}
+                onGrant={handleGrant}
+                onRevoke={handleRevoke}
+                isGranting={pendingPurpose === purpose && grantMutation.isPending}
+                isRevoking={pendingPurpose === purpose && revokeMutation.isPending}
+              />
+            ))
+          )}
+
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 pt-2">
+            Revoking consent stops future data processing for that purpose. It does not delete
+            historical data already processed. Contact support to request data deletion.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <span>Consent History</span>
+            <button
+              type="button"
+              onClick={() => setShowHistory((v) => !v)}
+              aria-expanded={showHistory}
+              className="text-sm font-normal text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+            >
+              {showHistory ? "Hide" : "Show"}
+            </button>
+          </CardTitle>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+            An immutable record of every consent grant and revocation.
+          </p>
+        </CardHeader>
+        {showHistory && (
+          <CardContent>
+            {historyLoading ? (
+              <div className="h-20 animate-pulse rounded-xl bg-zinc-100 dark:bg-zinc-800" />
+            ) : !history || history.length === 0 ? (
+              <p className="text-sm text-zinc-500 dark:text-zinc-400 py-4 text-center">
+                No consent history yet.
+              </p>
+            ) : (
+              <ol className="space-y-2" aria-label="Consent history">
+                {history.map((record: ConsentRecord) => (
+                  <li
+                    key={record.id}
+                    className="flex items-start justify-between gap-3 rounded-lg border border-zinc-100 dark:border-zinc-800 px-3 py-2 text-xs"
+                  >
+                    <div>
+                      <span
+                        className={`font-medium ${
+                          record.status === "granted"
+                            ? "text-green-700 dark:text-green-400"
+                            : "text-red-600 dark:text-red-400"
+                        }`}
+                      >
+                        {record.status === "granted" ? "Granted" : "Revoked"}
+                      </span>{" "}
+                      <span className="text-zinc-700 dark:text-zinc-300">
+                        {PURPOSE_LABELS[record.purpose]?.title ?? record.purpose}
+                      </span>
+                      {record.revocationReason && (
+                        <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">
+                          Reason: {record.revocationReason}
+                        </p>
+                      )}
+                    </div>
+                    <time
+                      dateTime={record.createdAt}
+                      className="text-zinc-400 dark:text-zinc-500 whitespace-nowrap"
+                    >
+                      {formatDate(record.createdAt)}
+                    </time>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </CardContent>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -722,6 +1047,8 @@ export default function SettingsPage() {
         return <WalletSection />;
       case "notifications":
         return <NotificationsSection />;
+      case "privacy":
+        return <PrivacySection />;
       case "security":
         return <SecuritySection />;
       case "display":

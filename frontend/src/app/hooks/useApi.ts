@@ -124,6 +124,11 @@ export const queryKeys = {
     all: () => ["admin", "governance"] as const,
     pending: () => ["admin", "governance", "pending"] as const,
   },
+  consent: {
+    effective: () => ["consent", "effective"] as const,
+    history: (params: Record<string, unknown>) => ["consent", "history", params] as const,
+    meta: () => ["consent", "meta"] as const,
+  },
 } as const;
 
 // ─── Base fetch helper ────────────────────────────────────────────────────────
@@ -2083,6 +2088,170 @@ export function useReleaseCollateral() {
 
     onError: (error: Error) => {
       toast.error(error.message ?? "Failed to release collateral");
+    },
+  });
+}
+
+// ─── Consent ledger hooks (#845) ─────────────────────────────────────────────
+
+export type ConsentPurpose =
+  | "credit_score_processing"
+  | "remittance_analytics"
+  | "marketing_communications"
+  | "third_party_sharing";
+
+export type ConsentDataCategory =
+  | "wallet_address"
+  | "credit_score"
+  | "remittance_history"
+  | "loan_history"
+  | "contact_info";
+
+export type ConsentStatus = "granted" | "revoked" | "expired";
+
+export interface EffectiveConsent {
+  id: string;
+  userId: string;
+  purpose: ConsentPurpose;
+  status: ConsentStatus;
+  policyVersion: string;
+  dataCategories: ConsentDataCategory[];
+  effectiveSince: string;
+}
+
+export interface ConsentRecord {
+  id: string;
+  userId: string;
+  purpose: ConsentPurpose;
+  status: ConsentStatus;
+  policyVersion: string;
+  dataCategories: ConsentDataCategory[];
+  revocationReason: string | null;
+  idempotencyKey: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: string;
+}
+
+export interface ConsentMeta {
+  purposes: ConsentPurpose[];
+  dataCategories: ConsentDataCategory[];
+  currentPolicyVersion: string;
+}
+
+interface GrantConsentPayload {
+  purpose: ConsentPurpose;
+  policy_version: string;
+  data_categories: ConsentDataCategory[];
+}
+
+interface RevokeConsentPayload {
+  purpose: ConsentPurpose;
+  revocation_reason?: string | null;
+}
+
+/**
+ * Fetches the current effective consent status for every purpose.
+ */
+export function useConsentLedger(
+  options?: Omit<UseQueryOptions<EffectiveConsent[]>, "queryKey" | "queryFn">,
+) {
+  return useQuery<EffectiveConsent[]>({
+    queryKey: queryKeys.consent.effective(),
+    queryFn: async () => {
+      const response = await apiFetch<{ success: boolean; data: { consents: EffectiveConsent[] } }>(
+        "/user/consent",
+      );
+      return response.data.consents;
+    },
+    ...options,
+  });
+}
+
+/**
+ * Fetches the full append-only consent history for the authenticated user.
+ */
+export function useConsentHistory(
+  params: { purpose?: ConsentPurpose; limit?: number; cursor?: string } = {},
+  options?: Omit<UseQueryOptions<ConsentRecord[]>, "queryKey" | "queryFn">,
+) {
+  const qs = new URLSearchParams();
+  if (params.purpose) qs.set("purpose", params.purpose);
+  if (params.limit) qs.set("limit", String(params.limit));
+  if (params.cursor) qs.set("cursor", params.cursor);
+  const query = qs.toString();
+
+  return useQuery<ConsentRecord[]>({
+    queryKey: queryKeys.consent.history(params),
+    queryFn: async () => {
+      const response = await apiFetch<{ success: boolean; data: { history: ConsentRecord[] } }>(
+        `/user/consent/history${query ? `?${query}` : ""}`,
+      );
+      return response.data.history;
+    },
+    ...options,
+  });
+}
+
+/**
+ * Fetches supported purposes, data categories, and current policy version.
+ * No auth required — safe to call before the user has connected a wallet.
+ */
+export function useConsentMeta(
+  options?: Omit<UseQueryOptions<ConsentMeta>, "queryKey" | "queryFn">,
+) {
+  return useQuery<ConsentMeta>({
+    queryKey: queryKeys.consent.meta(),
+    queryFn: async () => {
+      const response = await apiFetch<{ success: boolean; data: ConsentMeta }>(
+        "/user/consent/meta",
+      );
+      return response.data;
+    },
+    ...options,
+  });
+}
+
+/**
+ * Grants consent for a processing purpose.
+ * The caller must supply an `Idempotency-Key` header via the options.headers
+ * or rely on the mutation wrapper below (which generates one automatically).
+ */
+export function useGrantConsent() {
+  const queryClient = useQueryClient();
+  return useMutation<ConsentRecord, Error, GrantConsentPayload>({
+    mutationFn: (payload) => {
+      const idempotencyKey = crypto.randomUUID();
+      return apiFetch<ConsentRecord>("/user/consent/grant", {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(payload),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.consent.effective() });
+      queryClient.invalidateQueries({ queryKey: ["consent", "history"] });
+    },
+  });
+}
+
+/**
+ * Revokes consent for a processing purpose.
+ */
+export function useRevokeConsent() {
+  const queryClient = useQueryClient();
+  return useMutation<ConsentRecord, Error, RevokeConsentPayload>({
+    mutationFn: (payload) => {
+      const idempotencyKey = crypto.randomUUID();
+      return apiFetch<ConsentRecord>("/user/consent/revoke", {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(payload),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.consent.effective() });
+      queryClient.invalidateQueries({ queryKey: ["consent", "history"] });
     },
   });
 }
