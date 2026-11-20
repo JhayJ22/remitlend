@@ -21,6 +21,7 @@ import { setPauseState } from '../middleware/pauseGuard.js';
 import { fromStroops } from '../money/decimal.js';
 import { LOAN_STATE_EVENT_TYPES } from './loanStateEventStore.js';
 import { AdaptiveScheduler, type SchedulerConfig } from './adaptiveScheduler.js';
+import { recordEvidence } from './evidenceProvenanceService.js';
 
 const LOAN_STATE_EVENT_TYPE_SET = new Set<string>(LOAN_STATE_EVENT_TYPES);
 
@@ -914,6 +915,36 @@ export class EventIndexer {
       }
     }
 
+    // Record signed evidence provenance for each successfully ingested event (#848).
+    // Only the SHA-256 digest of the parsed event metadata is stored — never
+    // the raw XDR payload — so the audit trail is safe for public/audit logs.
+    for (const event of insertedEvents) {
+      await recordEvidence({
+        recordType: 'indexer_event',
+        recordRef: event.eventId,
+        sourceIdentity: `contract:${event.contractId}`,
+        record: {
+          eventId: event.eventId,
+          eventType: event.eventType,
+          ledger: event.ledger,
+          txHash: event.txHash,
+          loanId: event.loanId ?? null,
+          amount: event.amount ?? null,
+        },
+        verificationResult: 'verified',
+        verificationDetail: {
+          ledger: event.ledger,
+          txHash: event.txHash,
+          contractId: event.contractId,
+        },
+      }).catch((err) => {
+        logger.withContext().warn('Failed to record evidence provenance for indexed event', {
+          eventId: event.eventId,
+          err,
+        });
+      });
+    }
+
     return {
       insertedCount: insertedEvents.length,
     };
@@ -1431,6 +1462,27 @@ export class EventIndexer {
           errorMessage,
         ],
       );
+      // Record signed evidence provenance for the quarantined event (#848).
+      // Only the SHA-256 digest of the raw event data is stored — never the
+      // raw payload — so the evidence trail remains safe for audit logs.
+      await recordEvidence({
+        recordType: 'quarantine_event',
+        recordRef: event.id,
+        sourceIdentity: `contract:${event.contractId.toString()}`,
+        record: rawXdr,
+        verificationResult: 'quarantined',
+        verificationDetail: {
+          ledger: event.ledger,
+          txHash: event.txHash,
+          errorCode: 'XDR_PARSE_FAILURE',
+          errorMessage: errorMessage.slice(0, 200),
+        },
+      }).catch((err) => {
+        logger.withContext().warn('Failed to record evidence provenance for quarantined event', {
+          eventId: event.id,
+          err,
+        });
+      });
     } catch (dbError) {
       logger.withContext().error('Failed to quarantine malformed event', {
         eventId: event.id,

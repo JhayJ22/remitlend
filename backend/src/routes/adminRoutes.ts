@@ -44,6 +44,12 @@ import {
   executeRequest as executePrivilegedRequest,
   getRequest as getPrivilegedRequest,
 } from '../services/privilegedActionService.js';
+import {
+  listEvidenceHandler,
+  getEvidenceHandler,
+  verifyEvidenceHandler,
+  getEvidenceMetaHandler,
+} from '../controllers/evidenceProvenanceController.js';
 import { AppError } from '../errors/AppError.js';
 
 const router = Router();
@@ -719,6 +725,97 @@ router.post(
     const result = await executePrivilegedRequest(privilegedId(req.params.id), req.user!.publicKey);
     res.status(result.status === 'executed' ? 200 : 502).json({ success: true, data: result });
   }),
+);
+
+// ---------------------------------------------------------------------------
+// Signed evidence provenance (#848) — admin read-only endpoints.
+// Writes are performed internally by ingestion jobs; no public POST endpoint
+// prevents injecting fabricated evidence from outside the trust boundary.
+// ---------------------------------------------------------------------------
+
+/**
+ * @swagger
+ * /admin/evidence-provenance/meta:
+ *   get:
+ *     summary: Supported record types and verification result values
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Evidence provenance metadata
+ */
+router.get(
+  '/evidence-provenance/meta',
+  requireJwtAuth,
+  requireRoles('admin'),
+  getEvidenceMetaHandler,
+);
+
+/**
+ * @swagger
+ * /admin/evidence-provenance:
+ *   get:
+ *     summary: List evidence provenance records
+ *     description: >
+ *       Returns a paginated, immutable list of evidence provenance records.
+ *       Supports filtering by record_type, source_identity, and verification_result.
+ *       Use cursor (ISO timestamp) for keyset pagination.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Evidence provenance records
+ */
+router.get(
+  '/evidence-provenance',
+  requireJwtAuth,
+  requireRoles('admin'),
+  listEvidenceHandler,
+);
+
+/**
+ * @swagger
+ * /admin/evidence-provenance/{id}:
+ *   get:
+ *     summary: Get a single evidence provenance record
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Evidence record
+ *       404:
+ *         description: Not found
+ */
+router.get(
+  '/evidence-provenance/:id',
+  requireJwtAuth,
+  requireRoles('admin'),
+  getEvidenceHandler,
+);
+
+/**
+ * @swagger
+ * /admin/evidence-provenance/{id}/verify:
+ *   get:
+ *     summary: Verify the HMAC integrity of a stored evidence record
+ *     description: >
+ *       Re-computes the row HMAC and returns { valid: true/false }.
+ *       A false result means the row was tampered with after insertion.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Verification result
+ */
+router.get(
+  '/evidence-provenance/:id/verify',
+  requireJwtAuth,
+  requireRoles('admin'),
+  verifyEvidenceHandler,
 );
 
 export default router;
