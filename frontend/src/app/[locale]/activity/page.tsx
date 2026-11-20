@@ -11,6 +11,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { ActivitySkeleton } from "../../components/skeletons/ActivitySkeleton";
 import { downloadCsv, rowsToCsv } from "../../utils/csv";
 import { useWindowedList } from "../../hooks/useWindowedList";
+import { TransactionHistory } from "../../components/activity/TransactionHistory";
 
 type FilterType = "all" | "loan" | "remittance";
 
@@ -413,6 +414,10 @@ export default function ActivityPage() {
           </div>
         </ErrorBoundary>
       )}
+
+      <ErrorBoundary scope="on-chain transactions" variant="section">
+        <TransactionHistory />
+      </ErrorBoundary>
     </main>
   );
 }

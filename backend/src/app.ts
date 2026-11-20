@@ -401,6 +401,8 @@ app.use('/api/v1/pool', poolRoutes);
 app.use('/api/v1/notifications', notificationsRoutes);
 app.use('/api/v1/events', eventRoutes);
 app.use('/user', userRoutes);
+app.use('/users', userRoutes);
+app.use('/api/v1/users', userRoutes);
 
 // Internal service-to-service routes (HMAC-signed only)
 app.use('/api/internal', internalRoutes);

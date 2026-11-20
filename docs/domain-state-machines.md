@@ -200,6 +200,31 @@ record stays auditable. Amounts are stored as integer stroops.
 
 ---
 
+## Loan disputes
+
+**Source of truth:**
+`backend/src/services/disputeStateMachine.ts`
+(`loan_disputes.status`, migration `backend/migrations/1784000000014_add-loan-disputes.js`).
+
+```
+open ──► under_review ──► resolved
+                │
+                └───────► dismissed
+```
+
+| State | Meaning | Allowed next states |
+| --- | --- | --- |
+| `open` | Borrower contested a default. | `under_review` |
+| `under_review` | An admin is reviewing the dispute. | `resolved`, `dismissed` |
+| `resolved` | Terminal; corrected remittance data stored and score recomputed. | — |
+| `dismissed` | Terminal; default stands. | — |
+
+Only the borrower opens a dispute; only an admin performs the other transitions.
+Illegal transitions return `400`, and every transition is written to `audit_logs`
+(`dispute.transition`, with actor, previous state, new state and note).
+
+---
+
 ## Notifications
 
 **Source of truth:**

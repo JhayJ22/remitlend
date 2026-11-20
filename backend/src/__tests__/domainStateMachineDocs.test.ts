@@ -108,6 +108,16 @@ describe('domain and state-machine reference', () => {
     });
   });
 
+  describe('dispute states', () => {
+    it('documents every dispute state and keeps it aligned with the state machine', () => {
+      const source = read('backend/src/services/disputeStateMachine.ts');
+      for (const state of ['open', 'under_review', 'resolved', 'dismissed']) {
+        expect(source).toContain(`'${state}'`);
+        expect(doc).toContain(`\`${state}\``);
+      }
+    });
+  });
+
   describe('document hygiene', () => {
     it('references only files that exist in the repository', () => {
       const referenced =

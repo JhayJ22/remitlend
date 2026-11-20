@@ -1,5 +1,12 @@
 import { Router } from 'express';
-import { getUserProfile, updateUserProfile } from '../controllers/userController.js';
+import {
+  getUserProfile,
+  updateUserProfile,
+  getTransferHistory,
+  listRecipients,
+  addRecipient,
+  deleteRecipient,
+} from '../controllers/userController.js';
 import { requireJwtAuth } from '../middleware/jwtAuth.js';
 import { validateBody } from '../middleware/validation.js';
 import { updateUserProfileSchema } from '../schemas/userSchemas.js';
@@ -65,5 +72,23 @@ router.get('/profile', requireJwtAuth, getUserProfile);
  *         description: Missing or invalid JWT
  */
 router.patch('/profile', requireJwtAuth, validateBody(updateUserProfileSchema), updateUserProfile);
+
+router.get('/recipients', requireJwtAuth, listRecipients);
+router.post('/recipients', requireJwtAuth, addRecipient);
+router.delete('/recipients/:id', requireJwtAuth, deleteRecipient);
+
+/**
+ * @swagger
+ * /users/{id}/transfer-history:
+ *   get:
+ *     summary: Paginated NFT transfer history with corridor, amount and timestamp
+ *     tags: [User]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Transfer history page
+ */
+router.get('/:id/transfer-history', requireJwtAuth, getTransferHistory);
 
 export default router;

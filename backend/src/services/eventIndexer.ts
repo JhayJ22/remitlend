@@ -13,6 +13,7 @@ import { eventStreamService } from './eventStreamService.js';
 import { notificationService, type NotificationType } from './notificationService.js';
 import { sorobanService } from './sorobanService.js';
 import { updateUserScoresBulk } from './scoresService.js';
+import { storeTransferEvent, extractTransferMetadata } from './transferHistoryService.js';
 import { transferHistoryService } from './transferHistoryService.js';
 import { invalidateForChainEvents } from '../utils/cacheContracts.js';
 import { AppError } from '../errors/AppError.js';
@@ -93,6 +94,7 @@ interface ContractEvent extends IndexedLoanEvent {
   nftTransferFrom?: string;
   nftTransferTo?: string;
   nftTransferScore?: number;
+  nftTransferMeta?: import('./transferHistoryService.js').TransferMetadata;
 }
 
 interface EventIndexerConfig {
@@ -849,20 +851,29 @@ export class EventIndexer {
 
       // Handle NftTransferred events — store in transfer history table
       for (const event of parsedEvents) {
-        if (
-          event.eventType === 'NFTTransferred' &&
-          (event as any).nftTransferFrom &&
-          (event as any).nftTransferTo
-        ) {
-          const fromAddr = (event as any).nftTransferFrom as string;
-          const toAddr = (event as any).nftTransferTo as string;
-          const score = (event as any).nftTransferScore as number;
+        if (event.eventType === 'NFTTransferred' && event.nftTransferFrom && event.nftTransferTo) {
+          const fromAddr = event.nftTransferFrom as string;
+          const toAddr = event.nftTransferTo as string;
+          const score = event.nftTransferScore as number;
 
-          await client.query(
-            `INSERT INTO nft_transfer_events (from_address, to_address, score, ledger_sequence)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT DO NOTHING`,
-            [fromAddr, toAddr, score, event.ledger],
+          await storeTransferEvent(client, fromAddr, toAddr, score, event.ledger, {
+            eventType: 'transfer',
+            txHash: event.txHash,
+            eventTime: event.ledgerClosedAt,
+            metadata: event.nftTransferMeta,
+          });
+        } else if (event.eventType === 'ScoreUpdated' && event.address) {
+          await storeTransferEvent(
+            client,
+            event.address,
+            event.address,
+            Number(event.amount ?? 0),
+            event.ledger,
+            {
+              eventType: 'score_updated',
+              txHash: event.txHash,
+              eventTime: event.ledgerClosedAt,
+            },
           );
         }
       }
@@ -1018,6 +1029,7 @@ export class EventIndexer {
           (event as any).nftTransferFrom = fromAddr;
           (event as any).nftTransferTo = toAddr;
           (event as any).nftTransferScore = score;
+          (event as any).nftTransferMeta = extractTransferMetadata(transferData);
 
           // Set address to the "to" address for audit trail
           address = toAddr;
@@ -1212,6 +1224,14 @@ export class EventIndexer {
       ...(address !== undefined ? { address } : {}),
       ...(adminAddress !== undefined ? { adminAddress } : {}),
       ...(borrowerRefund !== undefined ? { borrowerRefund } : {}),
+      ...(type === 'NFTTransferred'
+        ? {
+            nftTransferFrom: (event as any).nftTransferFrom,
+            nftTransferTo: (event as any).nftTransferTo,
+            nftTransferScore: (event as any).nftTransferScore,
+            nftTransferMeta: (event as any).nftTransferMeta,
+          }
+        : {}),
     };
   }
 

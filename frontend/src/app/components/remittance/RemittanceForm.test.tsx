@@ -1,3 +1,4 @@
+const VALID_ADDRESS_FOR_MOCK = "GBUQWP3BOUZX34ULNQG23RQ6F4BVWCIBTLFL2F7HVRQG5LDHNWY2QTWA";
 import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -9,6 +10,20 @@ jest.mock("../../hooks/useApi", () => ({
     mutateAsync: jest.fn(),
     isPending: false,
   })),
+  useRemittances: jest.fn(() => ({ data: [] })),
+  useRecipients: jest.fn(() => ({
+    data: [{ id: "r1", name: "Mama", address: VALID_ADDRESS_FOR_MOCK }],
+  })),
+  useAddRecipient: jest.fn(() => ({ mutateAsync: jest.fn(), isPending: false })),
+  useDeleteRecipient: jest.fn(() => ({ mutate: jest.fn() })),
+}));
+
+jest.mock("../../utils/stellar", () => ({
+  isValidStellarAddress: (a: string) => /^G[A-Z2-7]{55}$/.test(a),
+}));
+
+jest.mock("qrcode.react", () => ({
+  QRCodeSVG: () => <svg data-testid="qr" />,
 }));
 
 jest.mock("../../stores/useWalletStore", () => ({
@@ -72,8 +87,28 @@ describe("RemittanceForm", () => {
     fireEvent.click(reviewButton);
 
     await waitFor(() => {
-      expect(screen.getByText(/Invalid Stellar address format/)).toBeInTheDocument();
+      expect(screen.getAllByText(/Invalid Stellar address/)[0]).toBeInTheDocument();
     });
+  });
+
+  it("fills the address from a saved recipient and keeps PII masked until reveal", async () => {
+    const user = userEvent.setup();
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) }) as never;
+    render(<RemittanceForm onSuccess={mockOnSuccess} />);
+
+    const masked = screen.getByTestId("recipient-address-r1");
+    expect(masked.textContent).not.toBe(VALID_ADDRESS);
+    expect(masked.textContent).toContain("••••");
+
+    await user.click(screen.getByRole("button", { name: "Use" }));
+    expect(screen.getByPlaceholderText("G... (Stellar public key)")).toHaveValue(VALID_ADDRESS);
+
+    await user.click(screen.getByRole("button", { name: "Reveal" }));
+    await waitFor(() => expect(masked.textContent).toBe(VALID_ADDRESS));
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/recipients/r1/reveal",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("should show error when amount is empty", async () => {
@@ -102,7 +137,7 @@ describe("RemittanceForm", () => {
     fireEvent.click(reviewButton);
 
     await waitFor(() => {
-      expect(screen.getByText("Amount must be greater than 0")).toBeInTheDocument();
+      expect(screen.getAllByText("Amount must be greater than 0")[0]).toBeInTheDocument();
     });
   });
 
@@ -126,7 +161,7 @@ describe("RemittanceForm", () => {
     fireEvent.click(reviewButton);
 
     await waitFor(() => {
-      expect(screen.getByText("Memo must be 28 characters or less")).toBeInTheDocument();
+      expect(screen.getAllByText("Memo must be 28 characters or less")[0]).toBeInTheDocument();
     });
   });
 

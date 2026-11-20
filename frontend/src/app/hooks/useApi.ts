@@ -2086,3 +2086,46 @@ export function useReleaseCollateral() {
     },
   });
 }
+
+
+// ─── Saved recipients (stored in the backend user profile) ───────────────────
+
+export interface SavedRecipient {
+  id: string;
+  name: string;
+  address: string;
+}
+
+const RECIPIENTS_KEY = ["user", "recipients"] as const;
+
+export function useRecipients() {
+  return useQuery<SavedRecipient[]>({
+    queryKey: RECIPIENTS_KEY,
+    queryFn: async () => {
+      const res = await apiFetch<{ data: SavedRecipient[] }>("/user/recipients");
+      return res.data;
+    },
+  });
+}
+
+export function useAddRecipient() {
+  const queryClient = useQueryClient();
+  return useMutation<SavedRecipient, Error, { name: string; address: string }>({
+    mutationFn: async (input) => {
+      const res = await apiFetch<{ data: SavedRecipient }>("/user/recipients", {
+        method: "POST",
+        body: JSON.stringify(input),
+      });
+      return res.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: RECIPIENTS_KEY }),
+  });
+}
+
+export function useDeleteRecipient() {
+  const queryClient = useQueryClient();
+  return useMutation<unknown, Error, string>({
+    mutationFn: (id) => apiFetch(`/user/recipients/${id}`, { method: "DELETE" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: RECIPIENTS_KEY }),
+  });
+}

@@ -11,6 +11,8 @@ import { requireTransactionAccess } from '../middleware/requireTransactionAccess
 const router = Router();
 
 router.get('/me', requireJwtAuth, listMyTransactions);
+// Paginated list filtered by the authenticated wallet address.
+router.get('/', requireJwtAuth, listMyTransactions);
 
 router.post(
   '/:txHash/diagnostic-bundle',

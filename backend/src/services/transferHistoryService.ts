@@ -9,6 +9,42 @@ export interface NftTransferRecord {
   score: number;
   ledger_sequence: number;
   created_at: Date;
+  event_type?: string;
+  tx_hash?: string | null;
+  corridor?: string | null;
+  amount?: string | null;
+  event_time?: Date | null;
+}
+
+export interface TransferMetadata {
+  sourceCountry: string | null;
+  destinationCountry: string | null;
+  corridor: string | null;
+  amount: string | null;
+}
+
+/**
+ * Extract corridor analytics (source/destination country pair) and amount from the
+ * remittance metadata carried on a transfer event. Accepts snake_case or camelCase
+ * keys, optionally nested under `metadata`.
+ */
+export function extractTransferMetadata(data: unknown): TransferMetadata {
+  const root = (data && typeof data === 'object' ? data : {}) as Record<string, any>;
+  const meta = (
+    root.metadata && typeof root.metadata === 'object' ? root.metadata : root
+  ) as Record<string, any>;
+  const country = (v: unknown): string | null =>
+    typeof v === 'string' && /^[A-Za-z]{2,3}$/.test(v.trim()) ? v.trim().toUpperCase() : null;
+
+  const sourceCountry = country(meta.source_country ?? meta.sourceCountry);
+  const destinationCountry = country(meta.destination_country ?? meta.destinationCountry);
+  const rawAmount = meta.amount ?? root.amount;
+  return {
+    sourceCountry,
+    destinationCountry,
+    corridor: sourceCountry && destinationCountry ? `${sourceCountry}-${destinationCountry}` : null,
+    amount: rawAmount !== undefined && rawAmount !== null ? String(rawAmount) : null,
+  };
 }
 
 export interface TransferHistoryOptions {
@@ -27,17 +63,43 @@ export async function storeTransferEvent(
   toAddress: string,
   score: number,
   ledgerSequence: number,
+  extra: {
+    eventType?: 'transfer' | 'score_updated';
+    txHash?: string;
+    eventTime?: Date;
+    metadata?: TransferMetadata | undefined;
+  } = {},
 ): Promise<void> {
   const text = `
-    INSERT INTO nft_transfer_events (from_address, to_address, score, ledger_sequence)
-    VALUES ($1, $2, $3, $4)
+    INSERT INTO nft_transfer_events
+      (from_address, to_address, score, ledger_sequence, event_type, tx_hash,
+       source_country, destination_country, corridor, amount, event_time)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
     ON CONFLICT DO NOTHING
   `;
+  const m = extra.metadata;
 
   try {
-    await db.query(text, [fromAddress, toAddress, score, ledgerSequence]);
+    await db.query(text, [
+      fromAddress,
+      toAddress,
+      score,
+      ledgerSequence,
+      extra.eventType ?? 'transfer',
+      extra.txHash ?? null,
+      m?.sourceCountry ?? null,
+      m?.destinationCountry ?? null,
+      m?.corridor ?? null,
+      m?.amount ?? null,
+      extra.eventTime ?? null,
+    ]);
   } catch (error) {
-    logger.error('Error storing transfer event:', { fromAddress, toAddress, ledgerSequence, error });
+    logger.error('Error storing transfer event:', {
+      fromAddress,
+      toAddress,
+      ledgerSequence,
+      error,
+    });
     throw new AppError('Failed to store transfer event', 500);
   }
 }
@@ -54,7 +116,8 @@ export async function getTransfersForAddress(
   const orderBy = options.orderBy === 'date' ? 'created_at' : 'ledger_sequence';
 
   const text = `
-    SELECT id, from_address, to_address, score, ledger_sequence, created_at
+    SELECT id, from_address, to_address, score, ledger_sequence, created_at,
+           event_type, tx_hash, corridor, amount, event_time
     FROM nft_transfer_events
     WHERE from_address = $1 OR to_address = $1
     ORDER BY ${orderBy} DESC
@@ -205,7 +268,36 @@ export async function getTransferStats(
   }
 }
 
+/** Paginated, API-shaped transfer history for an address. */
+export async function getTransferHistoryPage(
+  address: string,
+  limit: number,
+  offset: number,
+): Promise<{ items: Array<Record<string, unknown>>; total: number }> {
+  const [rows, total] = await Promise.all([
+    getTransfersForAddress(address, { limit, offset }),
+    getTransferCountForAddress(address),
+  ]);
+  return {
+    items: rows.map((r) => ({
+      id: r.id,
+      type: r.event_type ?? 'transfer',
+      from: r.from_address,
+      to: r.to_address,
+      score: r.score,
+      corridor: r.corridor ?? null,
+      amount: r.amount ?? null,
+      txHash: r.tx_hash ?? null,
+      ledger: r.ledger_sequence,
+      timestamp: (r.event_time ?? r.created_at) as Date,
+    })),
+    total,
+  };
+}
+
 export const transferHistoryService = {
+  getTransferHistoryPage,
+  extractTransferMetadata,
   storeTransferEvent,
   getTransfersForAddress,
   getIncomingTransfers,

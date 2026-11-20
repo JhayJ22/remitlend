@@ -24,6 +24,7 @@ import {
   resolveLoanDispute,
   getLoanDispute,
   rejectLoanDispute,
+  reviewLoanDispute,
 } from '../controllers/adminDisputeController.js';
 import { getPendingGovernance } from '../controllers/adminGovernanceController.js';
 import { getContractVerificationStatus } from '../controllers/adminContractVerificationController.js';
@@ -121,6 +122,12 @@ router.post(
   requireJwtAuth,
   requireRoles('admin'),
   resolveLoanDispute,
+);
+router.post(
+  '/disputes/:disputeId/review',
+  requireJwtAuth,
+  requireRoles('admin'),
+  reviewLoanDispute,
 );
 router.post(
   '/disputes/:disputeId/reject',
