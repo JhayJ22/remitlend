@@ -410,3 +410,10 @@ export const dbPoolRejectedCounter = new client.Counter({
   help: 'Requests rejected immediately because the pool wait queue was full.',
   registers: [metricsRegistry],
 });
+
+
+export const webhookUncertifiedConsumersGauge = new client.Gauge({
+  name: 'webhook_uncertified_consumers_total',
+  help: 'Total number of active webhook consumers lacking verified certification',
+  registers: [metricsRegistry],
+});

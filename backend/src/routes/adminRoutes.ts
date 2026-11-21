@@ -722,3 +722,47 @@ router.post(
 );
 
 export default router;
+
+
+// Webhook consumer certification endpoints (#768)
+const consumerCertifications = new Map<string, any>();
+
+router.post(
+  '/webhooks/consumers/:id/certify',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const checklist = req.body || {};
+    const record = {
+      consumerId: id,
+      certified: true,
+      certifiedAt: new Date().toISOString(),
+      certifiedBy: req.user?.publicKey || 'admin',
+      checklist: {
+        hmacVerification: Boolean(checklist.hmacVerification),
+        retryHandling: Boolean(checklist.retryHandling),
+        idempotency: Boolean(checklist.idempotency),
+        tls: Boolean(checklist.tls),
+      },
+    };
+    consumerCertifications.set(id, record);
+    res.status(200).json({ success: true, data: record });
+  }),
+);
+
+router.get(
+  '/webhooks/consumers/:id/certification',
+  requireJwtAuth,
+  requireRoles('admin'),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const record = consumerCertifications.get(id) || {
+      consumerId: id,
+      certified: false,
+      status: 'uncertified',
+    };
+    res.json({ success: true, data: record });
+  }),
+);
