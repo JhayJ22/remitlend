@@ -124,6 +124,9 @@ export const queryKeys = {
     all: () => ["admin", "governance"] as const,
     pending: () => ["admin", "governance", "pending"] as const,
   },
+  settlementExceptions: {
+    all: () => ["admin", "settlement-exceptions"] as const,
+  },
 } as const;
 
 // ─── Base fetch helper ────────────────────────────────────────────────────────
@@ -2022,6 +2025,42 @@ export function useAdminGovernancePending() {
   return useQuery({
     queryKey: queryKeys.governance.pending(),
     queryFn: () => apiFetch<GovernancePendingResponse>("/admin/governance/pending"),
+  });
+}
+
+export interface AdminSettlementExceptionSummary {
+  exceptionType: "delayed" | "duplicate" | "mismatched" | "unresolved";
+  source: string;
+  ageBucket: "under_1h" | "1h_24h" | "1d_7d" | "over_7d";
+  count: number;
+}
+
+export interface AdminSettlementException {
+  exceptionType: AdminSettlementExceptionSummary["exceptionType"];
+  source: string;
+  status: string;
+  subjectRef: string;
+  detectedAt: string;
+  ageBucket: AdminSettlementExceptionSummary["ageBucket"];
+  recoveryProcedure: string;
+}
+
+export interface AdminSettlementExceptionsResponse {
+  summary: AdminSettlementExceptionSummary[];
+  exceptions: AdminSettlementException[];
+}
+
+export function useAdminSettlementExceptions(
+  options?: Omit<
+    UseQueryOptions<AdminSettlementExceptionsResponse>,
+    "queryKey" | "queryFn"
+  >,
+) {
+  return useQuery<AdminSettlementExceptionsResponse>({
+    queryKey: queryKeys.settlementExceptions.all(),
+    queryFn: () => apiFetch<AdminSettlementExceptionsResponse>("/admin/settlement-exceptions"),
+    refetchInterval: 60_000,
+    ...options,
   });
 }
 

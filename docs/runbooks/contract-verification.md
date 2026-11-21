@@ -320,14 +320,15 @@ WHERE contract_id = 'CA3D...';
 
 ## Automated Verification Job
 
-Implemented in `backend/src/cron/contractVerificationJob.ts`, started from `backend/src/index.ts`. It runs at minute 30 of every hour and:
+Implemented in `backend/src/cron/contractVerificationJob.ts`, started from `backend/src/index.ts`. It runs nightly at 02:00 UTC and:
 
-1. Loads up to 10 unverified rows from `contract_verification` (oldest first).
-2. Calls `GET https://stellar.expert/api/v2/contract/{contractId}` and reads the `verified` flag.
-3. On `verified: true`, calls `markVerified` (which only matches the stored `source_code_hash`).
-4. Writes one row to `contract_verification_attempts` per check: success, "not yet verified", or the error message (HTTP status, timeout, network).
+1. Reads deployed contract IDs from the active network section of `docs/deployed-contracts.md`.
+2. Loads expected hashes from `contracts/wasm-hashes.sha256`, reads each contract instance and WASM entry from Soroban RPC, and compares SHA-256 digests.
+3. Persists each result (`match`, `mismatch`, `error`, or `missing_expected_hash`) in `contract_verifications`.
+4. Emits a `CRITICAL` log alert for an expected-hash mismatch or a missing expected hash. RPC errors are recorded and retried on the next nightly run.
+5. Loads up to 10 unverified rows from `contract_verification` (oldest first), checks their Stellar Expert `verified` status, and records the existing explorer attempt.
 
-The job skips a run if the previous one is still in flight. Its runs are reported through the job metrics service under `contractVerificationCron`.
+The job skips a run if the previous one is still in flight. Its runs are reported through the job metrics service under `contractVerificationCron`. The read-only, JWT-admin endpoint `GET /api/v1/admin/contract-verification` returns the latest WASM verification result for each contract; the legacy `/contracts/verification-status` endpoint continues to report Stellar Expert source verification.
 
 > **Known gap:** the `api/v2/contract` response shape is taken from the manual flow above and has not been checked against the live API. Confirm it on testnet before relying on the job's `verified: true` result.
 
@@ -337,7 +338,7 @@ The job skips a run if the previous one is still in flight. Its runs are reporte
 - [ ] Verification record created in database
 - [ ] Source code hash computed and stored
 - [ ] WASM binary hash computed and stored
-- [ ] Background verification job runs hourly
+- [ ] Background verification job runs nightly
 - [ ] Admin UI displays verification status
 - [ ] Alerts configured for unverified contracts
 - [ ] Stellar explorer shows contract as verified

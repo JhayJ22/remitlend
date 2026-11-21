@@ -12,6 +12,7 @@ Operational runbooks for on-call engineers working on the RemitLend platform.
 - [Database Backup & PITR](DATABASE_BACKUP_RECOVERY.md) — Logical backups, WAL archiving, and point-in-time recovery.
 - [Multi-Region Disaster Recovery](MULTI_REGION_DISASTER_RECOVERY.md) — Planned and unplanned failover for PostgreSQL, Redis, and Soroban contracts across regions (#411).
 - [Contract Verification](contract-verification.md) — Verifying on-chain contract state after deployments.
+- [Settlement and Payout Exceptions](settlement-payout-exceptions.md) — Read-only exception definitions, dashboard access, and recovery procedures.
 - [Graceful Shutdown](graceful-shutdown.md) — Safe rolling restarts and zero-downtime deploys.
 
 ## Purpose

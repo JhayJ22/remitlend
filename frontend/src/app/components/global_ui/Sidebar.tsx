@@ -65,7 +65,14 @@ export function Sidebar({ onClose, className }: SidebarProps) {
     { name: t("activity"), href: `/${locale}/activity`, icon: Clock },
     { name: t("wallet"), href: `/${locale}/wallet`, icon: CreditCard },
     ...(isAdmin
-      ? [{ name: t("adminDisputes"), href: `/${locale}/admin/disputes`, icon: ShieldAlert }]
+      ? [
+          { name: t("adminDisputes"), href: `/${locale}/admin/disputes`, icon: ShieldAlert },
+          {
+            name: t("settlementExceptions"),
+            href: `/${locale}/admin/settlement-exceptions`,
+            icon: ShieldAlert,
+          },
+        ]
       : []),
   ];
 

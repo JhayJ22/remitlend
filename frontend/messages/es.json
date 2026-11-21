@@ -82,6 +82,7 @@
     "notifications": "Notificaciones",
     "liquidations": "Liquidaciones",
     "adminDisputes": "Disputas",
+    "settlementExceptions": "Excepciones de liquidación",
     "lend": "Prestar",
     "wallet": "Billetera",
     "walletStatus": "Estado de billetera",
@@ -376,5 +377,69 @@
     "notScheduled": "No programado",
     "unknown": "Desconocido",
     "executableNow": "Ejecutable ahora"
+  },
+  "Breadcrumbs": {
+    "navigationLabel": "Migas de pan",
+    "currentPage": "Página actual",
+    "loanNumber": "Préstamo #{id}",
+    "disputeNumber": "Disputa #{id}",
+    "segments": {
+      "activity": "Actividad",
+      "admin": "Administración",
+      "analytics": "Analítica",
+      "dashboard": "Panel",
+      "disputes": "Disputas",
+      "governance": "Gobernanza",
+      "kingdom": "Comunidad",
+      "lend": "Prestar",
+      "liquidations": "Liquidaciones",
+      "loans": "Préstamos",
+      "notifications": "Notificaciones",
+      "repay": "Reembolso",
+      "remittances": "Remesas",
+      "requestLoan": "Solicitar préstamo",
+      "sendRemittance": "Enviar remesa",
+      "settings": "Configuración",
+      "transactionPreview": "Vista previa de transacción",
+      "uiDemo": "Demostración de interfaz",
+      "wallet": "Billetera"
+    }
+  },
+  "SettlementExceptions": {
+    "checkingAccess": "Verificando acceso de administrador…",
+    "eyebrow": "Operaciones",
+    "title": "Excepciones de liquidación y pagos",
+    "description": "Supervisión de solo lectura de registros de liquidación retrasados, duplicados, discrepantes y sin resolver.",
+    "refresh": "Actualizar",
+    "loading": "Cargando excepciones de liquidación…",
+    "error": "No se pudieron cargar las excepciones. Verifique el acceso y el estado de la base de datos e inténtelo de nuevo.",
+    "summary": "Excepciones por origen y antigüedad",
+    "drilldown": "Registros de excepción recientes",
+    "empty": "No se encontraron excepciones de liquidación.",
+    "noDetails": "No hay detalles de excepciones disponibles.",
+    "detailsLimit": "El detalle se limita a los 200 registros más recientes; los totales incluyen todos los registros coincidentes.",
+    "openProcedure": "Procedimiento de recuperación",
+    "types": {
+      "delayed": "Retrasado",
+      "duplicate": "Duplicado",
+      "mismatched": "Discrepante",
+      "unresolved": "Sin resolver"
+    },
+    "ages": {
+      "under1h": "Menos de 1 hora",
+      "1h24h": "1–24 horas",
+      "1d7d": "1–7 días",
+      "over7d": "Más de 7 días"
+    },
+    "columns": {
+      "type": "Tipo",
+      "source": "Origen",
+      "age": "Antigüedad",
+      "count": "Cantidad",
+      "subject": "Registro",
+      "status": "Estado de origen",
+      "detected": "Detectado",
+      "recovery": "Procedimiento"
+    }
   }
 }

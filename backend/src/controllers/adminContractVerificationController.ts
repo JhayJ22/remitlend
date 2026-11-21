@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { contractVerificationService } from '../services/contractVerificationService.js';
+import { contractWasmVerificationService } from '../services/contractWasmVerificationService.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
 export const getContractVerificationStatus = asyncHandler(
@@ -10,5 +11,12 @@ export const getContractVerificationStatus = asyncHandler(
     ]);
 
     res.json({ ...stats, contracts });
+  },
+);
+
+export const getDeployedContractVerification = asyncHandler(
+  async (_req: Request, res: Response) => {
+    const contracts = await contractWasmVerificationService.getLatestResults();
+    res.json({ contracts });
   },
 );

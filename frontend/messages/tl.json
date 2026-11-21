@@ -82,6 +82,7 @@
     "notifications": "Mga Notification",
     "liquidations": "Mga Liquidasyon",
     "adminDisputes": "Mga Dispute",
+    "settlementExceptions": "Mga exception sa settlement",
     "lend": "Magpautang",
     "wallet": "Wallet",
     "walletStatus": "Status ng Wallet",
@@ -376,5 +377,69 @@
     "notScheduled": "Hindi naka-iskedyul",
     "unknown": "Hindi alam",
     "executableNow": "Maaaring ipatupad ngayon"
+  },
+  "Breadcrumbs": {
+    "navigationLabel": "Breadcrumb",
+    "currentPage": "Kasalukuyang pahina",
+    "loanNumber": "Loan #{id}",
+    "disputeNumber": "Dispute #{id}",
+    "segments": {
+      "activity": "Aktibidad",
+      "admin": "Admin",
+      "analytics": "Analytics",
+      "dashboard": "Dashboard",
+      "disputes": "Mga dispute",
+      "governance": "Pamamahala",
+      "kingdom": "Komunidad",
+      "lend": "Magpautang",
+      "liquidations": "Liquidations",
+      "loans": "Mga loan",
+      "notifications": "Mga notification",
+      "repay": "Pagbabayad",
+      "remittances": "Mga remittance",
+      "requestLoan": "Humiling ng loan",
+      "sendRemittance": "Magpadala ng remittance",
+      "settings": "Mga setting",
+      "transactionPreview": "Preview ng transaksyon",
+      "uiDemo": "UI Demo",
+      "wallet": "Wallet"
+    }
+  },
+  "SettlementExceptions": {
+    "checkingAccess": "Sinusuri ang access ng admin…",
+    "eyebrow": "Mga operasyon",
+    "title": "Mga exception sa settlement at payout",
+    "description": "Read-only na pagsubaybay sa mga naantala, nadoble, hindi nagtutugma, at hindi pa nareresolbang settlement record.",
+    "refresh": "I-refresh",
+    "loading": "Naglo-load ng mga settlement exception…",
+    "error": "Hindi ma-load ang mga settlement exception. Suriin ang access at database, pagkatapos ay subukan muli.",
+    "summary": "Mga exception ayon sa source at edad",
+    "drilldown": "Mga kamakailang exception record",
+    "empty": "Walang nahanap na settlement exception.",
+    "noDetails": "Walang available na detalye ng exception.",
+    "detailsLimit": "Hanggang 200 pinakabagong record lang ang ipinapakita; kasama sa bilang ang lahat ng tumugmang record.",
+    "openProcedure": "Pamamaraan sa recovery",
+    "types": {
+      "delayed": "Naantala",
+      "duplicate": "Nadoble",
+      "mismatched": "Hindi nagtutugma",
+      "unresolved": "Hindi nareresolba"
+    },
+    "ages": {
+      "under1h": "Wala pang 1 oras",
+      "1h24h": "1–24 na oras",
+      "1d7d": "1–7 araw",
+      "over7d": "Higit sa 7 araw"
+    },
+    "columns": {
+      "type": "Uri",
+      "source": "Source",
+      "age": "Edad",
+      "count": "Bilang",
+      "subject": "Record",
+      "status": "Status ng source",
+      "detected": "Natukoy",
+      "recovery": "Pamamaraan"
+    }
   }
 }

@@ -26,7 +26,11 @@ import {
   rejectLoanDispute,
 } from '../controllers/adminDisputeController.js';
 import { getPendingGovernance } from '../controllers/adminGovernanceController.js';
-import { getContractVerificationStatus } from '../controllers/adminContractVerificationController.js';
+import { getAdminSettlementExceptions } from '../controllers/adminSettlementExceptionsController.js';
+import {
+  getContractVerificationStatus,
+  getDeployedContractVerification,
+} from '../controllers/adminContractVerificationController.js';
 import { query } from '../db/connection.js';
 
 import { buildRejectLoanTx } from '../controllers/loanController.js';
@@ -130,6 +134,25 @@ router.post(
 );
 
 router.get('/governance/pending', requireJwtAuth, requireRoles('admin'), getPendingGovernance);
+/**
+ * @swagger
+ * /admin/settlement-exceptions:
+ *   get:
+ *     summary: Aggregate settlement and payout exceptions by source and age
+ *     description: Read-only admin dashboard data. Detail results are capped at 200.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Exception summary and permissioned drill-down records
+ */
+router.get(
+  '/settlement-exceptions',
+  requireJwtAuth,
+  requireRoles('admin'),
+  getAdminSettlementExceptions,
+);
 
 /**
  * @swagger
@@ -148,6 +171,24 @@ router.get(
   requireJwtAuth,
   requireRoles('admin'),
   getContractVerificationStatus,
+);
+/**
+ * @swagger
+ * /admin/contract-verification:
+ *   get:
+ *     summary: Get the latest deployed WASM integrity result for each contract
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Latest contract verification results
+ */
+router.get(
+  '/contract-verification',
+  requireJwtAuth,
+  requireRoles('admin'),
+  getDeployedContractVerification,
 );
 
 const checkDefaultsBodySchema = z.object({

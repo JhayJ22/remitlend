@@ -66,3 +66,30 @@ No contracts deployed yet.
 2. Copy the contract IDs from the deploy output into the relevant table row.
 3. Set the same IDs in your local `backend/.env` (and CI secrets for staging/production).
 4. Commit the updated table in the same PR as any contract change.
+
+## Nightly WASM integrity verification
+
+The backend nightly job verifies every contract ID listed in the active network
+section above. It reads the expected SHA-256 digest from
+[`contracts/wasm-hashes.sha256`](../contracts/wasm-hashes.sha256), retrieves the
+contract instance and its WASM bytes through the configured Soroban RPC, and
+compares the deployed bytes with the manifest digest. A missing digest or a
+mismatch is persisted as a critical discrepancy and emitted to log-based
+alerting; RPC failures are recorded separately and retried on the next run.
+
+For each deployed contract:
+
+1. Add a manifest entry for its compiled WASM artifact, using the contract name
+   from the registry as the artifact basename (for example
+   `loan_manager.wasm`).
+2. Record the deployed contract ID in the network's table above.
+3. Configure the matching backend contract ID and `STELLAR_NETWORK`.
+4. Apply the backend database migrations. The verifier records append-only
+   results in `contract_verifications`.
+5. Confirm the latest result at the admin-only
+   `GET /api/v1/admin/contract-verification` endpoint. A mismatch or missing
+   manifest hash must be investigated before the deployment is considered
+   healthy.
+
+The endpoint requires a JWT session with the `admin` role. Verification is
+read-only and never changes contract state or financial records.

@@ -82,6 +82,7 @@
     "notifications": "Notifications",
     "liquidations": "Liquidations",
     "adminDisputes": "Disputes",
+    "settlementExceptions": "Settlement exceptions",
     "lend": "Lend",
     "wallet": "Wallet",
     "walletStatus": "Wallet Status",
@@ -376,5 +377,69 @@
     "notScheduled": "Not scheduled",
     "unknown": "Unknown",
     "executableNow": "Executable now"
+  },
+  "Breadcrumbs": {
+    "navigationLabel": "Breadcrumb",
+    "currentPage": "Current page",
+    "loanNumber": "Loan #{id}",
+    "disputeNumber": "Dispute #{id}",
+    "segments": {
+      "activity": "Activity",
+      "admin": "Admin",
+      "analytics": "Analytics",
+      "dashboard": "Dashboard",
+      "disputes": "Disputes",
+      "governance": "Governance",
+      "kingdom": "Kingdom",
+      "lend": "Lend",
+      "liquidations": "Liquidations",
+      "loans": "Loans",
+      "notifications": "Notifications",
+      "repay": "Repayment",
+      "remittances": "Remittances",
+      "requestLoan": "Request Loan",
+      "sendRemittance": "Send Remittance",
+      "settings": "Settings",
+      "transactionPreview": "Transaction Preview",
+      "uiDemo": "UI Demo",
+      "wallet": "Wallet"
+    }
+  },
+  "SettlementExceptions": {
+    "checkingAccess": "Checking admin access…",
+    "eyebrow": "Operations",
+    "title": "Settlement and payout exceptions",
+    "description": "Read-only monitoring of delayed, duplicate, mismatched, and unresolved settlement records.",
+    "refresh": "Refresh",
+    "loading": "Loading settlement exceptions…",
+    "error": "Could not load settlement exceptions. Check access and database health, then try again.",
+    "summary": "Exceptions by source and age",
+    "drilldown": "Recent exception records",
+    "empty": "No matching settlement exceptions were found.",
+    "noDetails": "No exception details are currently available.",
+    "detailsLimit": "Drill-down is limited to the 200 newest records; summary counts include all matching records.",
+    "openProcedure": "Recovery procedure",
+    "types": {
+      "delayed": "Delayed",
+      "duplicate": "Duplicate",
+      "mismatched": "Mismatched",
+      "unresolved": "Unresolved"
+    },
+    "ages": {
+      "under1h": "Under 1 hour",
+      "1h24h": "1–24 hours",
+      "1d7d": "1–7 days",
+      "over7d": "Over 7 days"
+    },
+    "columns": {
+      "type": "Type",
+      "source": "Source",
+      "age": "Age",
+      "count": "Count",
+      "subject": "Record",
+      "status": "Source status",
+      "detected": "Detected",
+      "recovery": "Procedure"
+    }
   }
 }

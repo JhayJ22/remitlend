@@ -6,13 +6,15 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Install all dependencies including devDependencies needed for tsc
-COPY package*.json ./
+COPY backend/package*.json ./
 RUN npm ci
 
 # Copy source and compile
-COPY tsconfig.json tsconfig.build.json ./
-COPY migrations ./migrations
-COPY src ./src
+COPY backend/tsconfig.json backend/tsconfig.build.json ./
+COPY backend/migrations ./migrations
+COPY backend/src ./src
+COPY docs/deployed-contracts.md ./docs/deployed-contracts.md
+COPY contracts/wasm-hashes.sha256 ./contracts/wasm-hashes.sha256
 RUN npx tsc -p tsconfig.build.json
 
 # ── Production Stage ───────────────────────────────────────────────────────────
@@ -31,12 +33,14 @@ ENV GIT_SHA=$GIT_SHA \
 
 # Install only production dependencies.
 # Remove the lockfile afterwards so it is not part of the final layer cache.
-COPY package*.json ./
+COPY backend/package*.json ./
 RUN npm ci --omit=dev && rm -f package-lock.json
 
 # Copy compiled output from builder
 COPY --from=builder /app/dist ./dist
-COPY migrations ./migrations
+COPY backend/migrations ./migrations
+COPY docs/deployed-contracts.md ./docs/deployed-contracts.md
+COPY contracts/wasm-hashes.sha256 ./contracts/wasm-hashes.sha256
 
 # Non-root user for security.
 # Create the group and user before switching to enforce least-privilege.

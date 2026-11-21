@@ -38,7 +38,8 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       target: builder
     command: sh -c "npm run migrate:up && npm run dev"
     ports:
