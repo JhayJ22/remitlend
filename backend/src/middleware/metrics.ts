@@ -410,3 +410,10 @@ export const dbPoolRejectedCounter = new client.Counter({
   help: 'Requests rejected immediately because the pool wait queue was full.',
   registers: [metricsRegistry],
 });
+
+
+export const dbConnectionsActiveGauge = new client.Gauge({
+  name: 'db_connections_active',
+  help: 'Number of active PostgreSQL connections currently checked out of the pool',
+  registers: [metricsRegistry],
+});

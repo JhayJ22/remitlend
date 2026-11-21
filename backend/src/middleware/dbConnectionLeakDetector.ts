@@ -1,3 +1,4 @@
+import { dbConnectionsActiveGauge } from './metrics.js';
 import type { Request, Response, NextFunction } from 'express';
 import { pool } from '../db/connection.js';
 import logger from '../utils/logger.js';
@@ -15,7 +16,8 @@ interface ConnectionTracker {
 
 const activeConnections = new Map<string, ConnectionTracker>();
 const LONG_QUERY_THRESHOLD_MS = parseInt(process.env.DB_LONG_QUERY_THRESHOLD_MS ?? '5000', 10);
-const CONNECTION_LEAK_THRESHOLD_MS = parseInt(process.env.DB_CONNECTION_LEAK_THRESHOLD_MS ?? '30000', 10);
+const CONNECTION_LEAK_THRESHOLD_MS = parseInt(process.env.DB_POOL_LEAK_THRESHOLD_MS ?? process.env.DB_CONNECTION_LEAK_THRESHOLD_MS ?? '5000', 10);
+const DB_POOL_MAX = parseInt(process.env.DB_POOL_MAX ?? '10', 10);
 const CLEANUP_INTERVAL_MS = 60000;
 
 let cleanupInterval: NodeJS.Timeout | null = null;
@@ -72,6 +74,19 @@ export function trackConnectionAcquisition(
     clientId,
     released: false,
   });
+
+  const activeCount = getActiveConnections().length;
+  try {
+    dbConnectionsActiveGauge.set(activeCount);
+  } catch {}
+
+  if (activeCount > 0.8 * DB_POOL_MAX) {
+    logger.warn('Active database connections exceeded 80% threshold of DB_POOL_MAX', {
+      activeConnections: activeCount,
+      poolMax: DB_POOL_MAX,
+      threshold: 0.8 * DB_POOL_MAX,
+    });
+  }
 }
 
 export function trackConnectionRelease(requestId: string): void {
