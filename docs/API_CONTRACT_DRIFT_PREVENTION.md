@@ -220,3 +220,12 @@ Removal gate for public financial APIs:
    with no `unknown`/`other` cohort traffic remaining on it.
 3. Remaining cohorts, if any, were notified and confirmed migrated; evidence is attached to the removal PR.
 4. Contract tests for the successor route pass, and a rollback plan exists.
+
+
+## OpenAPI Route Parity Check (#776)
+To prevent drift between the actual Express route handlers and the OpenAPI specification:
+- Script: `scripts/check-openapi-route-parity.mjs`
+- Validates bidirectional parity:
+  1. Identifies any undocumented Express routes.
+  2. Identifies any spec orphans (routes documented in OpenAPI that have no matching Express handler).
+- Integrated into CI workflow to run on changes to backend routes or OpenAPI configuration.
