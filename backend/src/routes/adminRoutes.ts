@@ -36,7 +36,7 @@ import {
   replayLoanStateEndpoint,
 } from '../controllers/loanStateEventController.js';
 
-import { listDiscrepancies } from '../services/discrepancyLedgerService.js';
+import { listDiscrepancies, acknowledgeDiscrepancy, exportDiscrepanciesCSV } from '../services/discrepancyLedgerService.js';
 import {
   createRequest as createPrivilegedRequest,
   approveRequest as approvePrivilegedRequest,
@@ -590,9 +590,41 @@ router.get(
     const rows = await listDiscrepancies({
       ...(typeof req.query.status === 'string' ? { status: req.query.status } : {}),
       ...(typeof req.query.severity === 'string' ? { severity: req.query.severity } : {}),
+      ...(typeof req.query.type === 'string' ? { type: req.query.type } : {}),
       ...(Number.isInteger(limit) && limit > 0 ? { limit } : {}),
     });
     res.json({ success: true, data: { discrepancies: rows } });
+  }),
+);
+
+router.get(
+  '/discrepancies/export',
+  requireJwtAuth,
+  requireRoles('admin'),
+  asyncHandler(async (req, res) => {
+    const csv = await exportDiscrepanciesCSV({
+      ...(typeof req.query.startDate === 'string' ? { startDate: req.query.startDate } : {}),
+      ...(typeof req.query.endDate === 'string' ? { endDate: req.query.endDate } : {}),
+    });
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="discrepancies.csv"');
+    res.send(csv);
+  }),
+);
+
+router.post(
+  '/discrepancies/:id/acknowledge',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  asyncHandler(async (req, res) => {
+    const note = req.body?.note || req.body?.reason || 'Acknowledged by operator';
+    const result = await acknowledgeDiscrepancy({
+      discrepancyId: Number(req.params.id),
+      actor: req.user!.publicKey,
+      note,
+    });
+    res.json({ success: true, data: result });
   }),
 );
 

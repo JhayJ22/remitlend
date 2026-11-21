@@ -410,3 +410,10 @@ export const dbPoolRejectedCounter = new client.Counter({
   help: 'Requests rejected immediately because the pool wait queue was full.',
   registers: [metricsRegistry],
 });
+
+
+export const discrepancyLedgerUnacknowledgedGauge = new client.Gauge({
+  name: 'discrepancy_ledger_unacknowledged_total',
+  help: 'Total count of unacknowledged financial reconciliation discrepancies',
+  registers: [metricsRegistry],
+});

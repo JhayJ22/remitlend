@@ -197,3 +197,86 @@ export async function resolveDiscrepancy(input: ResolveInput): Promise<void> {
     );
   });
 }
+
+
+export interface AcknowledgeInput {
+  discrepancyId: number;
+  actor: string;
+  note: string;
+}
+
+export async function acknowledgeDiscrepancy(input: AcknowledgeInput): Promise<Record<string, unknown>> {
+  const { discrepancyId, actor, note } = input;
+  if (!actor) throw AppError.badRequest('actor is required');
+  if (!note || note.trim().length === 0) {
+    throw AppError.badRequest('note is required');
+  }
+
+  return await withTransaction(async (client) => {
+    const found = await client.query(
+      `SELECT id, status FROM reconciliation_discrepancies WHERE id = $1 FOR UPDATE`,
+      [discrepancyId],
+    );
+    const row = found.rows[0] as { id: number; status: string } | undefined;
+    if (!row) throw AppError.notFound('Discrepancy not found');
+
+    await client.query(
+      `INSERT INTO reconciliation_discrepancy_resolutions (discrepancy_id, actor, reason, evidence)
+       VALUES ($1, $2, $3, $4::jsonb)`,
+      [discrepancyId, actor, note, JSON.stringify({ action: 'acknowledged', note })],
+    );
+    await client.query(
+      `INSERT INTO audit_logs (actor, action, target, payload, status)
+       VALUES ($1, 'ACKNOWLEDGE_DISCREPANCY', $2, $3::jsonb, 200)`,
+      [actor, `Discrepancy:${discrepancyId}`, JSON.stringify({ note })],
+    );
+    return { id: discrepancyId, acknowledged: true };
+  });
+}
+
+export async function exportDiscrepanciesCSV(
+  filters: { startDate?: string; endDate?: string } = {},
+): Promise<string> {
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  if (filters.startDate) {
+    values.push(new Date(filters.startDate));
+    conditions.push(`detected_at >= $${values.length}`);
+  }
+  if (filters.endDate) {
+    values.push(new Date(filters.endDate));
+    conditions.push(`detected_at <= $${values.length}`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const result = await query(
+    `SELECT id, subject_ref AS "loanId", discrepancy_class AS "type",
+            contract_value AS "expectedValue", db_value AS "actualValue",
+            severity, status, detected_at AS "detectedAt"
+     FROM reconciliation_discrepancies ${where} ORDER BY detected_at DESC`,
+    values,
+  );
+  const rows = result.rows as Array<{
+    id: number;
+    loanId: string;
+    type: string;
+    expectedValue: string;
+    actualValue: string;
+    severity: string;
+    status: string;
+    detectedAt: Date;
+  }>;
+  const header = 'id,loanId,type,expectedValue,actualValue,severity,status,detectedAt\n';
+  const lines = rows.map((r) =>
+    [
+      r.id,
+      r.loanId,
+      r.type,
+      r.expectedValue,
+      r.actualValue,
+      r.severity,
+      r.status,
+      r.detectedAt ? new Date(r.detectedAt).toISOString() : '',
+    ].join(','),
+  );
+  return header + lines.join('\n');
+}
