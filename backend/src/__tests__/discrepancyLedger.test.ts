@@ -11,6 +11,8 @@ jest.unstable_mockModule('../db/connection.js', () => ({
   query: mockQuery,
   getClient: jest.fn(),
   closePool: jest.fn(),
+  withTransaction: async (fn: (c: { query: typeof clientQuery }) => Promise<unknown>) =>
+    fn({ query: clientQuery }),
 }));
 jest.unstable_mockModule('../db/transaction.js', () => ({
   withTransaction: async (fn: (c: { query: typeof clientQuery }) => Promise<unknown>) =>

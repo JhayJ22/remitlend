@@ -34,6 +34,7 @@ Related documents: [SECURITY.md](../SECURITY.md) (disclosure policy),
 | Chain state | Divergence between API and chain | Reconciliation jobs + checkpoint `suspect` handling (`docs/domain-state-machines.md`) |
 | Outbound webhooks | Forged or replayed deliveries | HMAC signatures + timestamp (`docs/wiki/webhook-signatures.md`) |
 | Dependencies / build | Supply-chain compromise | Blocklist scan + CodeQL + Trivy (`.github/workflows/ci.yml`, `codeql.yml`) |
+| Trust boundaries | Unreviewed security changes reaching production | Annual threat-model review gate per boundary (`scripts/check-trust-boundaries.mjs`, `.github/workflows/threat-model-gate.yml`) |
 
 Trust boundaries: browser wallet → API (HTTPS), API → Stellar RPC (HTTPS),
 API → Postgres/Redis (private network), API → KMS-style encryption endpoint
@@ -54,6 +55,8 @@ destination, treated as untrusted).
 | A-6 | Webhook subscribers verify HMAC signatures and treat payloads as untrusted input. | integration | Delivery integrity is signed, but a subscriber that ignores the signature is exposed to spoofing. | `docs/wiki/webhook-signatures.md` | subscribers | accepted | 2026-12-31 |
 | A-7 | The PII encryption endpoint (`PII_KMS_ENDPOINT`) performs real key management and is not reachable by untrusted parties. | integration | Recipient PII fields are only as protected as the key material behind that endpoint. | `backend/src/services/piiCrypto.ts`, `backend/docs/INTERNAL_REQUEST_SIGNING.md` | operators | accepted | 2026-12-31 |
 | A-8 | Trace correlation headers (`traceparent`, `x-request-id`, `tracestate`) carry no secrets and may be logged. | observability | Trace ids are exposed to clients by design; anything sensitive must never be placed in them. | `backend/src/middleware/traceContext.ts`, `backend/src/__tests__/traceContext.test.ts` | maintainers | validated | 2026-12-31 |
+| A-9 | `STATEMENT_SIGNING_PRIVATE_KEY_PEM` and `STATEMENT_SUBJECT_PEPPER` are injected as secrets, rotated on compromise, and never committed. | deploy | Anyone with the signing key can forge statement manifests; a leaked pepper permits subject correlation. | `docs/STATEMENT_VERIFICATION.md`, `backend/src/services/statementManifestService.ts` | operators | accepted | 2026-12-31 |
+| A-9 | Threat-model reviews are performed annually (or on each trust-boundary change) and approved by a second admin before the change reaches production. | process | A stale or unreviewed threat model means security assumptions may no longer hold for the current trust-boundary configuration. | `docs/THREAT_MODEL_REVIEW_STATUS.json`, `scripts/check-trust-boundaries.mjs`, `.github/workflows/threat-model-gate.yml`, `backend/src/services/threatModelRefreshService.ts` | maintainers | monitored | 2027-11-19 |
 
 ---
 
@@ -73,6 +76,8 @@ Each limitation is a conscious decision with a compensating control. `Status` is
 | L-6 | Clients treat indexed (projected) state as authoritative for rendering. | UI can lag the chain by up to one poll interval. | Direct confirmation status on submit; UI refreshes on SSE events; reconcilers correct drift. | `frontend/src/app/hooks/useApi.ts`, `docs/domain-state-machines.md` | maintainers | mitigated | 2026-12-31 |
 | L-7 | Trace data is sampled per `TRACE_CONTEXT_SAMPLE_RATE` and is not exported to an external backend. | Very low-volume flows may lack full trace coverage. | Sampling defaults to 1; correlation ids remain present on all logs regardless of sampling. | `backend/src/utils/traceContext.ts` | maintainers | accepted | 2026-12-31 |
 | L-8 | Smart contracts and dependencies are not audited by a third party. | Undiscovered contract-level defects remain possible. | Extensive unit/invariant/fuzz testing in CI; pause switch for incident response. | `.github/workflows/ci.yml`, `.github/workflows/fuzz-remittance-nft.yml` | maintainers | open | 2026-12-31 |
+| L-9 | A signed statement manifest seals the client-generated CSV digest; the backend does not re-query the underlying API or Horizon when signing. | A compromised client could obtain a valid signature over a false projection before download. | Signed schema, row count and source checkpoint; explicit UI/API assumption; public key + tampering tests; chain remains authoritative. | `docs/STATEMENT_VERIFICATION.md`, `backend/src/services/__tests__/statementManifestService.test.ts` | maintainers | mitigated | 2026-12-31 |
+| L-9 | The threat-model gate can be bypassed by setting `THREAT_MODEL_GATE_OVERRIDE=true` in the repository secret. | A bypassed gate means a trust-boundary change could reach production without a current threat-model review. | Override is logged and audited; `trust_boundary_changes.gate_status='forced'` is recorded; override requires explicit operator action on the repository secrets UI. | `scripts/check-trust-boundaries.mjs`, `.github/workflows/threat-model-gate.yml`, `backend/src/services/threatModelRefreshService.ts` | operators | mitigated | 2027-11-19 |
 
 ---
 

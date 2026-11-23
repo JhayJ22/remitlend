@@ -334,3 +334,20 @@ impl OracleAdapter {
 
 #[cfg(test)]
 mod test;
+
+
+// TWAP Oracle integration extension (#781)
+impl OracleAdapter {
+    pub fn get_twap_price(env: &Env, oracle_address: &Address, asset_pair: Symbol, window_ledgers: u64) -> Result<i128, OracleAdapterError> {
+        // Query the PriceOracle TWAP endpoint across ring buffer history
+        let client = env.invoke_contract::<Result<i128, u32>>(
+            oracle_address,
+            &symbol_short!("get_twap"),
+            soroban_sdk::vec![env, asset_pair.to_val(), window_ledgers.into()],
+        );
+        match client {
+            Ok(price) => Ok(price),
+            Err(_) => Err(OracleAdapterError::NoValidOraclePrice),
+        }
+    }
+}

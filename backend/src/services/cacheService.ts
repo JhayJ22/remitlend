@@ -173,21 +173,31 @@ return 0
   }
 
   /**
-   * Invalidate multiple keys by a pattern (e.g. prefix)
-   * Note: KEYS is generally not recommended in production, but suitable for exact or bounded patterns.
+   * Delete every key matching a glob pattern (e.g. `pool:share-price:*`).
+   * Uses incremental SCAN rather than KEYS so a large keyspace never blocks
+   * Redis. Returns the number of keys deleted; never throws (a Redis outage
+   * degrades to TTL-bounded staleness).
    */
-  async invalidatePattern(pattern: string): Promise<void> {
+  async invalidateByPattern(pattern: string): Promise<number> {
     try {
       await this.ensureConnected();
-      const keys = await this.client!.keys(pattern);
-      if (keys.length > 0) {
-        await this.client!.del(keys);
+      let deleted = 0;
+      for await (const batch of this.client!.scanIterator({ MATCH: pattern, COUNT: 100 })) {
+        const keys = (Array.isArray(batch) ? batch : [batch]) as string[];
+        if (keys.length > 0) deleted += await this.client!.del(keys);
       }
+      return deleted;
     } catch (error) {
       if (process.env.NODE_ENV !== 'test') {
         logger.withContext().error(`Error invalidating pattern ${pattern}`, { error });
       }
+      return 0;
     }
+  }
+
+  /** @deprecated use {@link invalidateByPattern}. */
+  async invalidatePattern(pattern: string): Promise<void> {
+    await this.invalidateByPattern(pattern);
   }
 
   /**

@@ -1,7 +1,10 @@
 # .gitleaks.toml — gitleaks configuration for RemitLend.
 #
 # Issue #359: secrets inventory and automated exposure scanning.
-# This file governs the `secrets-scan` job in .github/workflows/ci.yml.
+# Issue #815: secret scanning in pre-commit hooks and CI.
+# This file governs the `secrets-scan` job in .github/workflows/ci.yml,
+# the `gitleaks detect` step in reusable-supply-chain-audit.yml, and the
+# `gitleaks protect --staged` Husky pre-commit hook.
 #
 # Reference: https://github.com/gitleaks/gitleaks#configuration
 
@@ -11,6 +14,27 @@ title = "RemitLend Gitleaks Configuration"
 # Inherit the upstream default ruleset so we get all standard patterns
 # (AWS keys, GitHub tokens, Stripe keys, RSA/EC private keys, etc.).
 useDefault = true
+
+# ── Custom rules ──────────────────────────────────────────────────────────────
+# Project-specific secret formats not covered by the upstream default ruleset.
+
+[[rules]]
+id = "stellar-secret-key"
+description = "Stellar secret key (S-prefixed 56-character base32 string)"
+# Stellar secret seeds are 56 base32 characters starting with 'S'.
+# The trailing boundary avoids matching longer base32 blobs.
+regex = '''\bS[A-Z2-7]{55}\b'''
+entropy = 3.5
+keywords = ["S"]
+
+[[rules]]
+id = "jwt"
+description = "JSON Web Token (header.payload.signature)"
+# Matches a base64url-encoded JWT header (starts with eyJ) followed by a
+# payload and signature segment. Common in auth tokens and test fixtures.
+regex = '''\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b'''
+entropy = 3.5
+keywords = ["eyJ"]
 
 # ── Allow-list entries ────────────────────────────────────────────────────────
 # Each entry specifies a pattern that gitleaks would flag as a secret but is

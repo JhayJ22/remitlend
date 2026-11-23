@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { AppError } from '../errors/AppError.js';
-import { ErrorCode } from '../errors/errorCodes.js';
+import { ErrorCode, getErrorDefinition } from '../errors/errorCodes.js';
 import logger from '../utils/logger.js';
 import { PoolSaturatedError } from '../db/connection.js';
 import { Sentry } from '../config/sentry.js';
@@ -81,15 +81,28 @@ export const errorHandler = (
       });
     }
 
+    // Resolve HTTP status and message from the central registry so the
+    // mapping lives in one place (errorCodes.ts) rather than being
+    // scattered across controllers/services.
+    const definition = getErrorDefinition(err.errorCode);
+    const statusCode = definition?.httpStatus ?? err.statusCode;
+    const message = err.isOperational
+      ? err.message
+      : (definition?.message ?? 'Internal server error');
+
     const errorDetail: Record<string, unknown> = {
       code: err.errorCode,
-      message: err.isOperational ? err.message : 'Internal server error',
+      message,
     };
+
+    if (definition?.docsUrl) {
+      errorDetail.docsUrl = definition.docsUrl;
+    }
 
     const errorResponse: Record<string, unknown> = {
       success: false,
       // Legacy format for backward compatibility
-      message: err.isOperational ? err.message : 'Internal server error',
+      message,
       // New structured format
       error: errorDetail,
     };
@@ -105,7 +118,7 @@ export const errorHandler = (
       errorDetail.details = err.details;
     }
 
-    res.status(err.statusCode).json(errorResponse);
+    res.status(statusCode).json(errorResponse);
     return;
   }
 

@@ -2,7 +2,7 @@ import logger from '../utils/logger.js';
 
 export interface FailoverEvent {
   timestamp: Date;
-  type: 'failover_activated' | 'failover_deactivated' | 'connection_retry';
+  type: 'failover_activated' | 'failover_deactivated' | 'connection_retry' | 'write_queue_timeout';
   details: {
     attempt?: number;
     backoffMs?: number;
@@ -41,6 +41,13 @@ export function recordFailoverEvent(event: Omit<FailoverEvent, 'timestamp'>): vo
       sendFailoverRecoveryAlert(failoverEvent);
       break;
 
+    case 'write_queue_timeout':
+      logger.error('Database write dropped: failover queue timeout', {
+        timestamp: failoverEvent.timestamp.toISOString(),
+        details: event.details,
+      });
+      break;
+
     case 'connection_retry':
       logger.debug('Database connection retry', {
         attempt: event.details.attempt,
@@ -55,9 +62,12 @@ export function getFailoverEvents(limit: number = 50): FailoverEvent[] {
 }
 
 export function isCurrentlyFailingOver(): boolean {
-  if (failoverEvents.length === 0) return false;
-  const lastEvent = failoverEvents[failoverEvents.length - 1];
-  return lastEvent.type === 'failover_activated';
+  for (let i = failoverEvents.length - 1; i >= 0; i--) {
+    const { type } = failoverEvents[i];
+    if (type === 'failover_activated') return true;
+    if (type === 'failover_deactivated') return false;
+  }
+  return false;
 }
 
 async function sendFailoverAlert(event: FailoverEvent): Promise<void> {
@@ -105,5 +115,31 @@ async function sendFailoverRecoveryAlert(event: FailoverEvent): Promise<void> {
     });
   } catch (error) {
     logger.debug('Failed to send recovery alert', { error });
+  }
+}
+
+/** Test helper: clears the in-memory event log. */
+export function resetFailoverEvents(): void {
+  failoverEvents.length = 0;
+/** Emit a CRITICAL alert (logged, and POSTed to FAILOVER_ALERT_WEBHOOK when configured). */
+export async function emitCriticalAlert(alert: {
+  title: string;
+  description: string;
+  details?: Record<string, unknown>;
+}): Promise<void> {
+  logger.error(`CRITICAL ALERT: ${alert.title}`, { description: alert.description, ...alert.details });
+  const webhookUrl = process.env.FAILOVER_ALERT_WEBHOOK;
+  if (!webhookUrl) return;
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ severity: 'critical', ...alert }),
+    });
+    if (!response.ok) {
+      logger.error('Critical alert webhook failed', { status: response.status });
+    }
+  } catch (error) {
+    logger.error('Failed to send critical alert', { error });
   }
 }

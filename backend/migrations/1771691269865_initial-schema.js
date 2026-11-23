@@ -133,6 +133,80 @@ export const up = (pgm) => {
       default: pgm.func('current_timestamp'),
     },
   });
+
+  // Governed data-access requests for analysts. Each request must state a
+  // purpose, select a minimal dataset, carry a bounded expiry, and name an
+  // approver distinct from the requester. State transitions are constrained
+  // so invalid or stale actions are rejected at the persistence boundary.
+  pgm.createTable('data_access_requests', {
+    id: 'id',
+    requester_id: { type: 'varchar(255)', notNull: true },
+    approver_id: { type: 'varchar(255)', notNull: true },
+    purpose: { type: 'varchar(500)', notNull: true },
+    dataset: { type: 'varchar(100)', notNull: true },
+    status: { type: 'varchar(20)', notNull: true, default: 'requested' },
+    requested_at: {
+      type: 'timestamp',
+      notNull: true,
+      default: pgm.func('current_timestamp'),
+    },
+    expires_at: { type: 'timestamp', notNull: true },
+    decided_at: { type: 'timestamp' },
+    revoked_at: { type: 'timestamp' },
+  });
+
+  pgm.addConstraint('data_access_requests', 'data_access_requests_status_check', {
+    check:
+      "status IN ('requested', 'approved', 'granted', 'denied', 'revoked', 'expired')",
+  });
+
+  // Requester cannot self-approve: approver must be a distinct actor.
+  pgm.addConstraint('data_access_requests', 'data_access_requests_distinct_approver_check', {
+    check: 'requester_id <> approver_id',
+  });
+
+  // Mandatory stated purpose and minimal dataset selection.
+  pgm.addConstraint('data_access_requests', 'data_access_requests_purpose_check', {
+    check: "length(btrim(purpose)) > 0",
+  });
+
+  pgm.addConstraint('data_access_requests', 'data_access_requests_dataset_check', {
+    check: "length(btrim(dataset)) > 0",
+  });
+
+  // Bounded expiry: must be after the request was made.
+  pgm.addConstraint('data_access_requests', 'data_access_requests_expiry_check', {
+    check: 'expires_at > requested_at',
+  });
+
+  pgm.createIndex('data_access_requests', ['status', 'expires_at']);
+  pgm.createIndex('data_access_requests', 'requester_id');
+
+  // Append-only audit log of every grant and revocation with actor, reason,
+  // and dataset scope. Never updated or deleted so the trail is authoritative.
+  pgm.createTable('data_access_audit_log', {
+    id: 'id',
+    request_id: {
+      type: 'integer',
+      notNull: true,
+      references: 'data_access_requests',
+    },
+    action: { type: 'varchar(20)', notNull: true },
+    actor_id: { type: 'varchar(255)', notNull: true },
+    dataset: { type: 'varchar(100)', notNull: true },
+    reason: { type: 'varchar(500)' },
+    created_at: {
+      type: 'timestamp',
+      notNull: true,
+      default: pgm.func('current_timestamp'),
+    },
+  });
+
+  pgm.addConstraint('data_access_audit_log', 'data_access_audit_log_action_check', {
+    check: "action IN ('granted', 'revoked', 'expired')",
+  });
+
+  pgm.createIndex('data_access_audit_log', ['request_id', 'created_at']);
 };
 
 /**
@@ -141,6 +215,8 @@ export const up = (pgm) => {
  * @returns {Promise<void> | void}
  */
 export const down = (pgm) => {
+  pgm.dropTable('data_access_audit_log');
+  pgm.dropTable('data_access_requests');
   pgm.dropTable('model_monitoring_thresholds');
   pgm.dropTable('model_monitoring_metrics');
   pgm.dropTable('loan_origination_snapshots');

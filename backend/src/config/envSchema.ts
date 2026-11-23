@@ -58,6 +58,11 @@ export const envSchema = z.object({
 
   INTERNAL_API_KEY: requiredString(),
 
+  /** HMAC key for the tamper-evident audit log chain (#796). Must differ from JWT_SECRET. */
+  AUDIT_LOG_KEY: optionalString().refine((v) => v === undefined || v.length >= 32, {
+    message: 'AUDIT_LOG_KEY must be at least 32 characters',
+  }),
+
   // ── Stellar ──────────────────────────────────────────────────────────────
   STELLAR_NETWORK: z.enum(['testnet', 'mainnet']).default('testnet'),
   STELLAR_RPC_URL: requiredString().url(),
@@ -75,6 +80,13 @@ export const envSchema = z.object({
   STELLAR_USDC_ISSUER: optionalString(),
   STELLAR_EURC_ISSUER: optionalString(),
   STELLAR_PHP_ISSUER: optionalString(),
+
+  /**
+   * When set to "true", an unreachable Stellar RPC at startup is treated as a
+   * fatal error. When absent or "false" the server starts in degraded mode and
+   * queues writes until the RPC recovers.
+   */
+  SOROBAN_REQUIRE_RPC_AT_STARTUP: booleanString().default('false' as unknown as never),
 
   // ── Loan configuration ────────────────────────────────────────────────────
   LOAN_MIN_SCORE: positiveInt(300, 850),
@@ -184,6 +196,10 @@ export const envSchema = z.object({
    * bounded and safe to attach to support tickets.
    */
   DIAGNOSTIC_BUNDLE_MAX_BYTES: positiveInt(1).default(65536 as unknown as never),
+
+  STATEMENT_SIGNING_PRIVATE_KEY_PEM: optionalString(),
+  STATEMENT_SIGNING_KEY_ID: optionalString().default('statement-signing-default'),
+  STATEMENT_SUBJECT_PEPPER: optionalString(),
 
   // ── External services (optional) ─────────────────────────────────────────
   SENTRY_DSN: optionalString(),

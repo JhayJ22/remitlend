@@ -56,3 +56,23 @@ funds move.
 - Wrong network → initialization reverts.
 - Duplicate asset registration → registration rejected.
 - Unknown asset (no registry entry) → initialization reverts.
+
+## API reference (allowlist enforcement)
+
+### `POST /admin/assets` (admin JWT, audit-logged)
+
+Onboards an asset onto the allowlist. Body:
+
+| Field | Type | Notes |
+|---|---|---|
+| `assetCode` | string | Stellar asset code, 1–12 alphanumeric chars |
+| `issuer` | string | Issuer account (`G…`) |
+| `tokenAddress` | string | Soroban token contract (`C…`); the allowlist key |
+| `decimals` | integer | 0–18 |
+| `minLoanAmount` / `maxLoanAmount` | string | Integer strings in the asset's smallest unit; `max >= min` |
+
+Responses: `201` with `{ success, asset }`; `400` on validation errors or if the asset is already onboarded. Documented in Swagger under the `Admin` tag.
+
+### Enforcement
+
+`approve_loan` (`buildApproveLoanTx`) and pool deposit (`buildDepositTx`) check the requested token against the allowlist and fail with `400 ASSET_NOT_SUPPORTED` if it is absent. The allowlist is read from `supported_assets` and cached in-process for 5 minutes; onboarding invalidates the cache on the handling instance, other instances pick up the change when their TTL expires.

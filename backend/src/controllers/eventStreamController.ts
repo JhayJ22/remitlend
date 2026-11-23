@@ -34,14 +34,40 @@ const parseLastEventId = (req: Request): string | null => {
 };
 
 /**
- * GET /api/events/stream?borrower=G...
+ * Parse the `topics` query parameter into a normalized list of topic names.
+ * Accepts a comma-separated string (e.g. `topics=loan_updated,pool_updated`)
+ * or a repeated query parameter. Returns `undefined` when no topics are
+ * requested, meaning the client wants every event.
+ */
+const parseTopics = (req: Request): string[] | undefined => {
+  const raw = req.query.topics;
+  const values: string[] = [];
+
+  if (typeof raw === 'string') {
+    values.push(...raw.split(','));
+  } else if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (typeof entry === 'string') {
+        values.push(...entry.split(','));
+      }
+    }
+  }
+
+  const topics = values.map((topic) => topic.trim()).filter((topic) => topic.length > 0);
+  return topics.length > 0 ? Array.from(new Set(topics)) : undefined;
+};
+
+/**
+ * GET /api/events/stream?borrower=G...&topics=loan_updated,pool_updated
  *
  * SSE endpoint for real-time loan events.
  * - With `?borrower=G...` — streams events for that specific borrower (requires JWT matching)
  * - Without `?borrower` — streams all events (requires API key for admin access)
+ * - With `?topics=a,b` — only events matching the listed topics are dispatched
  */
 export const streamEvents = asyncHandler(async (req: Request, res: Response) => {
   const requestedBorrower = typeof req.query.borrower === 'string' ? req.query.borrower : undefined;
+  const topics = parseTopics(req);
   const lastEventId = parseLastEventId(req);
   const userKey = req.user?.publicKey;
   const role = req.user?.role;
@@ -93,16 +119,20 @@ export const streamEvents = asyncHandler(async (req: Request, res: Response) => 
 
       if (replayEvents.rows.length > 0) {
         for (const row of replayEvents.rows) {
-          eventStreamService.sendEvent(res, mapLoanEventRow(row as DbEventRow));
+          const event = mapLoanEventRow(row as DbEventRow);
+          if (topics && !topics.includes(event.eventType)) {
+            continue;
+          }
+          eventStreamService.sendEvent(res, event);
         }
       } else if (!lastEventId) {
-        res.write(`event: init\ndata: ${JSON.stringify({ type: 'init', replayed: 0 })}\n\n`);
+        res.write(`event: init\ndata: ${JSON.stringify({ type: 'init', replayed: 0, topics: topics ?? null })}\n\n`);
       }
     } catch (err) {
       logger.withContext().error('SSE replay fetch error', { borrower, lastEventId, err });
     }
 
-    unsubscribe = eventStreamService.subscribeAddress(userKey, borrower, res);
+    unsubscribe = eventStreamService.subscribeAddress(userKey, borrower, res, topics);
   } else {
     try {
       const replayEvents = await query(
@@ -119,7 +149,11 @@ export const streamEvents = asyncHandler(async (req: Request, res: Response) => 
 
       if (replayEvents.rows.length > 0) {
         for (const row of replayEvents.rows) {
-          eventStreamService.sendEvent(res, mapLoanEventRow(row as DbEventRow));
+          const event = mapLoanEventRow(row as DbEventRow);
+          if (topics && !topics.includes(event.eventType)) {
+            continue;
+          }
+          eventStreamService.sendEvent(res, event);
         }
       }
     } catch (err) {
@@ -127,8 +161,8 @@ export const streamEvents = asyncHandler(async (req: Request, res: Response) => 
     }
 
     const counts = eventStreamService.getConnectionCount();
-    res.write(`event: init\ndata: ${JSON.stringify({ type: 'init', connections: counts })}\n\n`);
-    unsubscribe = eventStreamService.subscribeAll(userKey, res);
+    res.write(`event: init\ndata: ${JSON.stringify({ type: 'init', connections: counts, topics: topics ?? null })}\n\n`);
+    unsubscribe = eventStreamService.subscribeAll(userKey, res, topics);
   }
 
   req.on('close', unsubscribe);

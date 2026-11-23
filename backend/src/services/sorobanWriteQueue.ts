@@ -1,7 +1,7 @@
 import logger from '../utils/logger.js';
 import { query } from '../db/connection.js';
 
-export type SorobanQueuedWriteStatus = 'pending' | 'replaying' | 'applied' | 'failed';
+export type SorobanQueuedWriteStatus = 'pending' | 'replaying' | 'applied' | 'failed' | 'dead_lettered';
 
 export interface SorobanQueuedWrite {
   id: number;
@@ -10,8 +10,12 @@ export interface SorobanQueuedWrite {
   payload: Record<string, unknown>;
   status: SorobanQueuedWriteStatus;
   attempts: number;
+  /** Bounded retry ceiling; a write that reaches this many attempts is dead-lettered. */
+  maxAttempts: number;
   lastError: string | null;
   nextAttemptAt: string;
+  deadLetteredAt: string | null;
+  deadLetterReason: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -30,7 +34,11 @@ export interface SorobanWriteQueueStore {
   listReady(limit: number): Promise<SorobanQueuedWrite[]>;
   markApplied(id: number): Promise<void>;
   markPendingAfterFailure(id: number, error: string, nextAttemptAt: Date): Promise<void>;
+  markDeadLetter(id: number, reason: string): Promise<void>;
+  redrive(id: number): Promise<void>;
+  listDeadLetters(limit: number): Promise<SorobanQueuedWrite[]>;
   countPending(): Promise<number>;
+  countDeadLettered(): Promise<number>;
 }
 
 interface SorobanWriteQueueRow {
@@ -40,8 +48,11 @@ interface SorobanWriteQueueRow {
   payload: Record<string, unknown>;
   status: SorobanQueuedWriteStatus;
   attempts: number;
+  max_attempts: number;
   last_error: string | null;
   next_attempt_at: Date | string;
+  dead_lettered_at: Date | string | null;
+  dead_letter_reason: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -54,8 +65,11 @@ function toRecord(row: SorobanWriteQueueRow): SorobanQueuedWrite {
     payload: row.payload,
     status: row.status,
     attempts: row.attempts,
+    maxAttempts: row.max_attempts,
     lastError: row.last_error,
     nextAttemptAt: new Date(row.next_attempt_at).toISOString(),
+    deadLetteredAt: row.dead_lettered_at ? new Date(row.dead_lettered_at).toISOString() : null,
+    deadLetterReason: row.dead_letter_reason ?? null,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };
@@ -66,6 +80,11 @@ function readPositiveInt(name: string, fallback: number): number {
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** Bounded retry ceiling for a queued write (#857). */
+function defaultMaxAttempts(): number {
+  return readPositiveInt('TX_SUBMISSION_MAX_ATTEMPTS', 10);
 }
 
 /**
@@ -83,11 +102,11 @@ export class PgSorobanWriteQueueStore implements SorobanWriteQueueStore {
     inserted: boolean;
   }> {
     const result = await query(
-      `INSERT INTO soroban_write_queue (idempotency_key, operation, payload)
-       VALUES ($1, $2, $3)
+      `INSERT INTO soroban_write_queue (idempotency_key, operation, payload, max_attempts)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (idempotency_key) DO NOTHING
        RETURNING *`,
-      [input.idempotencyKey, input.operation, JSON.stringify(input.payload)],
+      [input.idempotencyKey, input.operation, JSON.stringify(input.payload), defaultMaxAttempts()],
     );
 
     const insertedRow = result.rows[0] as SorobanWriteQueueRow | undefined;
@@ -152,6 +171,53 @@ export class PgSorobanWriteQueueStore implements SorobanWriteQueueStore {
     const row = result.rows[0] as { count: number } | undefined;
     return row?.count ?? 0;
   }
+
+  async markDeadLetter(id: number, reason: string): Promise<void> {
+    await query(
+      `UPDATE soroban_write_queue
+       SET status = 'dead_lettered',
+           dead_lettered_at = NOW(),
+           dead_letter_reason = $2,
+           next_attempt_at = NULL,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [id, reason],
+    );
+  }
+
+  async redrive(id: number): Promise<void> {
+    await query(
+      `UPDATE soroban_write_queue
+       SET status = 'pending',
+           attempts = 0,
+           dead_lettered_at = NULL,
+           dead_letter_reason = NULL,
+           last_error = NULL,
+           next_attempt_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1 AND status = 'dead_lettered'`,
+      [id],
+    );
+  }
+
+  async listDeadLetters(limit: number): Promise<SorobanQueuedWrite[]> {
+    const result = await query(
+      `SELECT * FROM soroban_write_queue
+       WHERE status = 'dead_lettered'
+       ORDER BY dead_lettered_at DESC, id DESC
+       LIMIT $1`,
+      [limit],
+    );
+    return (result.rows as SorobanWriteQueueRow[]).map(toRecord);
+  }
+
+  async countDeadLettered(): Promise<number> {
+    const result = await query(
+      `SELECT COUNT(*)::int AS count FROM soroban_write_queue WHERE status = 'dead_lettered'`,
+    );
+    const row = result.rows[0] as { count: number } | undefined;
+    return row?.count ?? 0;
+  }
 }
 
 /**
@@ -179,8 +245,11 @@ export class InMemorySorobanWriteQueueStore implements SorobanWriteQueueStore {
       payload: { ...input.payload },
       status: 'pending',
       attempts: 0,
+      maxAttempts: defaultMaxAttempts(),
       lastError: null,
       nextAttemptAt: now,
+      deadLetteredAt: null,
+      deadLetterReason: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -224,6 +293,42 @@ export class InMemorySorobanWriteQueueStore implements SorobanWriteQueueStore {
 
   async countPending(): Promise<number> {
     return this.rows.filter((row) => row.status === 'pending').length;
+  }
+
+  async markDeadLetter(id: number, reason: string): Promise<void> {
+    const row = this.rows.find((candidate) => candidate.id === id);
+    if (row) {
+      row.status = 'dead_lettered';
+      row.deadLetteredAt = new Date().toISOString();
+      row.deadLetterReason = reason;
+      row.nextAttemptAt = new Date(0).toISOString();
+      row.updatedAt = new Date().toISOString();
+    }
+  }
+
+  async redrive(id: number): Promise<void> {
+    const row = this.rows.find((candidate) => candidate.id === id && candidate.status === 'dead_lettered');
+    if (row) {
+      row.status = 'pending';
+      row.attempts = 0;
+      row.deadLetteredAt = null;
+      row.deadLetterReason = null;
+      row.lastError = null;
+      row.nextAttemptAt = new Date().toISOString();
+      row.updatedAt = new Date().toISOString();
+    }
+  }
+
+  async listDeadLetters(limit: number): Promise<SorobanQueuedWrite[]> {
+    return this.rows
+      .filter((row) => row.status === 'dead_lettered')
+      .sort((a, b) => (b.deadLetteredAt ?? '').localeCompare(a.deadLetteredAt ?? ''))
+      .slice(0, limit)
+      .map((row) => ({ ...row }));
+  }
+
+  async countDeadLettered(): Promise<number> {
+    return this.rows.filter((row) => row.status === 'dead_lettered').length;
   }
 }
 
@@ -275,6 +380,40 @@ export class SorobanWriteQueue {
 
   async pendingCount(): Promise<number> {
     return this.store.countPending();
+  }
+
+  /**
+   * Moves a write to the dead-letter store after exhausting its bounded retry
+   * ceiling, so the replay loop can never retry-storm forever (#857). The
+   * signed payload is preserved unchanged for operator re-drive.
+   */
+  async markDeadLetter(id: number, reason: string): Promise<void> {
+    await this.store.markDeadLetter(id, reason);
+    logger
+      .withContext({ module: 'soroban-write-queue' })
+      .error('Soroban write dead-lettered after exhausting bounded retries', {
+        id,
+        reason,
+      });
+  }
+
+  /** Re-queues a dead-lettered write for another bounded retry pass. */
+  async redrive(id: number): Promise<void> {
+    await this.store.redrive(id);
+  }
+
+  async listDeadLetters(limit: number): Promise<SorobanQueuedWrite[]> {
+    return this.store.listDeadLetters(limit);
+  }
+
+  async deadLetterCount(): Promise<number> {
+    return this.store.countDeadLettered();
+  }
+
+  /** True when `nextAttempts` reaches the write's bounded retry ceiling. */
+  shouldDeadLetter(write: SorobanQueuedWrite, nextAttempts: number): boolean {
+    const ceiling = write.maxAttempts > 0 ? write.maxAttempts : defaultMaxAttempts();
+    return nextAttempts >= ceiling;
   }
 
   private backoffMs(attempts: number): number {

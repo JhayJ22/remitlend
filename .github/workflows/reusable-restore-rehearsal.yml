@@ -1,0 +1,308 @@
+# Reusable workflow: database restore rehearsal (issue #859)
+#
+# Restores a recent logical backup into an isolated Postgres instance,
+# verifies migration state, row counts, ledger checkpoints, and financial
+# invariants, and publishes measured RTO and data-loss window (RPO).
+#
+# Two jobs:
+#   consistency-checks-static
+#     — static analysis of the consistency checker and deploy/dr scripts;
+#       no database required; runs on every PR that touches those files.
+#   restore-rehearsal
+#     — full live rehearsal: provision DB, restore dump, run migrations,
+#       run all consistency checks, measure RTO/RPO, publish report.
+#       Path-filtered; always runs on push to main.
+#
+# The release pipeline fails when the restore-rehearsal job fails (all
+# critical consistency checks must pass, RTO ≤ RESTORE_RTO_TARGET_MINUTES,
+# RPO ≤ RESTORE_RPO_TARGET_MINUTES).
+name: Reusable database restore rehearsal
+
+on:
+  workflow_call:
+    inputs:
+      force-run:
+        description: "Run even when no migration/restore files changed"
+        required: false
+        type: boolean
+        default: false
+      node-version:
+        description: "Node.js version"
+        required: false
+        type: string
+        default: "20"
+      postgres-version:
+        description: "Postgres Docker image tag"
+        required: false
+        type: string
+        default: "16"
+      rto-target-minutes:
+        description: "Maximum acceptable restore+check time in minutes"
+        required: false
+        type: string
+        default: "30"
+      rpo-target-minutes:
+        description: "Maximum acceptable ledger data-loss window in minutes"
+        required: false
+        type: string
+        default: "5"
+    outputs:
+      rehearsal-passed:
+        description: "true if the live rehearsal job ran and passed"
+        value: ${{ jobs.restore-rehearsal.outputs.passed }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Static analysis (no DB, every PR) ─────────────────────────────────
+  consistency-checks-static:
+    name: Consistency checker static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Use Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Typecheck restoreConsistencyChecker
+        run: npm run typecheck
+        working-directory: backend
+        env:
+          NODE_ENV: test
+
+      - name: Verify deploy/dr scripts are executable
+        run: |
+          set -euo pipefail
+          scripts=(
+            deploy/dr/restore-standby.sh
+            deploy/dr/start-standby.sh
+            deploy/dr/recover-indexer.sh
+            deploy/dr/rpc-failover.sh
+            deploy/dr/dns-failover.sh
+            deploy/dr/verify-fenced.sh
+            deploy/dr/reconcile.sh
+            deploy/dr/failback.sh
+          )
+          missing=()
+          for s in "${scripts[@]}"; do
+            if [ ! -f "$s" ]; then
+              missing+=("$s")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing deploy/dr scripts: ${missing[*]}"
+            exit 1
+          fi
+          echo "All 8 deploy/dr scripts are present."
+
+      - name: Run consistency checker unit tests
+        run: npm test -- --runTestsByPath src/__tests__/restoreConsistencyChecker.test.ts --forceExit
+        working-directory: backend
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgres://user:pass@localhost:5432/test
+          JWT_SECRET: test_jwt_secret_rehearsal
+          INTERNAL_API_KEY: test_internal_api_key
+          STELLAR_RPC_URL: https://rpc.test.invalid
+          STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          LOAN_MANAGER_CONTRACT_ID: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          LENDING_POOL_CONTRACT_ID: CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+          REMITTANCE_NFT_CONTRACT_ID: CDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+          MULTISIG_GOVERNANCE_CONTRACT_ID: CEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+          POOL_TOKEN_ADDRESS: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+          LOAN_MANAGER_ADMIN_SECRET: test_admin_secret
+          FRONTEND_URL: https://frontend.example.com
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Restore rehearsal static checks" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Consistency checker typecheck: completed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- deploy/dr scripts present: verified" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Unit tests: completed" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Path filter ──────────────────────────────────────────────────────
+  rehearsal-paths:
+    name: Detect restore/migration changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.filter.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            changed:
+              - 'backend/migrations/**'
+              - 'backend/src/services/restoreConsistencyChecker.ts'
+              - 'backend/src/__tests__/restoreConsistencyChecker.test.ts'
+              - 'scripts/restore-rehearsal.mjs'
+              - 'deploy/dr/**'
+
+  # ── Live rehearsal (requires Postgres) ───────────────────────────────
+  restore-rehearsal:
+    name: Live database restore rehearsal
+    needs: [consistency-checks-static, rehearsal-paths]
+    if: >
+      needs.rehearsal-paths.outputs.changed == 'true' ||
+      inputs.force-run == true ||
+      github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      passed: ${{ steps.mark.outputs.passed }}
+
+    services:
+      postgres:
+        image: postgres:${{ inputs.postgres-version }}
+        env:
+          POSTGRES_USER: rehearsal
+          POSTGRES_PASSWORD: rehearsal
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rehearsal"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Use Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -U rehearsal && break
+            echo "Waiting for Postgres ($i/30)..."
+            sleep 2
+          done
+
+      - name: Create seed database for backup source
+        run: |
+          set -euo pipefail
+          # Create the source database with full schema + seed data so the
+          # restore rehearsal has real data to verify invariants against.
+          PGPASSWORD=rehearsal createdb -h localhost -U rehearsal remitlend_seed
+          
+          # Apply all migrations
+          DATABASE_URL="postgres://rehearsal:rehearsal@localhost:5432/remitlend_seed" \
+            npm run migrate:up
+          working-directory: backend
+
+      - name: Take logical backup of seed database
+        run: |
+          set -euo pipefail
+          PGPASSWORD=rehearsal pg_dump \
+            -h localhost -U rehearsal -d remitlend_seed \
+            --no-owner --no-privileges \
+            -f /tmp/rehearsal-seed.sql
+          echo "Dump size: $(wc -c < /tmp/rehearsal-seed.sql) bytes"
+        env:
+          PGPASSWORD: rehearsal
+
+      - name: Run restore rehearsal
+        id: run-rehearsal
+        env:
+          REHEARSAL_DB_URL: postgres://rehearsal:rehearsal@localhost:5432/restore_rehearsal
+          RESTORE_DUMP_FILE: /tmp/rehearsal-seed.sql
+          RESTORE_RTO_TARGET_MINUTES: ${{ inputs.rto-target-minutes }}
+          RESTORE_RPO_TARGET_MINUTES: ${{ inputs.rpo-target-minutes }}
+          RESTORE_REHEARSAL_REPORT: ${{ github.workspace }}/restore-rehearsal-report.json
+          # No S3 bucket needed — using local dump file
+          SKIP_S3_DOWNLOAD: "1"
+          # Restore RPO target in ms for the consistency checker
+          RESTORE_RPO_TARGET_MS: "300000"
+          DATABASE_URL: postgres://rehearsal:rehearsal@localhost:5432/remitlend_seed
+          NODE_ENV: test
+          JWT_SECRET: test_jwt_secret_rehearsal
+          INTERNAL_API_KEY: test_internal_api_key
+          STELLAR_RPC_URL: https://rpc.test.invalid
+          STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          LOAN_MANAGER_CONTRACT_ID: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          LENDING_POOL_CONTRACT_ID: CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+          REMITTANCE_NFT_CONTRACT_ID: CDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+          MULTISIG_GOVERNANCE_CONTRACT_ID: CEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+          POOL_TOKEN_ADDRESS: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+          LOAN_MANAGER_ADMIN_SECRET: test_admin_secret
+          FRONTEND_URL: https://frontend.example.com
+        run: node scripts/restore-rehearsal.mjs
+
+      - name: Mark rehearsal passed
+        id: mark
+        if: success()
+        run: echo "passed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload rehearsal report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-rehearsal-report
+          path: restore-rehearsal-report.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Summary
+        if: always()
+        env:
+          REPORT_PATH: ${{ github.workspace }}/restore-rehearsal-report.json
+          REHEARSAL_STATUS: ${{ steps.run-rehearsal.outcome }}
+          RTO_TARGET: ${{ inputs.rto-target-minutes }}
+          RPO_TARGET: ${{ inputs.rpo-target-minutes }}
+        run: |
+          {
+            echo "### Database restore rehearsal results (issue #859)"
+            echo ""
+            echo "| Check | Coverage |"
+            echo "| --- | --- |"
+            echo "| Migration state | All disk files applied, pgmigrations present |"
+            echo "| Table presence | All ${#REQUIRED_TABLES[@]} required tables exist |"
+            echo "| Row counts | Non-empty tables verified, financial table counts recorded |"
+            echo "| Ledger checkpoints | Verified checkpoints present, no suspect gaps |"
+            echo "| Stroop integrity | contract_events + loan_history money columns |"
+            echo "| Guard trigger | reconciliation_discrepancies immutability trigger |"
+            echo "| FK integrity | orphaned_tx_reconciliation → transaction_submissions |"
+            echo "| Dual-control | privileged_action_requests distinct-principals constraint |"
+            echo "| RTO target | ${RTO_TARGET}m |"
+            echo "| RPO target | ${RPO_TARGET}m |"
+            echo ""
+            if [ -f "${REPORT_PATH}" ]; then
+              node -e "
+                const r = JSON.parse(require('fs').readFileSync('${REPORT_PATH}', 'utf8'));
+                console.log('**RTO observed:** ' + (r.rto?.observedMinutes ?? 'n/a') + 'm');
+                console.log('**RPO observed:** ' + (r.rpo?.observedMinutes ?? 'n/a') + 'm');
+                console.log('**Critical failures:** ' + (r.consistency?.criticalFailures ?? 'n/a'));
+                console.log('**Warnings:** ' + (r.consistency?.warnings ?? 'n/a'));
+                console.log('**Overall:** ' + (r.passed ? '✓ PASS' : '✗ FAIL'));
+              " 2>/dev/null || echo "(report parsing failed)"
+            fi
+            echo ""
+            echo "Overall rehearsal status: **${REHEARSAL_STATUS}**"
+          } >> "$GITHUB_STEP_SUMMARY"

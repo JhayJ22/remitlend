@@ -24,7 +24,10 @@ export type CacheResource =
   | 'borrower_loans'
   | 'score_response'
   | 'score_breakdown'
-  | 'pool_share_price';
+  | 'pool_share_price'
+  | 'user_profile'
+  | 'score_history_onchain'
+  | 'score_nft';
 
 export interface CacheContract {
   sourceOfTruth: string;
@@ -59,9 +62,114 @@ export const CACHE_CONTRACTS: Readonly<Record<CacheResource, CacheContract>> = {
   pool_share_price: {
     sourceOfTruth: 'Soroban pool contract get_share_price (chain)',
     maxStalenessSeconds: 30,
-    invalidationTrigger: 'TTL expiry only (30s bound); no event invalidation',
+    invalidationTrigger:
+      'API deposit/withdraw/emergency-withdraw/repay/pool submit/liquidate (pattern pool:share-price:*); 30s TTL bound',
+  },
+  user_profile: {
+    sourceOfTruth: 'Postgres user_profiles',
+    maxStalenessSeconds: 120,
+    invalidationTrigger: 'invalidateOnProfileUpdate after PATCH /user/profile commits',
+  },
+  score_history_onchain: {
+    sourceOfTruth: 'Soroban RemittanceNFT contract score history (chain)',
+    maxStalenessSeconds: 60,
+    invalidationTrigger: 'TTL expiry only (60s bound); written by chain, not by any API write',
+  },
+  score_nft: {
+    sourceOfTruth: 'Soroban RemittanceNFT contract metadata (chain)',
+    maxStalenessSeconds: 60,
+    invalidationTrigger: 'TTL expiry only (60s bound); written by chain, not by any API write',
   },
 };
+
+/**
+ * Write → invalidation mapping (#794). Every API write endpoint that changes
+ * data served by a cached GET is listed with the resources it busts and the
+ * GET endpoints that read them. `cacheInvalidation.test.ts` asserts each pair:
+ * the helper named in `invalidator` deletes the keys the GETs read.
+ */
+export interface WriteInvalidation {
+  /** HTTP method + path of the write endpoint. */
+  write: string;
+  /** Exported helper in cacheKeys.ts the handler calls after success. */
+  invalidator: string;
+  resources: CacheResource[];
+  /** Cached GET endpoints whose data the write changes. */
+  reads: string[];
+}
+
+export const WRITE_INVALIDATIONS: ReadonlyArray<WriteInvalidation> = [
+  {
+    write: 'POST /loans/request',
+    invalidator: 'invalidateOnLoanRequest',
+    resources: ['pool_stats', 'borrower_loans'],
+    reads: ['GET /pool/stats', 'GET /loans/borrower/:borrower'],
+  },
+  {
+    write: 'POST /loans/:loanId/repay',
+    invalidator: 'invalidateOnRepay',
+    resources: ['pool_stats', 'borrower_loans', 'score_breakdown', 'pool_share_price'],
+    reads: [
+      'GET /pool/stats',
+      'GET /loans/borrower/:borrower',
+      'GET /score/:userId/breakdown',
+      'GET /pool/:token/share-price',
+    ],
+  },
+  {
+    write: 'POST /loans/:loanId/submit',
+    invalidator: 'invalidateOnRepay',
+    resources: ['pool_stats', 'borrower_loans', 'score_breakdown', 'pool_share_price'],
+    reads: [
+      'GET /pool/stats',
+      'GET /loans/borrower/:borrower',
+      'GET /score/:userId/breakdown',
+      'GET /pool/:token/share-price',
+    ],
+  },
+  ...[
+    'POST /loans/:loanId/build-deposit-collateral',
+    'POST /loans/:loanId/build-release-collateral',
+    'POST /loans/:loanId/build-refinance',
+    'POST /loans/:loanId/build-extend',
+    'POST /loans/:loanId/build-cancel',
+  ].map((write) => ({
+    write,
+    invalidator: 'invalidateOnLoanMutation',
+    resources: ['pool_stats', 'borrower_loans'] as CacheResource[],
+    reads: ['GET /pool/stats', 'GET /loans/borrower/:borrower'],
+  })),
+  {
+    write: 'POST /loans/:loanId/liquidate/build',
+    invalidator: 'invalidateOnUnscopedLoanWrite',
+    resources: ['pool_stats', 'borrower_loans', 'pool_share_price'],
+    reads: ['GET /pool/stats', 'GET /loans/borrower/:borrower', 'GET /pool/:token/share-price'],
+  },
+  ...['POST /pool/build-deposit', 'POST /pool/submit'].map((write) => ({
+    write,
+    invalidator: 'invalidateOnDeposit',
+    resources: ['pool_stats', 'pool_share_price'] as CacheResource[],
+    reads: ['GET /pool/stats', 'GET /pool/:token/share-price'],
+  })),
+  ...['POST /pool/build-withdraw', 'POST /pool/build-emergency-withdraw'].map((write) => ({
+    write,
+    invalidator: 'invalidateOnWithdraw',
+    resources: ['pool_stats', 'pool_share_price'] as CacheResource[],
+    reads: ['GET /pool/stats', 'GET /pool/:token/share-price'],
+  })),
+  {
+    write: 'POST /score/update',
+    invalidator: 'invalidateOnScoreUpdate',
+    resources: ['score_response', 'score_breakdown'],
+    reads: ['GET /score/:userId', 'GET /score/:userId/breakdown'],
+  },
+  {
+    write: 'PATCH /user/profile',
+    invalidator: 'invalidateOnProfileUpdate',
+    resources: ['user_profile'],
+    reads: ['GET /user/profile'],
+  },
+];
 
 const generations: Record<CacheResource, number> = {
   pool_stats: 0,
@@ -69,6 +177,9 @@ const generations: Record<CacheResource, number> = {
   score_response: 0,
   score_breakdown: 0,
   pool_share_price: 0,
+  user_profile: 0,
+  score_history_onchain: 0,
+  score_nft: 0,
 };
 
 /** Delete exact keys; meter attempts and unconfirmed deletes. Never throws. */
@@ -161,6 +272,10 @@ export async function readThrough<T>(
     cacheStaleReadCounter.inc({ resource, outcome: 'race_skipped' });
     return value;
   }
-  await cacheService.set(key, value, ttl);
+  try {
+    await cacheService.set(key, value, ttl);
+  } catch {
+    cacheStaleReadCounter.inc({ resource, outcome: 'backend_error' });
+  }
   return value;
 }

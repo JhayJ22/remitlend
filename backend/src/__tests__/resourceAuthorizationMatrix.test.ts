@@ -39,6 +39,9 @@ jest.unstable_mockModule('../db/connection.js', () => {
     query: connection.query,
     getClient: connection.getClient,
     withTransaction: connection.withTransaction,
+    closePool: jest.fn(),
+    PoolSaturatedError: class PoolSaturatedError extends Error {},
+    TRANSIENT_ERROR_CODES: new Set<string>(),
   };
 });
 
@@ -142,6 +145,7 @@ describe('cross-principal probes', () => {
       it('rejects unauthenticated callers with 401', async () => {
         const res = await request(app)
           [method](concretePath(entry, route, OWNER))
+          .set('Idempotency-Key', `unauth-${key.replace(/\W/g, '-')}`)
           .send(body);
         expect(res.status).toBe(401);
       });

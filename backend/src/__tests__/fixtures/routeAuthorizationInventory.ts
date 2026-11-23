@@ -233,9 +233,39 @@ export const ROUTE_INVENTORY: Record<string, InventoryEntry> = {
     ownership: 'self',
     exempt: 'builds an unsigned transaction for the caller; depositor key checked in controller',
   },
+  'poolRoutes.ts POST /submit': {
+    mount: '/api/pool',
+    roles: ALL,
+    ownership: 'none',
+    exempt: 'submits a caller-supplied signed transaction; no stored user-owned resource',
+  },
+  'poolRoutes.ts POST /build-emergency-withdraw': {
+    mount: '/api/pool',
+    roles: ['lender', 'admin'],
+    ownership: 'self',
+    exempt: 'builds an unsigned transaction for the caller; depositor key checked in controller',
+  },
 
   // Transactions / events
   'transactionRoutes.ts GET /me': { mount: '/api/transactions', roles: ALL, ownership: 'self' },
+  'transactionRoutes.ts POST /:txHash/diagnostic-bundle': {
+    mount: '/api/transactions',
+    roles: B,
+    ownership: 'sender-record',
+    exempt: 'owner-scoped diagnostic export; cross-tenant probes live in tenantIsolation.test.ts',
+  },
+  'transactionRoutes.ts GET /:txHash/diagnostic-bundle/:bundleId': {
+    mount: '/api/transactions',
+    roles: B,
+    ownership: 'sender-record',
+    exempt: 'owner-scoped diagnostic export; cross-tenant probes live in tenantIsolation.test.ts',
+  },
+  'transactionRoutes.ts DELETE /:txHash/diagnostic-bundle/:bundleId': {
+    mount: '/api/transactions',
+    roles: B,
+    ownership: 'sender-record',
+    exempt: 'owner-scoped diagnostic export; cross-tenant probes live in tenantIsolation.test.ts',
+  },
   'eventRoutes.ts GET /stream': { mount: '/api/events', roles: ALL, ownership: 'self' },
   'eventRoutes.ts GET /status': {
     mount: '/api/events',

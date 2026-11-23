@@ -63,9 +63,57 @@ DELETE /transactions/{id}/diagnostic-bundle/{bundleId}
 
 Deletion removes the stored artifact. Support should delete bundles once an incident is resolved rather than retaining them.
 
+## Tenant isolation, states, and failure behavior
+
+A bundle is owned by the JWT `publicKey` of the wallet that submitted the
+transaction. The transaction reference is resolved with a single ownership-scoped
+query (`WHERE (id::text = $1 OR tx_hash = $1) AND submitted_by = $2`); a missing
+reference and a reference owned by a different wallet therefore follow the same
+code path and return the same `404` body. Bundle reads and deletes are likewise
+scoped by `id AND submitted_by`, and no unscoped identifier lookup is performed
+before the ownership check. This is what prevents identifier, timing, and error
+message differences from disclosing another user's data.
+
+Supported bundle states and responses:
+
+| State     | Condition                                 | API result                                |
+| --------- | ----------------------------------------- | ----------------------------------------- |
+| `active`  | Owner request before expiry               | `200` with allowlisted, redacted contents |
+| `expired` | Owner request after `expiresAt`           | `410` with no contents                    |
+| `absent`  | Unknown id, or id owned by another wallet | `404`, identical for both cases           |
+| `deleted` | Owner deleted the bundle                  | `404`, identical to `absent`              |
+
+Input constraints: the reference and bundle id must be non-empty strings;
+generation requires `{ "confirm": true }`; write requests require an
+`Idempotency-Key` header. Invalid input is rejected with `400` before any bundle
+is persisted, so a rejected or stale action has no partial side effect. Audit
+correlation and audit-log writes are best-effort and never block generation;
+a failure of the primary database query propagates without creating a bundle.
+
+### Compatibility and migration
+
+No public schema changes are introduced by the isolation fix. The transaction
+reference may be either the numeric id or the `tx_hash`, so clients using either
+form keep working. Stored bundles keep the same JSON shape and expiry semantics;
+the only behavioral change is that a foreign or missing reference is now
+indistinguishable in status, body, and query count. No data migration is needed.
+
 ## Test guarantee
 
 The test suite seeds known secrets and PII into the systems a bundle draws from, then generates bundles and asserts that **none** of the seeded values appear in the resulting artifacts. This proves that wallet secrets, signed envelopes, raw XDR, and PII cannot leak into a generated bundle. Any change to the allowlist or redaction logic must keep these tests passing.
+
+`backend/src/__tests__/tenantIsolation.test.ts` extends that guarantee across
+the export, API, retry, and asynchronous worker paths: cross-wallet create/read/
+delete probes must return byte-identical `404` responses, scoped SQL parameters
+must always include the caller key, webhook retries must deliver each tenant's
+payload only to its own subscriber, and the Soroban replay worker must not let a
+later tenant's write overtake a failed earlier one. Reproduce with:
+
+```bash
+cd backend
+npm ci --legacy-peer-deps
+npm run test:tenant-isolation
+```
 
 ## Related documentation
 

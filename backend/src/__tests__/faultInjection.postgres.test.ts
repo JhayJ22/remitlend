@@ -34,8 +34,14 @@ jest.unstable_mockModule('../db/connection.js', () => ({
   withTransaction: jest.fn(),
 }));
 
+const mockRecordFailoverEvent = jest.fn();
+jest.unstable_mockModule('../services/failoverAlertService.js', () => ({
+  recordFailoverEvent: mockRecordFailoverEvent,
+}));
+
 // ─── Module under test ────────────────────────────────────────────────────────
 const { UserProfileService } = await import('../services/databaseService.js');
+const { FailoverPool, FailoverWriteTimeoutError } = await import('../db/failoverConnection.js');
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -97,5 +103,119 @@ describe('Fault injection – PostgreSQL (databaseService)', () => {
     const result = await UserProfileService.findByPublicKey('GTEST123');
     expect(result).not.toBeNull();
     expect(result?.public_key).toBe('GTEST123');
+  });
+});
+
+// ─── Failover pool (#782) ─────────────────────────────────────────────────────
+
+type QueryFn = (sql: string, params?: unknown[]) => Promise<any>;
+
+function fakePool(impl: QueryFn) {
+  return {
+    query: jest.fn<QueryFn>(impl),
+    connect: jest.fn<() => Promise<any>>(),
+    end: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  };
+}
+
+const connRefused = () =>
+  Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), { code: 'ECONNREFUSED' });
+
+describe('Fault injection – PostgreSQL failover (FailoverPool)', () => {
+  beforeEach(() => {
+    mockRecordFailoverEvent.mockReset();
+  });
+
+  it('routes reads to the replica when readFromReplica is enabled', async () => {
+    const primary = fakePool(async () => ({ rows: ['primary'] }));
+    const replica = fakePool(async () => ({ rows: ['replica'] }));
+    const pool = new FailoverPool({
+      primaryPool: primary as any,
+      replicaPool: replica as any,
+      readFromReplica: true,
+      healthCheckIntervalMs: 0,
+    });
+
+    await expect(pool.query('SELECT 1')).resolves.toEqual({ rows: ['replica'] });
+    await expect(pool.query('INSERT INTO t VALUES (1)')).resolves.toEqual({ rows: ['primary'] });
+    await expect(pool.query('SELECT * FROM t FOR UPDATE')).resolves.toEqual({ rows: ['primary'] });
+    await pool.end();
+  });
+
+  it('falls back to the replica for reads and emits an alert on primary outage', async () => {
+    const primary = fakePool(async () => {
+      throw connRefused();
+    });
+    const replica = fakePool(async () => ({ rows: ['replica'] }));
+    const pool = new FailoverPool({
+      primaryPool: primary as any,
+      replicaPool: replica as any,
+      readFromReplica: false,
+      healthCheckIntervalMs: 0,
+    });
+
+    await expect(pool.query('SELECT 1')).resolves.toEqual({ rows: ['replica'] });
+    expect(pool.isFailoverActive()).toBe(true);
+    expect(mockRecordFailoverEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'failover_activated' }),
+    );
+    await pool.end();
+  });
+
+  it('queues writes during outage and rejects after DB_FAILOVER_TIMEOUT_MS', async () => {
+    const primary = fakePool(async () => {
+      throw connRefused();
+    });
+    const pool = new FailoverPool({
+      primaryPool: primary as any,
+      replicaPool: null,
+      failoverTimeoutMs: 30,
+      healthCheckIntervalMs: 0,
+    });
+
+    const write = pool.query('UPDATE loans SET status = $1', ['repaid']);
+    expect(pool.getQueuedWriteCount()).toBe(0); // enqueued after the failed attempt resolves
+    await expect(write).rejects.toBeInstanceOf(FailoverWriteTimeoutError);
+    expect(pool.getQueuedWriteCount()).toBe(0);
+    expect(mockRecordFailoverEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'failover_activated' }),
+    );
+    expect(mockRecordFailoverEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'write_queue_timeout' }),
+    );
+    await pool.end();
+  });
+
+  it('drains queued writes and restores routing when the primary recovers', async () => {
+    let primaryUp = false;
+    const primary = fakePool(async (sql) => {
+      if (!primaryUp) throw connRefused();
+      return { rows: [sql] };
+    });
+    const replica = fakePool(async () => ({ rows: ['replica'] }));
+    const pool = new FailoverPool({
+      primaryPool: primary as any,
+      replicaPool: replica as any,
+      failoverTimeoutMs: 5000,
+      healthCheckIntervalMs: 0,
+    });
+
+    const w1 = pool.query('INSERT INTO a VALUES (1)');
+    const w2 = pool.query('INSERT INTO b VALUES (2)');
+    await new Promise((r) => setImmediate(r));
+    expect(pool.isFailoverActive()).toBe(true);
+    expect(pool.getQueuedWriteCount()).toBe(2);
+
+    primaryUp = true;
+    await expect(pool.checkPrimaryHealth()).resolves.toBe(true);
+
+    await expect(w1).resolves.toEqual({ rows: ['INSERT INTO a VALUES (1)'] });
+    await expect(w2).resolves.toEqual({ rows: ['INSERT INTO b VALUES (2)'] });
+    expect(pool.isFailoverActive()).toBe(false);
+    expect(mockRecordFailoverEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'failover_deactivated' }),
+    );
+    await expect(pool.query('SELECT 1')).resolves.toEqual({ rows: ['SELECT 1'] });
+    await pool.end();
   });
 });

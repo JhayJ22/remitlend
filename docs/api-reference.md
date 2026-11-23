@@ -812,6 +812,92 @@ borrower of that loan.
 
 ---
 
+### Statement Verification
+
+#### GET /api/v1/statements/verification-key
+
+Returns the current public verification key for downloadable statement manifests.
+Public endpoint; no authentication required. The private signing key is never
+returned or derivable from this response. See
+[STATEMENT_VERIFICATION.md](./STATEMENT_VERIFICATION.md) for full instructions.
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "schema": "statement-manifest/v1",
+    "algorithm": "Ed25519",
+    "keyId": "statement-signing-default",
+    "publicKeyPem": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
+    "instructions": "/docs/STATEMENT_VERIFICATION.md"
+  }
+}
+```
+
+**Failure:** `503 SERVICE_UNAVAILABLE` when no valid signing key is configured.
+
+---
+
+#### POST /api/v1/statements/manifests
+
+Issues a signed manifest for an already-generated CSV statement. Requires a
+valid JWT. The backend signs the supplied digest, source type, source
+checkpoint, row count, and generation time; it does not receive or store the CSV
+contents.
+
+**Request:**
+
+```
+Authorization: Bearer <JWT>
+Content-Type: application/json
+
+{
+  "sourceType": "activity",
+  "sourceCheckpoint": "api:3:2026-06-15T11:59:00.000Z",
+  "statementDigest": "<64-char lowercase SHA-256 hex of CSV bytes>",
+  "rowCount": 3,
+  "generatedAt": "2026-06-15T12:00:00.000Z"
+}
+```
+
+`sourceType` is one of `activity`, `wallet_payments`, `loan_events`.
+`sourceCheckpoint` is 1–256 bounded characters. `rowCount` is 0–100000.
+`generatedAt` must be within 5 minutes of server time.
+
+**Response (201 Created):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "schema": "statement-manifest/v1",
+    "manifestId": "<sha256 hex>",
+    "source": { "type": "activity", "checkpoint": "api:3:2026-06-15T11:59:00.000Z" },
+    "statement": {
+      "sha256": "<digest>",
+      "rowCount": 3,
+      "generatedAt": "2026-06-15T12:00:00.000Z"
+    },
+    "subjectHash": "<daily salted hash; no wallet address>",
+    "issuedAt": "2026-06-15T12:00:01.000Z",
+    "verification": {
+      "algorithm": "Ed25519",
+      "keyId": "statement-signing-default",
+      "instructions": "/docs/STATEMENT_VERIFICATION.md"
+    },
+    "signature": "<base64>"
+  }
+}
+```
+
+**Failures:** `400` invalid or stale input, `401` missing JWT, `503` signing key
+or issuance registry unavailable. Repeated identical requests return the same
+manifest without creating duplicate issuance rows.
+
+---
+
 ### Admin Endpoints
 
 #### GET /api/v1/admin/loan-disputes
@@ -860,6 +946,58 @@ x-api-key: <ADMIN_API_KEY>
   loan lifecycle states are documented in
   [domain-state-machines.md](./domain-state-machines.md).
 - Pagination follows [pagination-contract.md](./pagination-contract.md).
+
+---
+
+#### GET /api/v1/admin/abuse-telemetry
+
+Returns privacy-safe abuse telemetry for financial mutations (admin JWT role
+required). No wallet address, key, signed transaction, IP, amount, or actor
+reference is returned. See [ABUSE_TELEMETRY.md](./ABUSE_TELEMETRY.md).
+
+**Request:**
+
+```
+Authorization: Bearer <ADMIN_JWT>
+GET /api/v1/admin/abuse-telemetry?riskTier=high&outcome=blocked&limit=50
+```
+
+Optional query parameters: `mutationType`, `outcome`, `riskTier`, `limit`
+(1–100, default 50). Invalid values return 400.
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "retentionDays": 30,
+    "summary": {
+      "total": 12,
+      "blocked": 1,
+      "byOutcome": { "success": 10, "failure": 1, "blocked": 1 },
+      "byRiskTier": { "low": 10, "medium": 1, "high": 1 }
+    },
+    "events": [
+      {
+        "mutationType": "loan_repay",
+        "decision": "block",
+        "outcome": "blocked",
+        "riskTier": "high",
+        "rateBand": "burst",
+        "attemptsInWindow": 21,
+        "occurredAt": "2026-06-15T12:34:56.000Z"
+      }
+    ]
+  }
+}
+```
+
+**Notes:**
+- The deprecated `/api/admin/abuse-telemetry` alias is mounted for parity with
+  other admin endpoints and carries deprecation headers.
+- A blocked financial mutation returns 429 `RATE_LIMIT_EXCEEDED` and creates no
+  financial state; see the linked design document for the full state table.
 
 ---
 
@@ -923,6 +1061,184 @@ Content-Type: application/json
   }
 }
 ```
+
+---
+
+#### GET /api/v1/admin/network-telemetry
+
+Returns per-network submission throughput, latency, throttling, error rates,
+bounded-failover state, durable write-queue depth, and retry-storm alert state.
+Requires the `admin:indexer` API key. See
+[NETWORK_TELEMETRY.md](./NETWORK_TELEMETRY.md) for state and metric definitions.
+
+**Headers:**
+```
+x-api-key: <ADMIN_API_KEY>
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "telemetry": {
+      "windowMs": 60000,
+      "generatedAt": 1730000000000,
+      "networks": [
+        {
+          "networkId": "testnet",
+          "throughputPerSec": 0.5,
+          "attemptCount": 30,
+          "errorRate": 0.1,
+          "throttleRate": 0,
+          "latencyP50Ms": 420,
+          "latencyP95Ms": 1800,
+          "latencyP99Ms": 2400,
+          "inFlight": 1
+        }
+      ],
+      "writeQueue": { "pending": 2, "deadLettered": 0 },
+      "stormAlertActive": false
+    },
+    "failover": {
+      "activeEndpointId": "testnet",
+      "maxFailoverHops": 3,
+      "endpoints": [
+        {
+          "id": "testnet",
+          "label": "testnet",
+          "rpcUrl": "https://soroban-testnet.stellar.org",
+          "priority": 0,
+          "enabled": true,
+          "active": true,
+          "circuitState": "closed",
+          "consecutiveFailures": 0,
+          "lastError": null,
+          "lastSuccessAt": 1730000000000,
+          "lastFailureAt": null
+        }
+      ]
+    }
+  }
+}
+```
+
+**Notes:**
+- `rpcUrl` is an operational identifier, not a secret. Signed XDR payloads are
+  never returned by telemetry endpoints.
+
+---
+
+#### GET /api/v1/admin/network-failover/events
+
+Lists recent failover, exhaustion, and retry-storm alert events, newest first.
+Requires the `admin:indexer` API key.
+
+**Headers:**
+```
+x-api-key: <ADMIN_API_KEY>
+```
+
+**Query Parameters:**
+```
+?limit=50
+```
+
+`limit` is clamped to `1..200`; the default is `50`.
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "events": [
+      {
+        "id": 1,
+        "networkId": "failover-eu",
+        "fromNetworkId": "testnet",
+        "eventType": "failover_activated",
+        "details": { "reason": "primary unhealthy" },
+        "createdAt": "2024-11-01T12:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+#### GET /api/v1/admin/network-failover/dead-letters
+
+Lists signed writes that exhausted their bounded retry ceiling. Returns metadata
+only; no signed XDR is exposed. Requires the `admin:indexer` API key.
+
+**Headers:**
+```
+x-api-key: <ADMIN_API_KEY>
+```
+
+**Query Parameters:**
+```
+?limit=50
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "deadLetters": [
+      {
+        "id": 42,
+        "operation": "submit_signed_tx",
+        "attempts": 10,
+        "maxAttempts": 10,
+        "lastError": "RPC unavailable",
+        "deadLetteredAt": "2024-11-01T12:05:00.000Z",
+        "deadLetterReason": "exhausted 10 bounded attempts: RPC unavailable"
+      }
+    ]
+  }
+}
+```
+
+---
+
+#### POST /api/v1/admin/network-failover/dead-letters/{id}/redrive
+
+Re-queues a dead-lettered signed write for another bounded retry pass. The
+signed XDR and transaction hash are unchanged. Requires the `admin:indexer` API
+key.
+
+**Headers:**
+```
+x-api-key: <ADMIN_API_KEY>
+```
+
+**Path Parameters:**
+```
+id=42
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": { "id": 42, "status": "pending" }
+}
+```
+
+**Response (404 NOT FOUND):**
+```json
+{
+  "success": false,
+  "error": { "code": "NOT_FOUND", "message": "Dead-lettered write not found" }
+}
+```
+
+**Notes:**
+- Re-drive is rejected with `400` when `id` is not a positive integer.
+- A write that is no longer dead-lettered is rejected without mutation.
 
 ---
 

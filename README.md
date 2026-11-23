@@ -252,3 +252,5 @@ This project is licensed under the ISC License. See the `LICENSE` file for detai
 
 <!-- handsoff-issue-834 -->
 - #834: frontend: implement locale-aware date, calendar, and timezone preferences
+<!-- handsoff-issue-833 -->
+- #833: frontend: add assisted application mode with save-and-resume checkpoints

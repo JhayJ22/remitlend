@@ -15,6 +15,12 @@ permissions:
   packages: write
   id-token: write
   security-events: write
+  issues: write
+
+# Never run two staging deploys at once: both would target the same idle slot.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
 
 env:
   # Pinned contract build toolchain (issue #537). A clean checkout with these
@@ -321,89 +327,82 @@ jobs:
           echo "No production traffic will be sent during this drill."
 
       - name: Restore sanitized database snapshot into standby
+        env:
+          REHEARSAL_DB_URL: ${{ vars.DR_REHEARSAL_DB_URL || 'postgres://postgres:postgres@localhost:5432/restore_rehearsal' }}
+          RESTORE_RTO_TARGET_MINUTES: ${{ env.RTO_TARGET_MINUTES }}
+          RESTORE_RPO_TARGET_MINUTES: ${{ env.RPO_TARGET_MINUTES }}
+          RESTORE_REHEARSAL_REPORT: ${{ github.workspace }}/restore-rehearsal-report.json
+          DR_DRILL_STANDBY_WRITE_BLOCKED: 'true'
         run: |
           set -e
           echo "Restoring sanitized snapshot into standby region..."
           # Sanitized, non-production snapshot only — never production data.
-          if [ -f deploy/dr/restore-standby.sh ]; then
-            bash deploy/dr/restore-standby.sh
-          else
-            echo "::warning::deploy/dr/restore-standby.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/restore-standby.sh
 
       - name: Start standby services
+        env:
+          DR_DRILL_STANDBY_WRITE_BLOCKED: 'true'
         run: |
           set -e
-          echo "Starting standby services with production-equivalent config..."
-          if [ -f deploy/dr/start-standby.sh ]; then
-            bash deploy/dr/start-standby.sh
-          else
-            echo "::warning::deploy/dr/start-standby.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/start-standby.sh
 
       - name: Recover indexer checkpoint
+        env:
+          REHEARSAL_DB_URL: ${{ vars.DR_REHEARSAL_DB_URL || 'postgres://postgres:postgres@localhost:5432/restore_rehearsal' }}
         run: |
           set -e
-          echo "Recovering indexer from last verified checkpoint..."
-          if [ -f deploy/dr/recover-indexer.sh ]; then
-            bash deploy/dr/recover-indexer.sh
-          else
-            echo "::warning::deploy/dr/recover-indexer.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/recover-indexer.sh
 
       - name: Fail over RPC endpoint
+        env:
+          DR_STANDBY_STELLAR_RPC_URL: ${{ vars.DR_STANDBY_STELLAR_RPC_URL || '' }}
         run: |
           set -e
-          echo "Failing over RPC to standby provider..."
-          if [ -f deploy/dr/rpc-failover.sh ]; then
-            bash deploy/dr/rpc-failover.sh
-          else
-            echo "::warning::deploy/dr/rpc-failover.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/rpc-failover.sh
 
       - name: Apply DNS/routing change to standby
         run: |
           set -e
-          echo "Applying DNS/routing change to point at standby..."
-          if [ -f deploy/dr/dns-failover.sh ]; then
-            bash deploy/dr/dns-failover.sh
-          else
-            echo "::warning::deploy/dr/dns-failover.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/dns-failover.sh
 
       - name: Verify standby cannot submit transactions
+        env:
+          DR_DRILL_STANDBY_WRITE_BLOCKED: 'true'
+          DR_DRILL_SIGNER_VERIFIED: 'false'
+          DR_DRILL_NETWORK_VERIFIED: 'false'
         run: |
           set -e
-          echo "Verifying standby is fenced from submitting transactions..."
           # The standby must remain unable to submit until network and signer
           # controls are explicitly verified. A successful submission here is a
           # drill failure.
-          if [ -f deploy/dr/verify-fenced.sh ]; then
-            bash deploy/dr/verify-fenced.sh
-          else
-            echo "::warning::deploy/dr/verify-fenced.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/verify-fenced.sh
 
       - name: Reconcile data integrity and record RTO/RPO
+        env:
+          RESTORE_REHEARSAL_REPORT: ${{ github.workspace }}/restore-rehearsal-report.json
+          RESTORE_RTO_TARGET_MINUTES: ${{ env.RTO_TARGET_MINUTES }}
+          RESTORE_RPO_TARGET_MINUTES: ${{ env.RPO_TARGET_MINUTES }}
         run: |
           set -e
-          echo "Reconciling data integrity between primary and standby..."
-          if [ -f deploy/dr/reconcile.sh ]; then
-            bash deploy/dr/reconcile.sh
-          else
-            echo "::warning::deploy/dr/reconcile.sh not found; recording as a follow-up action"
-          fi
-          echo "Recording observed RTO/RPO against targets (RTO ${RTO_TARGET_MINUTES}m, RPO ${RPO_TARGET_MINUTES}m)..."
+          bash deploy/dr/reconcile.sh
+          echo "RTO target: ${RTO_TARGET_MINUTES}m | RPO target: ${RPO_TARGET_MINUTES}m"
+
+      - name: Upload restore rehearsal report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dr-drill-restore-rehearsal-report
+          path: restore-rehearsal-report.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Fail back to primary region
+        env:
+          RESTORE_REHEARSAL_REPORT: ${{ github.workspace }}/restore-rehearsal-report.json
+          DR_DRILL_FAILBACK_CRITERIA: integrity_reconciled,indexer_caught_up,rpc_healthy
         run: |
           set -e
-          echo "Failing back to primary region..."
-          if [ -f deploy/dr/failback.sh ]; then
-            bash deploy/dr/failback.sh
-          else
-            echo "::warning::deploy/dr/failback.sh not found; recording as a follow-up action"
-          fi
+          bash deploy/dr/failback.sh
 
       - name: Summarize drill and track follow-ups
         if: always()
@@ -419,7 +418,7 @@ jobs:
             echo "- Follow-up actions from this drill must be tracked to closure"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  deploy:
+  canary:
     needs: build-and-push
     runs-on: ubuntu-latest
     environment: staging
@@ -527,7 +526,7 @@ jobs:
   # Rollback path: restores the previous image without resubmitting pending
   # chain transactions. Database migrations are forward-compatible, so the
   # previous image can run against the current schema.
-  rollback:
+  canary-rollback:
     needs: [build-and-push, canary]
     if: ${{ failure() && needs.canary.result == 'failure' }}
     runs-on: ubuntu-latest
@@ -548,11 +547,22 @@ jobs:
           done
           echo "::warning::Rolled back to staging-previous. Pending chain transactions were not resubmitted."
 
-  deploy:
+  # ── Blue-green deployment (#797) ─────────────────────────────────────────
+  # deploy-green → smoke-test → switch-traffic. The idle slot ("green") gets
+  # the new image while the live slot ("blue") keeps serving. Traffic moves
+  # only after every smoke check passes; the old slot stays running as the
+  # rollback target (see rollback-staging.yml for the manual swap back).
+  deploy-green:
     needs: [build-and-push, promote]
     if: ${{ vars.STAGING_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     environment: staging
+    outputs:
+      slot: ${{ steps.deploy.outputs.slot }}
+      live-before: ${{ steps.deploy.outputs.live_before }}
+    env:
+      SSH_TARGET: ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}
+      DEPLOY_DIR: ${{ vars.STAGING_DEPLOY_DIR || '/opt/remitlend' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -560,9 +570,150 @@ jobs:
       - name: Set lowercase owner
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
 
-      - name: Prepare staging compose with owner and TAG
+      - name: Configure SSH
         run: |
-          mkdir -p deploy
-          sudo apt-get update && sudo apt-get install -y gettext-base
-          export OWNER=${{ env.OWNER_LC }}
-          export TAG=staging-latest
+          set -e
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.STAGING_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          printf 'Host *\n  IdentityFile ~/.ssh/deploy_key\n  StrictHostKeyChecking yes\n' > ~/.ssh/config
+
+      - name: Sync slot compose file to host
+        run: |
+          set -e
+          ssh "$SSH_TARGET" "mkdir -p '$DEPLOY_DIR/deploy/blue-green'"
+          scp deploy/blue-green/docker-compose.slot.yml "$SSH_TARGET:$DEPLOY_DIR/deploy/blue-green/"
+
+      - name: Deploy image to idle (green) slot
+        id: deploy
+        run: |
+          set -e
+          bg() { ssh "$SSH_TARGET" "DEPLOY_DIR='$DEPLOY_DIR' OWNER='${OWNER_LC}' bash -s -- $*" < scripts/deploy/blue-green.sh; }
+          live=$(bg active)
+          slot=$(bg deploy "staging-${{ github.sha }}" | tail -n1)
+          echo "live_before=${live}" >> "$GITHUB_OUTPUT"
+          echo "slot=${slot}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Deployed staging-${{ github.sha }} to ${slot}; ${live} still live."
+
+  smoke-test:
+    needs: deploy-green
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      SSH_TARGET: ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}
+      DEPLOY_DIR: ${{ vars.STAGING_DEPLOY_DIR || '/opt/remitlend' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure SSH
+        run: |
+          set -e
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.STAGING_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          printf 'Host *\n  IdentityFile ~/.ssh/deploy_key\n  StrictHostKeyChecking yes\n' > ~/.ssh/config
+
+      # GET /health, GET /healthz/ready, GET /docs.json (valid OpenAPI) and
+      # unauthenticated POST /auth/challenge against the green slot directly,
+      # before it receives any user traffic.
+      - name: Smoke-test green slot
+        run: |
+          ssh "$SSH_TARGET" "DEPLOY_DIR='$DEPLOY_DIR' bash -s -- smoke '${{ needs.deploy-green.outputs.slot }}'" \
+            < scripts/deploy/blue-green.sh
+
+  switch-traffic:
+    needs: [deploy-green, smoke-test]
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      SSH_TARGET: ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}
+      DEPLOY_DIR: ${{ vars.STAGING_DEPLOY_DIR || '/opt/remitlend' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure SSH
+        run: |
+          set -e
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.STAGING_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          printf 'Host *\n  IdentityFile ~/.ssh/deploy_key\n  StrictHostKeyChecking yes\n' > ~/.ssh/config
+
+      - name: Shift traffic to green, keep blue as rollback target
+        run: |
+          set -e
+          ssh "$SSH_TARGET" "DEPLOY_DIR='$DEPLOY_DIR' bash -s -- switch '${{ needs.deploy-green.outputs.slot }}'" \
+            < scripts/deploy/blue-green.sh
+          {
+            echo "## Staging blue-green deploy"
+            echo ""
+            echo "- Image: \`staging-${{ github.sha }}\`"
+            echo "- Live slot: **${{ needs.deploy-green.outputs.slot }}**"
+            echo "- Rollback target: **${{ needs.deploy-green.outputs.live-before }}** (run the *Rollback Staging* workflow to swap back)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Smoke tests (or the switch) failed: the previous slot was never taken out
+  # of rotation, so it simply stays live. Tear down the bad slot, alert, and
+  # mark the run failed.
+  deploy-failed:
+    needs: [deploy-green, smoke-test, switch-traffic]
+    if: ${{ always() && needs.deploy-green.result == 'success' && (needs.smoke-test.result == 'failure' || needs.switch-traffic.result == 'failure') }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      SSH_TARGET: ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}
+      DEPLOY_DIR: ${{ vars.STAGING_DEPLOY_DIR || '/opt/remitlend' }}
+      SLOT: ${{ needs.deploy-green.outputs.slot }}
+      LIVE: ${{ needs.deploy-green.outputs.live-before }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure SSH
+        run: |
+          set -e
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.STAGING_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          printf 'Host *\n  IdentityFile ~/.ssh/deploy_key\n  StrictHostKeyChecking yes\n' > ~/.ssh/config
+
+      - name: Confirm previous slot is still live
+        run: |
+          live=$(ssh "$SSH_TARGET" "DEPLOY_DIR='$DEPLOY_DIR' bash -s -- active" < scripts/deploy/blue-green.sh)
+          echo "Live slot: ${live} (expected ${LIVE})"
+          if [ "$live" != "$LIVE" ]; then
+            echo "::error::live slot changed to ${live}; investigate before the next deploy"
+          fi
+
+      - name: Collect failed slot logs and tear it down
+        run: |
+          ssh "$SSH_TARGET" "docker compose -p remitlend-${SLOT} logs --tail=200 backend" || true
+          ssh "$SSH_TARGET" "DEPLOY_DIR='$DEPLOY_DIR' bash -s -- teardown '${SLOT}'" < scripts/deploy/blue-green.sh || true
+
+      - name: Alert
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_WEBHOOK: ${{ secrets.STAGING_ALERT_WEBHOOK }}
+        run: |
+          msg="Staging deploy of ${GITHUB_SHA::7} failed smoke tests on slot ${SLOT}; ${LIVE} remains live. ${RUN_URL}"
+          echo "::error::${msg}"
+          if [ -n "${ALERT_WEBHOOK}" ]; then
+            curl -fsS -X POST -H 'content-type: application/json' \
+              -d "$(jq -n --arg text "$msg" '{text: $text}')" "${ALERT_WEBHOOK}" || echo "::warning::alert webhook failed"
+          fi
+          gh issue create --repo "${GITHUB_REPOSITORY}" \
+            --title "Staging deploy failed smoke tests (${GITHUB_SHA::7})" \
+            --body "${msg}" --label deploy-failure \
+            || gh issue create --repo "${GITHUB_REPOSITORY}" \
+                 --title "Staging deploy failed smoke tests (${GITHUB_SHA::7})" --body "${msg}" \
+            || echo "::warning::could not open alert issue"
+
+      - name: Mark deployment failed
+        run: exit 1

@@ -8,6 +8,7 @@ import {
 import { requireJwtAuth, requireScopes } from '../middleware/jwtAuth.js';
 import { idempotencyMiddleware } from '../middleware/idempotency.js';
 import { validate } from '../middleware/validation.js';
+import { abuseTelemetryGuard } from '../middleware/abuseTelemetry.js';
 import {
   createRemittanceSchema,
   getRemittancesSchema,
@@ -77,6 +78,7 @@ router.post(
   requireScopes('write:remittances'),
   validate(createRemittanceSchema),
   idempotencyMiddleware,
+  abuseTelemetryGuard('remittance_create'),
   createRemittance,
 );
 
@@ -233,6 +235,7 @@ router.post(
   requireJwtAuth,
   requireScopes('write:remittances'),
   idempotencyMiddleware,
+  abuseTelemetryGuard('remittance_submit'),
   submitRemittanceTransaction,
 );
 

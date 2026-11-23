@@ -1,21 +1,18 @@
 # Secrets Inventory
 
-> Security issue #359 — secrets inventory and automated exposure scanning.
->
-> This document is the single source of truth for every secret, credential, and
-> sensitive configuration value used across the RemitLend stack. Keep it
-> up-to-date whenever a new secret is introduced or an existing one is rotated.
+This document tracks the secrets used by the platform, where they live, and how they are protected. It is a reference for operators and contributors; it does **not** itself enforce anything. Enforcement is provided by the automated secret scanning described below.
 
----
+## Secret scanning
 
-## Threat model
+Secret scanning is enforced in two places so that credentials are never committed to the repository:
 
-An exposed secret can allow an attacker to:
+### 1. Pre-commit hook (local)
 
 | Secret class | Impact if exposed |
 |---|---|
 | `JWT_SECRET` | Forge JWT tokens for any user, including admin. |
 | `INTERNAL_API_KEY` | Call any scoped internal API endpoint without a valid JWT. |
+| `AUDIT_LOG_KEY` | Re-forge the audit-log HMAC chain so edited or deleted entries pass verification. |
 | `LOAN_MANAGER_ADMIN_SECRET` | Submit on-chain admin transactions (approve loans, pause contracts). |
 | `SCORE_RECONCILIATION_SOURCE_SECRET` | Read-only Stellar key; can enumerate borrower scores. |
 | `SENDGRID_API_KEY` | Send arbitrary email from the RemitLend domain. |
@@ -23,16 +20,22 @@ An exposed secret can allow an attacker to:
 | `SENTRY_AUTH_TOKEN` | Upload source maps; can deanonymise stack traces. |
 | `DATABASE_URL` | Full read/write access to the PostgreSQL database (PII, loan data). |
 | `REDIS_URL` | Read/write rate-limit counters, JWT revocation list, idempotency keys. |
+| `STATEMENT_SIGNING_PRIVATE_KEY_PEM` | Forge signed statement manifests for any wallet. |
+| `STATEMENT_SUBJECT_PEPPER` | Correlate daily subject hashes in statement manifests back to wallets. |
+A Husky pre-commit hook runs Gitleaks against staged changes before every commit:
 
----
+```sh
+gitleaks protect --staged --redact
+```
 
-## Inventory by component
+If a secret is detected, the commit is blocked. To proceed you must remove the secret from the staged changes (and rotate it if it was ever pushed). Do **not** bypass the hook with `--no-verify`.
 
-### Backend (`backend/.env`)
+Install Gitleaks locally (see https://github.com/gitleaks/gitleaks) and ensure it is on your `PATH` before committing.
 
 | Variable | Classification | Rotation policy | Notes |
 |---|---|---|---|
 | `JWT_SECRET` | **Secret** | Rotate every 90 days or on suspected compromise | Min 32 bytes, random. Invalidates all active sessions on rotation. |
+| `AUDIT_LOG_KEY` | **Secret — key custody** | Rotate only together with a chain checkpoint (see note) | Min 32 bytes, random. HMAC-SHA256 key for the tamper-evident `audit_logs` chain (#796). **Must differ from `JWT_SECRET`**; audit writes fail if the two match. Required when `NODE_ENV=production`. Keep it in the secrets manager, and give it to the backend only — never to DB administrators. Anyone who holds both this key and DB write access can rewrite history without detection. Before rotating, export and verify the chain up to the rotation time (`GET /admin/audit-logs/export`, `POST /admin/audit-logs/verify`) and archive that export: entries written under the old key can only be verified with the old key. |
 | `INTERNAL_API_KEY` | **Secret** | Rotate every 90 days or on staff offboarding | Comma-separated list of scoped keys; see `docs/SECURITY-MODEL.md`. |
 | `LOAN_MANAGER_ADMIN_SECRET` | **Secret — high risk** | Rotate on any suspected compromise | Stellar secret key (`S…`). Controls on-chain admin operations. Store in HSM/vault in production. |
 | `SCORE_RECONCILIATION_SOURCE_SECRET` | **Secret** | Rotate every 180 days | Read-only Stellar key for score reads. |
@@ -42,116 +45,42 @@ An exposed secret can allow an attacker to:
 | `TWILIO_ACCOUNT_SID` | **Semi-public** | N/A | Not a secret by itself but combined with `TWILIO_AUTH_TOKEN` grants full API access. |
 | `TWILIO_AUTH_TOKEN` | **Secret** | Rotate annually or on suspected compromise | |
 | `SENTRY_DSN` | **Non-secret** | N/A | Public ingest URL; safe to expose. |
+| `STATEMENT_SIGNING_PRIVATE_KEY_PEM` | **Secret — high risk** | Rotate on suspected compromise or scheduled key rotation | PKCS#8 PEM for Ed25519 statement manifest signing. Never returned by any API; see `docs/STATEMENT_VERIFICATION.md`. |
+| `STATEMENT_SIGNING_KEY_ID` | **Non-secret** | Update when rotating the signing key | Identifies the public key verifiers must use. |
+| `STATEMENT_SUBJECT_PEPPER` | **Secret** | Rotate every 90 days or on suspected compromise | Daily salt for non-reversible manifest subject hashes. Rotation changes subject hashes but not signatures over already-issued manifests. |
+### 2. CI supply-chain audit (remote)
 
-### Frontend (`frontend/.env.local`, CI env)
+The reusable supply-chain audit workflow (`.github/workflows/reusable-supply-chain-audit.yml`) runs a full-repository scan on every push and pull request:
 
-| Variable | Classification | Notes |
-|---|---|---|
-| `SENTRY_AUTH_TOKEN` | **Secret — build-time only** | Used only during `next build` for source-map upload. Never exposed to the browser. Set in CI only; never commit. |
-| `SENTRY_ORG` / `SENTRY_PROJECT` | **Non-secret** | Organisation/project slugs; not sensitive. |
-| `NEXT_PUBLIC_*` | **Non-secret** | All `NEXT_PUBLIC_` vars are inlined into the browser bundle. Never put secrets here. |
+```sh
+gitleaks detect --source . --redact --verbose
+```
 
-### CI / GitHub Actions
+The job fails if any secret is found, blocking the merge.
 
-| Secret name | Where set | Purpose |
-|---|---|---|
-| `GITHUB_TOKEN` | Auto-injected | Gitleaks and PR operations. |
-| `SENTRY_AUTH_TOKEN` | GitHub repo secrets | Source-map upload during `next build`. |
+### Rules
 
----
+Custom detection rules live in `.gitleaks.toml` and include:
 
-## Automated exposure scanning (CI)
+- **Stellar secret keys** — `S`-prefixed 56-character base32 strings.
+- **JWT tokens** — common JSON Web Token patterns.
 
-The `secrets-scan` job in `.github/workflows/ci.yml` runs on every push and PR.
-It uses two layers:
+Allowlist / false-positive entries in `.gitleaks.toml` are annotated with comments explaining why each is safe.
 
-### Layer 1 — gitleaks (git-history scan)
+### Procedure when a secret is detected
 
-[gitleaks](https://github.com/gitleaks/gitleaks) scans the full git history for
-patterns matching known secret formats (AWS keys, GitHub tokens, private keys,
-generic high-entropy strings, etc.).
+1. **Do not** commit or push the secret.
+2. Remove the secret from the working tree / staged changes.
+3. If the secret was already pushed, **rotate it immediately** at the issuing provider.
+4. Update this inventory and the consuming configuration to reference the rotated value via the secret store (never inline).
+5. If the finding is a genuine false positive, add a narrowly-scoped, commented allowlist entry to `.gitleaks.toml` and open a PR for review.
 
-Configuration: uses the default ruleset. Add project-specific allow-list entries
-to `.gitleaks.toml` if a detected pattern is a documented false-positive.
+## Inventory
 
-### Layer 2 — grep heuristics (zero-install)
+| Secret | Purpose | Storage | Rotation |
+| --- | --- | --- | --- |
+| `STELLAR_SECRET_KEY` | Server signing key for Stellar transactions | Secret store / CI secrets | Rotate on suspected exposure |
+| `JWT_SECRET` | Signs authentication tokens | Secret store / CI secrets | Rotate on suspected exposure |
+| `DATABASE_URL` | Database connection string (may embed credentials) | Secret store / CI secrets | Rotate on suspected exposure |
 
-A shell-based scan checks for:
-
-- Developer placeholder values (`your-super-secret-jwt-key`, `change-me`, etc.)
-- AWS access key patterns (`AKIA[0-9A-Z]{16}`)
-- PEM private key headers
-- OpenAI API key prefixes (`sk-…`)
-
-`.env.example` files are **excluded** from the grep scan because they are
-permitted to contain documented placeholder values.
-
-### Responding to a scan failure
-
-1. **True positive** (real secret committed):
-   1. Immediately rotate the exposed credential.
-   2. Remove the secret from history using `git filter-repo` or open a private
-      security advisory if the repo is public.
-   3. Force-push the cleaned branch (requires admin bypass).
-   4. Notify the security team via the process in [SECURITY.md](../SECURITY.md).
-
-2. **False positive** (a test fixture, example value, or known safe pattern):
-   1. Add an inline `gitleaks:allow` comment on the same line **or** add an
-      allow-list entry in `.gitleaks.toml`.
-   2. Document the reason in the PR description.
-
----
-
-## Secret management practices
-
-### Storage
-
-| Environment | Recommended store |
-|---|---|
-| Local development | `backend/.env` (gitignored) |
-| Staging | GitHub Actions environment secrets |
-| Production | AWS Secrets Manager / HashiCorp Vault; injected at runtime |
-
-### Never do
-
-- Commit a `.env` file (enforced by `.gitignore` and gitleaks).
-- Put secrets in `NEXT_PUBLIC_` env vars (they end up in the browser bundle).
-- Log secrets (enforced by the PII scan in CI).
-- Share secrets over Slack / email.
-- Use the same secret value across staging and production.
-
-### Rotation checklist
-
-When rotating a secret:
-
-- [ ] Generate a new high-entropy value (≥ 256 bits for symmetric keys).
-- [ ] Update the value in all relevant secret stores (staging + production).
-- [ ] Deploy the new value before invalidating the old one to avoid downtime.
-- [ ] Revoke / delete the old credential from the issuing service.
-- [ ] Update the "last rotated" date in this document.
-- [ ] For `JWT_SECRET`: note that all active user sessions will be invalidated.
-
----
-
-## Last-rotated log
-
-| Secret | Last rotated | Rotated by |
-|---|---|---|
-| `JWT_SECRET` | — | — |
-| `INTERNAL_API_KEY` | — | — |
-| `LOAN_MANAGER_ADMIN_SECRET` | — | — |
-| `SENDGRID_API_KEY` | — | — |
-| `TWILIO_AUTH_TOKEN` | — | — |
-| `SENTRY_AUTH_TOKEN` | — | — |
-
-> Update this table whenever a rotation is performed.
-
----
-
-## See also
-
-- [SECURITY.md](../SECURITY.md) — vulnerability disclosure policy
-- [docs/SECURITY-MODEL.md](SECURITY-MODEL.md) — authentication and authorisation model
-- [docs/ENVIRONMENT.md](ENVIRONMENT.md) — full environment variable reference
-- [docs/wiki/security-scanning.md](wiki/security-scanning.md) — Trivy container scanning
-- [backend/docs/INTERNAL_REQUEST_SIGNING.md](../backend/docs/INTERNAL_REQUEST_SIGNING.md) — HMAC signing for internal routes
+> Add new secrets to this table when introduced, and confirm they are covered by the scanning rules above.

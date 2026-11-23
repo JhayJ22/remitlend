@@ -114,6 +114,9 @@ export async function flushQueue(): Promise<FlushResult> {
 
   try {
     for (const item of read()) {
+      // The queue may have been cleared (e.g. wallet disconnect) or the item
+      // removed while an earlier replay was in flight: never send it then.
+      if (!read().some((q) => q.id === item.id)) continue;
       try {
         // Replays happen long after the original attempt, so the queued trace
         // context would be stale and misleading; mint a fresh child span at

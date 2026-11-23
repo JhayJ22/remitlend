@@ -61,7 +61,7 @@ complete within the target, i.e. `good_events / eligible_events`.
 - **Event definition:** time from the borrower's `POST /loans` request being received by
 the API to the API returning a `202 Accepted` with a persisted loan id.
 - **Eligible denominator:** all `POST /loans` requests that reach the API and are
-  authenticated as a borrower.
+authenticated as a borrower.
 - **Exclusions:** requests rejected with `4xx` (validation, auth, rate limit); requests
   from synthetic/health-check probes; requests during a declared dependency outage
   (see *Dependency vs. application failures*).
@@ -158,6 +158,45 @@ indexer is never conflated with a slow application:
 | Indexer projection lag | SLI-5 | 99% < 30 s |
 | Availability | SLI-6 | 99.9% |
 | Notification delivery | SLI-9 | 99% < 60 s |
+
+## Financial projection drift anomaly alerts
+
+Analytics compares an **authoritative total** (derived from confirmed on-chain events)
+against an **independent projected total** (derived from the analytics projection) at
+each ledger checkpoint. A drift alert fires only when the two totals disagree beyond a
+documented tolerance, so that rounding noise and repeated conditions do not page.
+
+### Inputs and constraints
+
+- `authoritativeTotal` and `projectedTotal` are integer minor units (exact money units,
+  no floats). Both must be present and non-negative.
+- `toleranceMinorUnits` is a non-negative integer documenting the accepted absolute
+  difference for the checkpoint. It must be supplied explicitly; there is no implicit
+  default.
+- `checkpointIds` is a non-empty list of ledger checkpoint identifiers the comparison
+  covers. Empty or unknown checkpoint sets are rejected.
+- `observedAt` must be within the freshness window; stale comparisons (older than the
+  checkpoint's projection freshness target, SLI-5) are rejected rather than alerted.
+
+Invalid or stale inputs are rejected without emitting an alert and without mutating any
+financial projection state (no partial side effects).
+
+### Comparison and suppression
+
+- Drift is `abs(authoritativeTotal - projectedTotal)` in minor units.
+- An alert is actionable only when `drift > toleranceMinorUnits`.
+- Repeated alerts for the same drift condition (same checkpoint set and same drift
+  signature) are suppressed within the suppression window; the condition is re-surfaced
+  only when the drift signature changes or the window elapses.
+
+### Routing
+
+Actionable alerts route to the analytics owner with runbook context and the affected
+checkpoint IDs so responders can reproduce the comparison.
+
+| Alert | Condition | User impact | Owner | Runbook | Threshold |
+| --- | --- | --- | --- | --- | --- |
+| `ProjectionDriftAnomaly` | `drift > toleranceMinorUnits` at a fresh checkpoint | Reported financial totals diverge from authoritative state | `@analytics-oncall` | `runbooks/projection-drift.md` | Any actionable drift after suppression |
 
 ## Alerting rules
 

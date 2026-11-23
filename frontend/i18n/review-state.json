@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "approvals": [
+    {
+      "key": "HomePage.stats.netWorth",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "f4a17aaf",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "HomePage.stats.netWorth",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "f4a17aaf",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "HomePage.stats.totalRemitted",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "fa7fa37b",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "HomePage.stats.totalRemitted",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "fa7fa37b",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "HomePage.stats.yieldApy",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "f67bb0ed",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "HomePage.stats.yieldApy",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "f67bb0ed",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "HomePage.reminder.due",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "2222b191",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "HomePage.reminder.due",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "2222b191",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.totalOwed",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "c2e73d1e",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.totalOwed",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "c2e73d1e",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.principal",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "4c8981d1",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.principal",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "4c8981d1",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.accruedInterest",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "66375c6e",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.accruedInterest",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "66375c6e",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.interest",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "8111b5f0",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.interest",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "8111b5f0",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.nextPayment",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "41bd074b",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.nextPayment",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "41bd074b",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.daysRemaining",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "2ffaf122",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.daysRemaining",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "2ffaf122",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.daysOverdue",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "e396aedc",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "LoanCard.daysOverdue",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "e396aedc",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "Loans.outstanding",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "239eb9d5",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "Loans.outstanding",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "239eb9d5",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "Loans.dueThisWeek",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "6a8426b6",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "Loans.dueThisWeek",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "6a8426b6",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "Loans.due",
+      "locale": "es",
+      "status": "approved",
+      "sourceHash": "c64f3ac1",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    },
+    {
+      "key": "Loans.due",
+      "locale": "tl",
+      "status": "approved",
+      "sourceHash": "c64f3ac1",
+      "reviewer": "localization-admin",
+      "role": "admin",
+      "reviewedAt": "2026-11-22T00:00:00.000Z"
+    }
+  ]
+}

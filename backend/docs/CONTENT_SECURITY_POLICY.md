@@ -351,9 +351,28 @@ CSP does NOT prevent:
 ```typescript
 'img-src': "'self' data: https: https://images.example.com",
 ```
+### Problem: Styles Not Applied
 
-## References
+**Error**: `Refused to apply inline style ... because it violates Content Security Policy directive`
+
+**Solution**: `style-src` includes `'unsafe-inline'` in both production and development, so inline styles are permitted. If you tighten `style-src` in the future, move inline styles to external stylesheets or add a nonce/hash.
+
+### Problem: API Calls Blocked
+
+**Error**: `Refused to connect to 'https://api.example.com' because it violates Content Security Policy directive: "connect-src 'self'"`
+
+**Solution**: Add the API origin to `connect-src` in `getCSPHeaders()`.
+
+## Accessibility and Reflow Considerations
+
+CSP diagnostics and recovery UI must remain usable at 200–400% zoom and narrow viewport widths. The following constraints apply to any CSP-related user-facing surface (e.g., violation notices, recovery prompts):
+
+- **Reflow**: Content must reflow into a single column without horizontal scrolling at 320 CSS px width (equivalent to 400% zoom on a 1280 px viewport).
+- **Safe primary action**: The safe primary action (retry, cancel, or dismiss) must remain visible and reachable without clipping or being pushed off-screen.
+- **Keyboard focus**: Focus must be preserved across state transitions and reflow; no focus traps, and focus is restored to a sensible element after recovery actions.
+- **No partial side effects**: Invalid or stale recovery actions are rejected in the UI (disabled or hidden) without triggering partial financial side effects.
 
 - [MDN: Content Security Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP)
 - [W3C CSP Level 3](https://www.w3.org/TR/CSP3/)
 - [Google CSP Evaluator](https://csp-evaluator.withgoogle.com/)
+These constraints are verified by the frontend accessibility test suite; CSP changes must not introduce inline handlers or styles that break them.

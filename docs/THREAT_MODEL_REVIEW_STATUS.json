@@ -1,0 +1,10 @@
+{
+  "_comment": "Machine-readable threat-model review status per trust boundary (issue #856). Updated by the admin API (POST /admin/threat-model/reviews + /approve) and committed alongside the reviewed threat-model document. The check-trust-boundaries.mjs script reads this file during CI to determine whether the production release gate passes.",
+  "_review_ttl_days": 365,
+  "_boundaries": ["wallet", "provider", "api", "contract", "infra"],
+  "wallet": null,
+  "provider": null,
+  "api": null,
+  "contract": null,
+  "infra": null
+}

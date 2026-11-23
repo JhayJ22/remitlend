@@ -14,19 +14,19 @@ pub struct PriceRoundRecord {
 pub struct PriceHistoryBuffer;
 
 impl PriceHistoryBuffer {
-    pub const MAX_HISTORY_ROUNDS: u64 = 100;
+    pub const MAX_HISTORY_ROUNDS: u64 = 20;
 
-    pub fn record_round(env: &Env, asset: Symbol, round_id: u64, price: i128, reporter: Address) {
+    pub fn record_round(env: &Env, asset: Symbol, round_id: u64, price: i128, reporter: Address, timestamp: u64) {
         let record = PriceRoundRecord {
             round_id,
             price,
-            timestamp: env.ledger().timestamp(),
+            timestamp,
             reporter,
         };
 
-        // Ring buffer storage indexed by round_id modulo MAX_HISTORY_ROUNDS
         let ring_index = round_id % Self::MAX_HISTORY_ROUNDS;
-        env.storage().persistent().set(&(asset, ring_index), &record);
+        env.storage().persistent().set(&(asset.clone(), ring_index), &record);
+        env.storage().persistent().set(&(asset, symbol_short!("latest")), &round_id);
     }
 
     pub fn get_round(env: &Env, asset: Symbol, round_id: u64) -> Option<PriceRoundRecord> {

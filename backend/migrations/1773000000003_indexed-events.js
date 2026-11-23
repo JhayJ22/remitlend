@@ -86,6 +86,94 @@ export const up = (pgm) => {
     )`,
     notValid: true,
   });
+
+  // Analytics boundary (#830): bounded, immutable historical contract-state
+  // snapshots for audit queries. Each snapshot is anchored to a documented
+  // ledger checkpoint and linked to the source event range it was derived
+  // from, so reconstruction can be validated against direct contract reads.
+  //
+  // Compatibility: this is an additive table; existing indexed_events rows
+  // and consumers are unaffected. No backfill is required — snapshots are
+  // created going forward at documented checkpoints.
+  pgm.createTable('contract_state_snapshots', {
+    id: 'id',
+    // Deterministic identity: one snapshot per (contract, checkpoint).
+    contract_id: { type: 'varchar(255)', notNull: true },
+    // Documented ledger checkpoint this snapshot represents.
+    checkpoint_ledger: { type: 'integer', notNull: true },
+    // Source event range the snapshot was reconstructed from (inclusive).
+    event_range_start_ledger: { type: 'integer', notNull: true },
+    event_range_end_ledger: { type: 'integer', notNull: true },
+    event_range_start_event_id: { type: 'varchar(255)' },
+    event_range_end_event_id: { type: 'varchar(255)' },
+    // Supported snapshot state (e.g. active, closed, defaulted).
+    state: { type: 'varchar(50)', notNull: true },
+    // Immutable serialized contract state at the checkpoint.
+    state_payload: { type: 'jsonb', notNull: true },
+    // Validation outcome against direct contract reads.
+    validation_status: {
+      type: 'varchar(50)',
+      notNull: true,
+      default: 'pending',
+    },
+    validated_at: { type: 'timestamp' },
+    validation_detail: { type: 'text' },
+    // Immutability: snapshots are append-only; created_at is the audit anchor.
+    created_at: {
+      type: 'timestamp',
+      notNull: true,
+      default: pgm.func('current_timestamp'),
+    },
+  });
+
+  // One immutable snapshot per contract checkpoint.
+  pgm.addConstraint(
+    'contract_state_snapshots',
+    'contract_state_snapshots_contract_checkpoint_unique',
+    { unique: ['contract_id', 'checkpoint_ledger'] },
+  );
+
+  // Input constraints: checkpoint must be within the source event range and
+  // the range must be ordered. Reject invalid snapshot requests at the DB
+  // boundary so no partial persistence side effects can occur.
+  pgm.addConstraint(
+    'contract_state_snapshots',
+    'contract_state_snapshots_range_check',
+    {
+      check: `(
+        checkpoint_ledger >= 0
+        AND event_range_start_ledger >= 0
+        AND event_range_end_ledger >= event_range_start_ledger
+        AND checkpoint_ledger >= event_range_start_ledger
+        AND checkpoint_ledger <= event_range_end_ledger
+      )`,
+    },
+  );
+
+  // Supported snapshot states and validation outcomes.
+  pgm.addConstraint(
+    'contract_state_snapshots',
+    'contract_state_snapshots_state_check',
+    {
+      check: `state IN ('active', 'closed', 'defaulted', 'liquidated')`,
+    },
+  );
+
+  pgm.addConstraint(
+    'contract_state_snapshots',
+    'contract_state_snapshots_validation_status_check',
+    {
+      check: `validation_status IN ('pending', 'validated', 'mismatch', 'failed')`,
+    },
+  );
+
+  pgm.createIndex('contract_state_snapshots', 'contract_id');
+  pgm.createIndex('contract_state_snapshots', 'checkpoint_ledger');
+  pgm.createIndex('contract_state_snapshots', 'validation_status');
+  pgm.createIndex('contract_state_snapshots', [
+    'contract_id',
+    'checkpoint_ledger',
+  ]);
 };
 
 /**
@@ -94,6 +182,7 @@ export const up = (pgm) => {
  * @returns {Promise<void> | void}
  */
 export const down = (pgm) => {
+  pgm.dropTable('contract_state_snapshots');
   pgm.dropConstraint('indexed_events', 'indexed_events_score_reason_check', {
     ifExists: true,
   });

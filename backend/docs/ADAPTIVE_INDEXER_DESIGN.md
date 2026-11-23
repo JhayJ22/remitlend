@@ -233,78 +233,90 @@ INDEXER_ADAPTIVE_SCHEDULING=true
 - **Recovery**: After RPC recovers, scheduler adjusts based on lag
 
 ### Scenario 3: Ledger Gap + Slow Recovery
-- **Gap detected**: 200-ledger gap marked "suspect"
-- **Scheduler**: Detects high lag, enters Catch-Up mode
-- **Backfill**: Backfill process can run alongside adaptive polling (no conflict)
-- **Recovery**: Once caught up AND gap backfilled, lag shrinks, scheduler exits Catch-Up
+- **Gap detected**: 200-ledger gap
+- **Catch-Up mode**: 3s interval, 500 batch
+- **RPC slow**: Backoff kicks in (5s → 15s → 45s)
+- **Recovery**: RPC recovers, backoff resets, catch-up continues
+- **Caught up**: Lag ≤ 50, return to Caught-Up mode
 
-## Observability Requirements
+## Governed Data-Access Request Workflow for Analysts
 
-1. **Operator Dashboard** queries:
-   - Current mode, lag, backoff level
-   - Mode transition history (last 24h)
-   - P95/P99 poll duration by mode
-   - RPC failure rate and backoff effectiveness
+Sensitive analytical datasets (e.g., per-account loan history, indexed event streams) require a governed, auditable access workflow. This section defines the contract for that workflow so that grants are purpose-bound, minimal, time-limited, and attributable.
 
-2. **Alerts**:
-   - `indexer_stuck_in_catch_up_15m` - Catch-Up mode for >15 minutes
-   - `indexer_lag_growing` - Lag increasing for 3 consecutive polls
-   - `indexer_backoff_max_triggered` - Backoff capped for 2+ consecutive failures
+### Supported States
 
-3. **SLOs**:
-   - Catch-up lag < 50 ledgers: 99.5% of time when RPC healthy
-   - P99 poll duration in Catch-Up mode: < 10s
+An access request moves through the following states:
 
-## Rollout Strategy
+| State | Meaning |
+|-------|---------|
+| `requested` | Analyst submitted a request; awaiting approver decision |
+| `approved` | Approver accepted the request; grant not yet issued |
+| `granted` | Access is active until `expires_at` |
+| `denied` | Approver rejected the request (terminal) |
+| `revoked` | An active grant was withdrawn before expiry (terminal) |
+| `expired` | Grant lapsed past `expires_at` (terminal, set by the sweeper) |
 
-### Phase 1: Development
-- Implement AdaptiveScheduler service
-- Unit tests for mode transitions, backoff logic
-- Integration tests with mocked RPC
-- **Duration**: 2 weeks
+### Transition Rules
 
-### Phase 2: Staging
-- Deploy with `INDEXER_ADAPTIVE_SCHEDULING=false` (disabled)
-- Verify no regressions vs. current fixed-interval behavior
-- Collect baseline metrics
-- **Duration**: 1 week
+Valid transitions (all others are rejected with `409 Conflict` and no side effects):
 
-### Phase 3: Gradual Enablement
-1. **Day 1**: Enable for 10% of traffic (dev environment)
-2. **Day 3**: Enable for 50% of traffic (staging)
-3. **Day 5**: Enable for 100% (production)
-4. **Day 7**: Verify 99.9% uptime + no alerting
-5. **Rollback plan**: Set `INDEXER_ADAPTIVE_SCHEDULING=false`, restart
+- `requested → approved` (by designated approver)
+- `requested → denied` (by designated approver)
+- `approved → granted` (by grantor/system)
+- `granted → revoked` (by approver or grantor)
+- `granted → expired` (by system sweeper only)
 
-### Phase 4: Tuning
-- Analyze 2-week metrics
-- Adjust thresholds based on observed RPC behavior
-- Document final configuration for operators
+Stale actions (e.g., approving an already-`granted` request, revoking an `expired` grant) are rejected atomically; the request row is not mutated and no audit record is written for the rejected attempt beyond a `rejected_transition` log line.
 
-## Compatibility Matrix
+### Input Constraints
 
-| Component | Current | Adaptive | Breaking? |
-|-----------|---------|----------|-----------|
-| EventIndexer API | ✓ | ✓ | No |
-| Webhooks | ✓ | ✓ | No |
-| Database schema | ✓ | +1 table | No |
-| Metrics | ✓ | +3 metrics | No |
-| Environment variables | 2 vars | +11 vars | No (all optional) |
-| Deployed contracts | ✓ | ✓ | No |
+A request is rejected at creation (`422 Unprocessable Entity`) unless all of the following hold:
 
-## Future Enhancements
+- **Stated purpose**: `purpose` is a non-empty string (≤ 500 chars) describing the analytical question.
+- **Minimal dataset**: `dataset_scope` is a non-empty allow-listed set of dataset identifiers; wildcard/`*` scopes are rejected.
+- **Bounded expiry**: `expires_at` is in the future and no more than `MAX_ACCESS_TTL` (default 30 days) from `requested_at`.
+- **Designated approver**: `approver_id` is present and **must differ from** `requester_id` (no self-approval).
 
-1. **Per-contract scheduling**: Run separate adapters for each contract (currently single scheduler)
-2. **Predictive batching**: Use RPC response times to predict optimal batch size
-3. **Network-aware thresholds**: Auto-tune based on detected network conditions
-4. **Catch-up completion callbacks**: Allow other services to react when catch-up ends
+### Authorization & Consent
 
-## Acceptance Criteria
+- Only the designated `approver_id` may transition `requested → approved|denied`.
+- Only a grantor (role `data:grant`) or the system may transition `approved → granted`.
+- The requester can never approve or grant their own request, even if they hold the approver role.
+- Revocation requires the approver, the grantor, or an admin with `data:revoke` scope.
 
-- [x] Algorithm defined with clear state transitions
-- [x] Failure scenarios analyzed and mitigated
-- [x] Database schema designed and migrations planned
-- [x] Configuration parameters documented
-- [x] Metrics and logging strategy defined
-- [x] Rollout strategy includes rollback plan
-- [x] Backward compatibility verified
+### Audit Log
+
+Every `granted`, `revoked`, and `expired` transition writes an immutable audit record:
+
+```json
+{
+  "event": "data_access_granted",
+  "request_id": "dar_01H...",
+  "actor_id": "user_123",
+  "actor_role": "data:grant",
+  "requester_id": "user_456",
+  "dataset_scope": ["loan_history", "indexed_events"],
+  "purpose": "Q4 delinquency cohort analysis",
+  "expires_at": "2026-11-15T00:00:00Z",
+  "timestamp": "2026-10-16T12:00:00Z",
+  "reason": null
+}
+```
+
+Revocations and expirations include a `reason` (`manual_revoke` or `ttl_expired`). Audit records are append-only and never updated or deleted.
+
+### Automatic Expiry
+
+A scheduled sweeper transitions `granted` requests whose `expires_at` has passed to `expired`, writes the corresponding audit record, and removes the effective permission. The sweeper is idempotent: re-running it on an already-`expired` request is a no-op.
+
+### Persistence & Compatibility
+
+- New table `data_access_requests` (id, requester_id, approver_id, purpose, dataset_scope JSONB, state, requested_at, expires_at, decided_at, revoked_at, reason).
+- New append-only table `data_access_audit_log`.
+- These are additive; no existing indexer tables or API responses change shape. Existing `/indexer/status` consumers are unaffected.
+
+### Failure Behavior
+
+- Invalid transitions and constraint violations return `4xx` with a machine-readable `code` and leave persisted state unchanged (no partial grants).
+- Grant issuance and audit write occur in a single transaction; if the audit write fails, the grant is rolled back.
+- Dependency failures (DB unavailable) surface as `503` and are safe to retry; the sweeper retries on the next tick.

@@ -2,11 +2,68 @@ import { lookup } from 'node:dns/promises';
 import https from 'node:https';
 import { isIP } from 'node:net';
 
-export class WebhookEgressPolicyError extends Error {
+/**
+ * Raised when a webhook destination violates the egress policy
+ * (docs/EGRESS-POLICY.md § Webhook destinations). Deliveries that fail with
+ * this error are dead-lettered immediately and never retried.
+ */
+export class EgressPolicyViolation extends Error {
+  readonly code = 'EGRESS_POLICY_VIOLATION';
   constructor(message: string) {
     super(message);
-    this.name = 'WebhookEgressPolicyError';
+    this.name = 'EgressPolicyViolation';
   }
+}
+
+/** @deprecated use EgressPolicyViolation */
+export { EgressPolicyViolation as WebhookEgressPolicyError };
+
+/**
+ * Machine-readable webhook egress rules. scripts/check-egress-policy.mjs
+ * verifies docs/EGRESS-POLICY.md stays in sync with these values.
+ */
+export const WEBHOOK_EGRESS_RULES = {
+  allowedProtocols: ['https:'],
+  allowedPorts: ['443'],
+  blockedHostnameSuffixes: ['localhost', '.localhost', '.local', '.internal'],
+  blockedIpv4Cidrs: [
+    '0.0.0.0/8',
+    '10.0.0.0/8',
+    '100.64.0.0/10',
+    '127.0.0.0/8',
+    '169.254.0.0/16',
+    '172.16.0.0/12',
+    '192.0.0.0/24',
+    '192.0.2.0/24',
+    '192.88.99.0/24',
+    '192.168.0.0/16',
+    '198.18.0.0/15',
+    '198.51.100.0/24',
+    '203.0.113.0/24',
+    '224.0.0.0/4',
+    '240.0.0.0/4',
+  ],
+  allowlistEnvVar: 'WEBHOOK_EGRESS_ALLOWLIST',
+} as const;
+
+/**
+ * Optional destination allowlist from WEBHOOK_EGRESS_ALLOWLIST: comma-separated
+ * hostnames, with `*.example.com` matching any subdomain of example.com.
+ * Empty / unset means any public HTTPS host is allowed.
+ */
+export function getWebhookEgressAllowlist(): string[] {
+  return (process.env[WEBHOOK_EGRESS_RULES.allowlistEnvVar] ?? '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function isHostAllowlisted(hostname: string, allowlist = getWebhookEgressAllowlist()): boolean {
+  if (allowlist.length === 0) return true;
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  return allowlist.some((pattern) =>
+    pattern.startsWith('*.') ? host.endsWith(pattern.slice(1)) && host.length > pattern.length - 1 : host === pattern,
+  );
 }
 
 function ipv4ToNumber(address: string): number {
@@ -15,34 +72,21 @@ function ipv4ToNumber(address: string): number {
 
 function isPublicIpv4(address: string): boolean {
   const value = ipv4ToNumber(address);
-  const blockedRanges: Array<[number, number]> = [
-    [0x00000000, 8],
-    [0x0a000000, 8],
-    [0x64400000, 10],
-    [0x7f000000, 8],
-    [0xa9fe0000, 16],
-    [0xac100000, 12],
-    [0xc0000000, 24],
-    [0xc0000200, 24],
-    [0xc0586300, 24],
-    [0xc0a80000, 16],
-    [0xc6120000, 15],
-    [0xc6336400, 24],
-    [0xcb007100, 24],
-    [0xe0000000, 4],
-    [0xf0000000, 4],
-  ];
+  const blockedRanges: Array<[number, number]> = WEBHOOK_EGRESS_RULES.blockedIpv4Cidrs.map((cidr) => {
+    const [network, prefix] = cidr.split('/');
+    return [ipv4ToNumber(network!), Number(prefix)];
+  });
 
   return !blockedRanges.some(([network, prefix]) => {
     const mask = (0xffffffff << (32 - prefix)) >>> 0;
-    return (value & mask) === network;
+    return ((value & mask) >>> 0) === network;
   });
 }
 
 function ipv6ToBigInt(address: string): bigint {
   const halves = address.toLowerCase().split('::');
   if (halves.length > 2) {
-    throw new WebhookEgressPolicyError('Invalid IPv6 address');
+    throw new EgressPolicyViolation('Invalid IPv6 address');
   }
 
   const left = halves[0] ? halves[0].split(':') : [];
@@ -51,7 +95,7 @@ function ipv6ToBigInt(address: string): bigint {
     halves.length === 2 ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right] : left;
 
   if (groups.length !== 8 || groups.some((group) => !/^[\da-f]{1,4}$/.test(group))) {
-    throw new WebhookEgressPolicyError('Invalid IPv6 address');
+    throw new EgressPolicyViolation('Invalid IPv6 address');
   }
 
   return groups.reduce((value, group) => (value << 16n) | BigInt(`0x${group}`), 0n);
@@ -77,6 +121,9 @@ function isPublicIpv6(address: string): boolean {
 }
 
 function isPublicAddress(address: string): boolean {
+  // IPv4-mapped IPv6 (::ffff:10.0.0.1) must be checked as IPv4.
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
+  if (mapped) return isPublicIpv4(mapped[1]!);
   const family = isIP(address);
   if (family === 4) return isPublicIpv4(address);
   if (family === 6) return isPublicIpv6(address);
@@ -88,7 +135,7 @@ function parseWebhookUrl(callbackUrl: string): URL {
   try {
     url = new URL(callbackUrl);
   } catch {
-    throw new WebhookEgressPolicyError('callbackUrl must be a valid URL');
+    throw new EgressPolicyViolation('callbackUrl must be a valid URL');
   }
 
   if (
@@ -98,7 +145,7 @@ function parseWebhookUrl(callbackUrl: string): URL {
     url.password ||
     url.hash
   ) {
-    throw new WebhookEgressPolicyError(
+    throw new EgressPolicyViolation(
       'callbackUrl must use HTTPS on port 443 without credentials or a fragment',
     );
   }
@@ -111,7 +158,11 @@ function parseWebhookUrl(callbackUrl: string): URL {
     hostname.endsWith('.local') ||
     hostname.endsWith('.internal')
   ) {
-    throw new WebhookEgressPolicyError('callbackUrl hostname is not allowed');
+    throw new EgressPolicyViolation('callbackUrl hostname is not allowed');
+  }
+
+  if (!isHostAllowlisted(hostname)) {
+    throw new EgressPolicyViolation('callbackUrl hostname is not on the webhook egress allowlist');
   }
 
   return url;
@@ -119,12 +170,13 @@ function parseWebhookUrl(callbackUrl: string): URL {
 
 async function resolvePublicAddresses(hostname: string): Promise<Array<{ address: string; family: number }>> {
   const literalFamily = isIP(hostname);
+  // DNS failures propagate as ordinary (retryable) errors, not policy violations.
   const addresses = literalFamily
     ? [{ address: hostname, family: literalFamily }]
     : await lookup(hostname, { all: true, verbatim: true });
 
   if (addresses.length === 0 || addresses.some(({ address }) => !isPublicAddress(address))) {
-    throw new WebhookEgressPolicyError(
+    throw new EgressPolicyViolation(
       'callbackUrl must resolve exclusively to globally routable IP addresses',
     );
   }
@@ -155,7 +207,7 @@ export async function sendWebhookRequest(
   const destination = addresses[0];
 
   if (!destination) {
-    throw new WebhookEgressPolicyError('callbackUrl did not resolve to an address');
+    throw new EgressPolicyViolation('callbackUrl did not resolve to an address');
   }
 
   return new Promise((resolve, reject) => {

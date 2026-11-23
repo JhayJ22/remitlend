@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
 import { TransactionPreviewModal } from "../transaction/TransactionPreviewModal";
 import { TransactionRecoveryPanel } from "../transaction/TransactionRecoveryPanel";
 import { LoanCostDisclosureError, LoanCostDisclosurePanel } from "../loan/LoanCostDisclosurePanel";
+import { AbuseTelemetryNotice } from "../security/AbuseTelemetryNotice";
 import {
   TransactionStatusTracker,
   type TransactionStatusState,
@@ -470,6 +471,8 @@ export function StepFinalSignature({
           ) : (
             !cost.ok && <LoanCostDisclosureError error={cost.error} />
           )}
+
+          <AbuseTelemetryNotice retentionDays={30} />
 
           {/* XDR preview */}
           <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">

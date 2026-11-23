@@ -14,6 +14,9 @@ import type { Request, Response, NextFunction } from 'express';
 import { keyRotationService } from '../services/keyRotationService.js';
 import { query } from '../db/connection.js';
 import { AppError } from '../errors/AppError.js';
+import cron from 'node-cron';
+import { notificationService } from '../services/notificationService.js';
+import logger from '../utils/logger.js';
 
 /**
  * Start a new key rotation batch.
@@ -25,16 +28,28 @@ export async function startKeyRotation(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { new_kek_id } = req.body as { new_kek_id?: string };
+    const { new_kek_id, data_class } = req.body as {
+      new_kek_id?: string;
+      data_class?: string;
+    };
 
     if (!new_kek_id || typeof new_kek_id !== 'string') {
       throw new AppError('new_kek_id is required and must be a string', 400);
     }
 
+    // Issue #846: rotation is scoped to a single data class so that rotating
+    // one class's KEK never re-wraps (or risks) another class's ciphertext.
+    const ALLOWED_CLASSES = ['pii', 'financial', 'credential', 'audit'] as const;
+    type DataClass = (typeof ALLOWED_CLASSES)[number];
+    const dataClass: DataClass =
+      data_class && (ALLOWED_CLASSES as readonly string[]).includes(data_class)
+        ? (data_class as DataClass)
+        : 'pii';
+
     const actor = req.user?.publicKey || 'system:api';
     const requestId = (req as any).requestId || 'unknown';
 
-    const batch = await keyRotationService.startRotation(new_kek_id, actor, requestId);
+    const batch = await keyRotationService.startRotation(new_kek_id, actor, requestId, dataClass);
 
     // Audit log
     await query(
@@ -48,6 +63,7 @@ export async function startKeyRotation(
         JSON.stringify({
           old_kek_id: batch.old_kek_id,
           new_kek_id: batch.new_kek_id,
+          data_class: dataClass,
           request_id: requestId,
         }),
         'success',
@@ -58,6 +74,7 @@ export async function startKeyRotation(
       batch_id: batch.id,
       old_kek_id: batch.old_kek_id,
       new_kek_id: batch.new_kek_id,
+      data_class: dataClass,
       status: batch.status,
       initiated_at: batch.initiated_at,
     });
@@ -373,4 +390,47 @@ export async function listKeyRotationBatches(
   } catch (err) {
     next(err);
   }
+}
+
+const EXPIRY_NOTICE_DAYS = 7;
+
+/**
+ * Notifies owners of API keys that expire within 7 days (once per key).
+ * Returns the number of notifications sent.
+ */
+export async function notifyExpiringApiKeys(): Promise<number> {
+  const res = await query(
+    `SELECT id, owner, key_prefix, expires_at FROM api_keys
+     WHERE revoked_at IS NULL AND expiry_notified_at IS NULL
+       AND expires_at > now() AND expires_at <= now() + ($1 || ' days')::interval`,
+    [String(EXPIRY_NOTICE_DAYS)],
+  );
+  let sent = 0;
+  for (const row of res.rows as Array<Record<string, unknown>>) {
+    try {
+      await notificationService.createNotification({
+        userId: String(row.owner),
+        type: 'api_key_expiring',
+        title: 'API key expiring soon',
+        message: `Your API key ${String(row.key_prefix)}… expires on ${new Date(row.expires_at as string).toISOString()}. Rotate it before then.`,
+      });
+      await query(`UPDATE api_keys SET expiry_notified_at = now() WHERE id = $1`, [row.id]);
+      sent += 1;
+    } catch (error) {
+      logger.error('Failed to send API key expiry notification', { keyId: row.id, error });
+    }
+  }
+  return sent;
+}
+
+let expiryTask: ReturnType<typeof cron.schedule> | undefined;
+
+export function startApiKeyExpiryCron(): void {
+  if (expiryTask || process.env.NODE_ENV === 'test') return;
+  expiryTask = cron.schedule('0 * * * *', () => void notifyExpiringApiKeys());
+}
+
+export function stopApiKeyExpiryCron(): void {
+  expiryTask?.stop();
+  expiryTask = undefined;
 }

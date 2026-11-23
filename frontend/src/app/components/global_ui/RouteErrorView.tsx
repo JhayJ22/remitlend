@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { ErrorFallback } from "./ErrorBoundary";
+import { ActionableError } from "./ActionableError";
+import { extractErrorCode } from "../../../lib/errors";
 import { showErrorFeedbackDialog } from "../../lib/observability";
 
 interface RouteErrorViewProps {
@@ -26,6 +28,10 @@ export function RouteErrorView({ error, reset, scope }: RouteErrorViewProps) {
     const id = Sentry.captureException(error, { tags: { scope } });
     setEventId(id);
   }, [error, scope]);
+
+  if (extractErrorCode(error)) {
+    return <ActionableError error={error} onRetry={reset} onRefresh={reset} />;
+  }
 
   return (
     <ErrorFallback

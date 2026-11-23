@@ -23,3 +23,10 @@ Run at normal (below `DB_POOL_MAX`) and overload (well above `DB_POOL_MAX + DB_P
 4. Run the load test at 1x, 2x and 10x of `DB_POOL_MAX` concurrency; record p95 latency, rps and 503 rate.
 5. Raise `DB_POOL_MAX` only while p95 improves and DB CPU stays healthy; otherwise scale replicas or optimize queries.
 6. Alert on sustained `db_pool_saturation_ratio` near 1, and any growth of the timeout/rejected counters.
+
+
+## Pool Capacity and Leak Detection Environment Variables
+- `DB_POOL_MAX`: Maximum number of connections in the pool (default: 10).
+- `DB_POOL_IDLE_TIMEOUT_MS`: Milliseconds before an idle connection is closed (default: 30000).
+- `DB_POOL_LEAK_THRESHOLD_MS`: Milliseconds before an unreleased connection triggers a leak warning and stack trace (default: 5000).
+- Metric `db_connections_active`: Gauge tracking active checked-out connections with warnings emitted when utilization exceeds 80% of `DB_POOL_MAX`.

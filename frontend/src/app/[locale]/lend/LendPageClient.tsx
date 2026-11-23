@@ -32,7 +32,7 @@ import { useDepositOperation, useWithdrawalOperation } from "../../hooks/useRepa
 import { selectWalletAddress, useWalletStore } from "../../stores/useWalletStore";
 import { useSSE } from "../../hooks/useSSE";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { Tooltip } from "../../components/ui/Tooltip";
+import { GlossaryTerm } from "../../components/glossary/GlossaryTerm";
 import {
   buildAmountHelperText,
   getPrecisionError,
@@ -231,6 +231,12 @@ export function LendPageClient() {
                   : "Offline"}
           </div>
         )}
+        <Link
+          href="/offers"
+          className="shrink-0 rounded-xl border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-900"
+        >
+          Compare offers
+        </Link>
       </header>
 
       <ErrorBoundary scope="lender overview" variant="section">
@@ -245,15 +251,13 @@ export function LendPageClient() {
               label: "Utilization Rate",
               value: formatPercent(poolStats?.utilizationRate ?? 0),
               icon: Percent,
-              tooltip:
-                "Utilization Rate: How much of the pool is currently loaned out. Higher utilization can increase yield, but may reduce instant liquidity.",
+              glossaryKey: "utilizationRate" as const,
             },
             {
               label: "Current APY",
               value: formatPercent(poolStats?.apy ?? 0),
               icon: Activity,
-              tooltip:
-                "APY (Annual Percentage Yield): The estimated yearly return on deposits, including compounding. This may vary with pool utilization and repayments.",
+              glossaryKey: "apy" as const,
             },
             {
               label: "Active Loans",
@@ -271,10 +275,13 @@ export function LendPageClient() {
                 </div>
                 <div>
                   <p className="flex items-center gap-1 text-sm text-zinc-500 dark:text-zinc-400">
-                    {item.label}
-                    {"tooltip" in item && item.tooltip ? (
-                      <Tooltip content={item.tooltip} label={`${item.label} info`} />
-                    ) : null}
+                    {"glossaryKey" in item && item.glossaryKey ? (
+                      <GlossaryTerm termKey={item.glossaryKey} variant="icon">
+                        {item.label}
+                      </GlossaryTerm>
+                    ) : (
+                      item.label
+                    )}
                   </p>
                   {isLoading ? (
                     <Skeleton className="mt-1 h-7 w-24" />
@@ -306,7 +313,9 @@ export function LendPageClient() {
                 )}
               </div>
               <div className="rounded-2xl bg-zinc-50 p-4 dark:bg-zinc-900">
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">Share of Pool</p>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  <GlossaryTerm termKey="shareOfPool" variant="icon">Share of Pool</GlossaryTerm>
+                </p>
                 {isLoading ? (
                   <Skeleton className="mt-2 h-7 w-24" />
                 ) : (
@@ -316,7 +325,9 @@ export function LendPageClient() {
                 )}
               </div>
               <div className="rounded-2xl bg-zinc-50 p-4 dark:bg-zinc-900">
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">Estimated Earnings</p>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  <GlossaryTerm termKey="yield" variant="icon">Estimated Earnings</GlossaryTerm>
+                </p>
                 {isLoading ? (
                   <Skeleton className="mt-2 h-7 w-24" />
                 ) : (

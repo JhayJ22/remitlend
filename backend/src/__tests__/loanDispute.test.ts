@@ -212,28 +212,19 @@ describe('Loan Dispute/Appeal Mechanism', () => {
     expect(res.body.summary?.disputeFrozen).toBe(true);
   });
 
-  it('should allow admin to resolve dispute as confirm', async () => {
-    /**
-     * POST /api/admin/loan-disputes/:disputeId/resolve  (no loanAccess middleware)
-     *   resolveLoanDispute:
-     *   [1] SELECT loan_disputes WHERE id = disputeId AND status='open'  → found
-     *   [2] UPDATE loan_disputes SET status='resolved'
-     *   [3] INSERT contract_events DefaultConfirmed  (action = 'confirm')
-     */
-    mockQuery
-      .mockResolvedValueOnce(
-        dbRows([
-          {
-            id: disputeId,
-            loan_id: LOAN_ID,
-            borrower: TEST_PUBLIC_KEY,
-            status: 'open',
-          },
-        ]),
-      ) // [1]
-      .mockResolvedValueOnce(dbOk('UPDATE')) // [2]
-      .mockResolvedValueOnce(dbOk()); // [3]
+  const mockDisputeStatus = (status: string) => {
+    mockQuery.mockReset();
+    mockQuery.mockImplementation(async (...args: unknown[]) => {
+      const sql = String(args[0]);
+      if (sql.includes('FROM loan_disputes')) {
+        return dbRows([{ id: disputeId, loan_id: LOAN_ID, borrower: TEST_PUBLIC_KEY, status }]);
+      }
+      return dbOk();
+    });
+  };
 
+  it('should allow admin to resolve an under_review dispute as confirm', async () => {
+    mockDisputeStatus('under_review');
     const res = await request(app)
       .post(`/api/admin/loan-disputes/${disputeId}/resolve`)
       .set('x-api-key', ADMIN_API_KEY)
@@ -241,35 +232,33 @@ describe('Loan Dispute/Appeal Mechanism', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+    const sqls = mockQuery.mock.calls.map((c) => String(c[0]));
+    expect(sqls.some((q) => q.includes('INSERT INTO audit_logs'))).toBe(true);
   });
 
-  it('should allow admin to resolve dispute as reverse', async () => {
-    /**
-     * resolveLoanDispute:
-     *   [1] SELECT loan_disputes WHERE id = disputeId AND status='open'  → found
-     *   [2] UPDATE loan_disputes SET status='resolved'
-     *   [3] INSERT contract_events DefaultReversed  (action = 'reverse')
-     */
-    mockQuery
-      .mockResolvedValueOnce(
-        dbRows([
-          {
-            id: disputeId,
-            loan_id: LOAN_ID,
-            borrower: TEST_PUBLIC_KEY,
-            status: 'open',
-          },
-        ]),
-      ) // [1]
-      .mockResolvedValueOnce(dbOk('UPDATE')) // [2]
-      .mockResolvedValueOnce(dbOk()); // [3]
-
+  it('should allow admin to resolve an under_review dispute as reverse', async () => {
+    mockDisputeStatus('under_review');
     const res = await request(app)
       .post(`/api/admin/loan-disputes/${disputeId}/resolve`)
       .set('x-api-key', ADMIN_API_KEY)
-      .send({ action: 'reverse', resolution: 'Default was incorrect.' });
+      .send({
+        action: 'reverse',
+        resolution: 'Default was incorrect.',
+        correctedRemittanceData: { amount: '100' },
+      });
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    const sqls = mockQuery.mock.calls.map((c) => String(c[0]));
+    expect(sqls.some((q) => q.includes('INSERT INTO scores'))).toBe(true);
+  });
+
+  it('should reject resolving a dispute that is still open (400)', async () => {
+    mockDisputeStatus('open');
+    const res = await request(app)
+      .post(`/api/admin/loan-disputes/${disputeId}/resolve`)
+      .set('x-api-key', ADMIN_API_KEY)
+      .send({ action: 'confirm', resolution: 'Default was valid.' });
+
+    expect(res.status).toBe(400);
   });
 });

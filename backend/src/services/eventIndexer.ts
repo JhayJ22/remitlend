@@ -1,4 +1,5 @@
 import { rpc as SorobanRpc, scValToNative, xdr } from '@stellar/stellar-sdk';
+import { appendAuditLogWithClient } from './auditLogService.js';
 import { type PoolClient, query, withTransaction } from '../db/connection.js';
 import logger from '../utils/logger.js';
 import { createRequestId, runWithRequestContext } from '../utils/requestContext.js';
@@ -13,6 +14,7 @@ import { eventStreamService } from './eventStreamService.js';
 import { notificationService, type NotificationType } from './notificationService.js';
 import { sorobanService } from './sorobanService.js';
 import { updateUserScoresBulk } from './scoresService.js';
+import { storeTransferEvent, extractTransferMetadata } from './transferHistoryService.js';
 import { transferHistoryService } from './transferHistoryService.js';
 import { invalidateForChainEvents } from '../utils/cacheContracts.js';
 import { AppError } from '../errors/AppError.js';
@@ -21,6 +23,7 @@ import { setPauseState } from '../middleware/pauseGuard.js';
 import { fromStroops } from '../money/decimal.js';
 import { LOAN_STATE_EVENT_TYPES } from './loanStateEventStore.js';
 import { AdaptiveScheduler, type SchedulerConfig } from './adaptiveScheduler.js';
+import { recordEvidence } from './evidenceProvenanceService.js';
 
 const LOAN_STATE_EVENT_TYPE_SET = new Set<string>(LOAN_STATE_EVENT_TYPES);
 
@@ -93,6 +96,7 @@ interface ContractEvent extends IndexedLoanEvent {
   nftTransferFrom?: string;
   nftTransferTo?: string;
   nftTransferScore?: number;
+  nftTransferMeta?: import('./transferHistoryService.js').TransferMetadata;
 }
 
 interface EventIndexerConfig {
@@ -736,25 +740,21 @@ export class EventIndexer {
           insertedEvents.push(event);
 
           if (this.isAdminConfigEventType(event.eventType)) {
-            await client.query(
-              `INSERT INTO audit_logs (actor, action, target, payload, ip_address, status)
-               VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
-              [
-                event.address ?? 'SYSTEM',
-                `ADMIN_CONFIG_${event.eventType}`,
-                `contract:${event.contractId}`,
-                JSON.stringify({
-                  eventId: event.eventId,
-                  eventType: event.eventType,
-                  loanId: event.loanId ?? null,
-                  amount: event.amount ?? null,
-                  ledger: event.ledger,
-                  txHash: event.txHash,
-                }),
-                'internal-indexer',
-                200,
-              ],
-            );
+            await appendAuditLogWithClient(client, {
+              actor: event.address ?? 'SYSTEM',
+              action: `ADMIN_CONFIG_${event.eventType}`,
+              target: `contract:${event.contractId}`,
+              payload: {
+                eventId: event.eventId,
+                eventType: event.eventType,
+                loanId: event.loanId ?? null,
+                amount: event.amount ?? null,
+                ledger: event.ledger,
+                txHash: event.txHash,
+              },
+              ipAddress: 'internal-indexer',
+              status: 200,
+            });
           }
 
           /**
@@ -768,23 +768,19 @@ export class EventIndexer {
            *   ip_address — null (on-chain action, no HTTP request IP)
            */
           if (event.eventType === 'LoanApprv') {
-            await client.query(
-              `INSERT INTO audit_logs (actor, action, target, payload, ip_address, status)
-               VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
-              [
-                event.adminAddress ?? 'SYSTEM',
-                'loan_approved',
-                `loan:${event.loanId ?? 'unknown'}`,
-                JSON.stringify({
-                  eventId: event.eventId,
-                  loanId: event.loanId ?? null,
-                  borrower: event.address ?? null,
-                  txHash: event.txHash,
-                }),
-                null,
-                200, // Loan approved on-chain
-              ],
-            );
+            await appendAuditLogWithClient(client, {
+              actor: event.adminAddress ?? 'SYSTEM',
+              action: 'loan_approved',
+              target: `loan:${event.loanId ?? 'unknown'}`,
+              payload: {
+                eventId: event.eventId,
+                loanId: event.loanId ?? null,
+                borrower: event.address ?? null,
+                txHash: event.txHash,
+              },
+              ipAddress: null,
+              status: 200, // Loan approved on-chain
+            });
           }
 
           /**
@@ -849,20 +845,29 @@ export class EventIndexer {
 
       // Handle NftTransferred events — store in transfer history table
       for (const event of parsedEvents) {
-        if (
-          event.eventType === 'NFTTransferred' &&
-          (event as any).nftTransferFrom &&
-          (event as any).nftTransferTo
-        ) {
-          const fromAddr = (event as any).nftTransferFrom as string;
-          const toAddr = (event as any).nftTransferTo as string;
-          const score = (event as any).nftTransferScore as number;
+        if (event.eventType === 'NFTTransferred' && event.nftTransferFrom && event.nftTransferTo) {
+          const fromAddr = event.nftTransferFrom as string;
+          const toAddr = event.nftTransferTo as string;
+          const score = event.nftTransferScore as number;
 
-          await client.query(
-            `INSERT INTO nft_transfer_events (from_address, to_address, score, ledger_sequence)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT DO NOTHING`,
-            [fromAddr, toAddr, score, event.ledger],
+          await storeTransferEvent(client, fromAddr, toAddr, score, event.ledger, {
+            eventType: 'transfer',
+            txHash: event.txHash,
+            eventTime: event.ledgerClosedAt,
+            metadata: event.nftTransferMeta,
+          });
+        } else if (event.eventType === 'ScoreUpdated' && event.address) {
+          await storeTransferEvent(
+            client,
+            event.address,
+            event.address,
+            Number(event.amount ?? 0),
+            event.ledger,
+            {
+              eventType: 'score_updated',
+              txHash: event.txHash,
+              eventTime: event.ledgerClosedAt,
+            },
           );
         }
       }
@@ -912,6 +917,36 @@ export class EventIndexer {
       } else if (event.eventType === 'PoolUnpaused') {
         await setPauseState(false, [], 'Contract pause lifted');
       }
+    }
+
+    // Record signed evidence provenance for each successfully ingested event (#848).
+    // Only the SHA-256 digest of the parsed event metadata is stored — never
+    // the raw XDR payload — so the audit trail is safe for public/audit logs.
+    for (const event of insertedEvents) {
+      await recordEvidence({
+        recordType: 'indexer_event',
+        recordRef: event.eventId,
+        sourceIdentity: `contract:${event.contractId}`,
+        record: {
+          eventId: event.eventId,
+          eventType: event.eventType,
+          ledger: event.ledger,
+          txHash: event.txHash,
+          loanId: event.loanId ?? null,
+          amount: event.amount ?? null,
+        },
+        verificationResult: 'verified',
+        verificationDetail: {
+          ledger: event.ledger,
+          txHash: event.txHash,
+          contractId: event.contractId,
+        },
+      }).catch((err) => {
+        logger.withContext().warn('Failed to record evidence provenance for indexed event', {
+          eventId: event.eventId,
+          err,
+        });
+      });
     }
 
     return {
@@ -1018,6 +1053,7 @@ export class EventIndexer {
           (event as any).nftTransferFrom = fromAddr;
           (event as any).nftTransferTo = toAddr;
           (event as any).nftTransferScore = score;
+          (event as any).nftTransferMeta = extractTransferMetadata(transferData);
 
           // Set address to the "to" address for audit trail
           address = toAddr;
@@ -1212,6 +1248,14 @@ export class EventIndexer {
       ...(address !== undefined ? { address } : {}),
       ...(adminAddress !== undefined ? { adminAddress } : {}),
       ...(borrowerRefund !== undefined ? { borrowerRefund } : {}),
+      ...(type === 'NFTTransferred'
+        ? {
+            nftTransferFrom: (event as any).nftTransferFrom,
+            nftTransferTo: (event as any).nftTransferTo,
+            nftTransferScore: (event as any).nftTransferScore,
+            nftTransferMeta: (event as any).nftTransferMeta,
+          }
+        : {}),
     };
   }
 
@@ -1431,6 +1475,27 @@ export class EventIndexer {
           errorMessage,
         ],
       );
+      // Record signed evidence provenance for the quarantined event (#848).
+      // Only the SHA-256 digest of the raw event data is stored — never the
+      // raw payload — so the evidence trail remains safe for audit logs.
+      await recordEvidence({
+        recordType: 'quarantine_event',
+        recordRef: event.id,
+        sourceIdentity: `contract:${event.contractId.toString()}`,
+        record: rawXdr,
+        verificationResult: 'quarantined',
+        verificationDetail: {
+          ledger: event.ledger,
+          txHash: event.txHash,
+          errorCode: 'XDR_PARSE_FAILURE',
+          errorMessage: errorMessage.slice(0, 200),
+        },
+      }).catch((err) => {
+        logger.withContext().warn('Failed to record evidence provenance for quarantined event', {
+          eventId: event.id,
+          err,
+        });
+      });
     } catch (dbError) {
       logger.withContext().error('Failed to quarantine malformed event', {
         eventId: event.id,

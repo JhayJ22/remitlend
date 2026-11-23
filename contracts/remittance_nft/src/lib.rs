@@ -65,6 +65,7 @@ pub enum DataKey {
     ProposedAdmin,
     MinRepaymentAmount,
     RecipientCommitment(Address),
+    StorageVersion,
 }
 
 #[contracttype]
@@ -75,6 +76,8 @@ pub struct NftTransferEvent {
     pub score: u32,
     pub ledger: u32,
 }
+
+pub mod migration;
 
 #[contract]
 pub struct RemittanceNFT;
@@ -394,6 +397,11 @@ impl RemittanceNFT {
         env.storage().instance().get(&DataKey::Version).unwrap_or(0)
     }
 
+    /// Read-only: storage schema version currently recorded on-chain.
+    pub fn get_storage_version(env: Env) -> u32 {
+        <migration::NftMigrations as migration::MigrationHelper>::storage_version(&env)
+    }
+
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
         Self::admin(&env).require_auth();
         let old_version = Self::version(env.clone());
@@ -419,6 +427,10 @@ impl RemittanceNFT {
         env.storage()
             .instance()
             .set(&DataKey::Version, &Self::CURRENT_VERSION);
+        <migration::NftMigrations as migration::MigrationHelper>::set_storage_version(
+            &env,
+            migration::STORAGE_SCHEMA_VERSION,
+        );
         Self::bump_instance_ttl(&env);
     }
 

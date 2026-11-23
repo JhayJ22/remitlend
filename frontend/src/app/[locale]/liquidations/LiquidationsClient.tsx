@@ -15,6 +15,7 @@ import { Skeleton } from "../../components/ui/Skeleton";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { useContractToast } from "../../hooks/useContractToast";
 import { selectWalletAddress, useWalletStore } from "../../stores/useWalletStore";
+import { useWindowedList, windowedItemAria } from "../../hooks/useWindowedList";
 import { useQueryClient } from "@tanstack/react-query";
 
 function formatCurrency(value: number) {
@@ -54,11 +55,20 @@ function LiquidationsTable({
   pendingLoanId: number | null;
 }) {
   const t = useTranslations("Liquidations");
+  const { startIndex, endIndex, totalHeight, offsetY, containerRef } = useWindowedList({
+    itemCount: loans.length,
+    itemHeight: LIQUIDATION_ROW_HEIGHT,
+    overscan: 5,
+    storageKey: "liquidation-list",
+  });
+  const windowed = loans.slice(startIndex, endIndex + 1);
+  const topPad = offsetY;
+  const bottomPad = Math.max(0, totalHeight - offsetY - windowed.length * LIQUIDATION_ROW_HEIGHT);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
+      <div ref={containerRef} className="max-h-[70vh] overflow-auto">
+        <table aria-rowcount={loans.length + 1} className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
           <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
             <tr>
               <th className="px-4 py-3">{t("table.loan")}</th>
@@ -70,8 +80,18 @@ function LiquidationsTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-            {loans.map((loan) => (
-              <tr key={loan.loanId} className="align-middle">
+            {topPad > 0 && (
+              <tr aria-hidden="true" style={{ height: topPad }}>
+                <td colSpan={6} />
+              </tr>
+            )}
+            {windowed.map((loan, i) => (
+              <tr
+                key={loan.loanId}
+                {...windowedItemAria(startIndex + i, loans.length)}
+                style={{ height: LIQUIDATION_ROW_HEIGHT }}
+                className="align-middle"
+              >
                 <td className="px-4 py-4 font-semibold text-zinc-900 dark:text-zinc-50">
                   #{loan.loanId}
                 </td>
@@ -105,12 +125,20 @@ function LiquidationsTable({
                 </td>
               </tr>
             ))}
+            {bottomPad > 0 && (
+              <tr aria-hidden="true" style={{ height: bottomPad }}>
+                <td colSpan={6} />
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
     </div>
   );
 }
+
+/** Fixed rendered row height (px) for the windowed liquidation table. */
+const LIQUIDATION_ROW_HEIGHT = 72;
 
 export default function LiquidationsClient() {
   const t = useTranslations("Liquidations");

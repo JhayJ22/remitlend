@@ -72,6 +72,10 @@ class ScoreReconciliationService {
     return parseNonNegativeInt(process.env.SCORE_RECONCILIATION_AUTOCORRECT_THRESHOLD, 50);
   }
 
+  private getDriftAlertThreshold(): number {
+    return parseNonNegativeInt(process.env.SCORE_DRIFT_ALERT_THRESHOLD, 50);
+  }
+
   private async fetchActiveBorrowerScores(): Promise<ActiveBorrowerScoreRow[]> {
     const result = await query(
       `
@@ -116,6 +120,22 @@ class ScoreReconciliationService {
     });
   }
 
+  private async recordDiscrepancy(divergence: ScoreDivergence): Promise<void> {
+    await query(
+      `
+      INSERT INTO score_discrepancies (
+        user_id, db_score, contract_score, absolute_difference, detected_at
+      ) VALUES ($1, $2, $3, $4, NOW())
+      `,
+      [
+        divergence.address,
+        divergence.dbScore,
+        divergence.contractScore,
+        divergence.absoluteDifference,
+      ],
+    );
+  }
+
   async reconcileActiveBorrowerScores(): Promise<ScoreReconciliationResult> {
     const startTime = Date.now();
     const jobName = 'scoreReconciliationService';
@@ -124,16 +144,19 @@ class ScoreReconciliationService {
     const batchSize = this.getBatchSize();
     const autoCorrectEnabled = this.isAutoCorrectEnabled();
     const autoCorrectThreshold = this.getAutoCorrectThreshold();
+    const driftAlertThreshold = this.getDriftAlertThreshold();
     const divergences: ScoreDivergence[] = [];
     const corrections = new Map<string, number>();
     let checkedBorrowerCount = 0;
     let failedBorrowerCount = 0;
+    let alertCount = 0;
 
     logger.withContext().info('score_reconciliation.run.start', {
       activeBorrowerCount: activeBorrowers.length,
       batchSize,
       autoCorrectEnabled,
       autoCorrectThreshold,
+      driftAlertThreshold,
     });
 
     try {
@@ -178,6 +201,20 @@ class ScoreReconciliationService {
 
           logger.withContext().warn('score_reconciliation.mismatch', divergence);
 
+          const exceedsAlertThreshold =
+            absoluteDifference === null || absoluteDifference > driftAlertThreshold;
+
+          if (exceedsAlertThreshold) {
+            alertCount += 1;
+            logger.withContext().error('score_reconciliation.drift.alert', {
+              address,
+              dbScore,
+              contractScore,
+              absoluteDifference,
+              driftAlertThreshold,
+            });
+          }
+
           const exceedsThreshold =
             absoluteDifference === null || absoluteDifference >= autoCorrectThreshold;
 
@@ -191,6 +228,12 @@ class ScoreReconciliationService {
         metric: 'score_divergence_count',
         value: divergences.length,
       });
+
+      if (divergences.length > 0) {
+        await Promise.allSettled(
+          divergences.map((divergence) => this.recordDiscrepancy(divergence)),
+        );
+      }
 
       if (corrections.size > 0) {
         await setAbsoluteUserScoresBulk(corrections);
@@ -212,11 +255,12 @@ class ScoreReconciliationService {
       };
 
       logger.withContext().info('score_reconciliation.run.complete', {
-        activeBorrowerCount: result.activeBorrowerCount,
-        checkedBorrowerCount: result.checkedBorrowerCount,
-        failedBorrowerCount: result.failedBorrowerCount,
-        divergenceCount: result.divergenceCount,
-        correctedCount: result.correctedCount,
+        usersChecked: result.checkedBorrowerCount,
+        usersDrifted: result.divergenceCount,
+        usersCorrected: result.correctedCount,
+        usersFailed: result.failedBorrowerCount,
+        alertCount,
+        driftAlertThreshold,
       });
       recordScoreReconciliationRun();
 
@@ -247,48 +291,45 @@ export function startScoreReconciliationScheduler(): void {
   }
 
   if (!process.env.REMITTANCE_NFT_CONTRACT_ID) {
-    logger
-      .withContext()
-      .warn('Score reconciliation scheduler disabled (set REMITTANCE_NFT_CONTRACT_ID)');
+    logger.withContext().warn('score_reconciliation.scheduler.disabled', {
+      reason: 'REMITTANCE_NFT_CONTRACT_ID not configured',
+    });
     return;
   }
 
-  const intervalMs = parsePositiveInt(process.env.SCORE_RECONCILIATION_INTERVAL_MS, 60 * 60 * 1000);
+  const intervalMs = parsePositiveInt(
+    process.env.SCORE_RECONCILIATION_INTERVAL_MS,
+    24 * 60 * 60 * 1000,
+  );
 
   const run = async () => {
     if (reconciliationInFlight) {
-      logger
-        .withContext()
-        .warn('Score reconciliation run skipped because a previous run is still in flight');
+      logger.withContext().warn('score_reconciliation.run.skipped', {
+        reason: 'previous run still in flight',
+      });
       return;
     }
-
     reconciliationInFlight = true;
     try {
       await scoreReconciliationService.reconcileActiveBorrowerScores();
     } catch (error) {
-      logger.withContext().error('Score reconciliation scheduled run failed', { error });
+      logger.withContext().error('score_reconciliation.run.failed', { error });
     } finally {
       reconciliationInFlight = false;
     }
   };
 
-  void run();
+  reconciliationInterval = setInterval(run, intervalMs);
+  if (typeof reconciliationInterval.unref === 'function') {
+    reconciliationInterval.unref();
+  }
 
-  reconciliationInterval = setInterval(() => {
-    void run();
-  }, intervalMs);
-  reconciliationInterval.unref?.();
-
-  logger.withContext().info('Score reconciliation scheduler started', {
-    intervalMs,
-  });
+  logger.withContext().info('score_reconciliation.scheduler.started', { intervalMs });
 }
 
 export function stopScoreReconciliationScheduler(): void {
   if (reconciliationInterval) {
     clearInterval(reconciliationInterval);
     reconciliationInterval = undefined;
-    logger.withContext().info('Score reconciliation scheduler stopped');
   }
 }

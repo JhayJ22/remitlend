@@ -4,6 +4,7 @@ import { AppError } from '../errors/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import logger from '../utils/logger.js';
 import { notificationService } from '../services/notificationService.js';
+import { recordDisputeTransition } from '../services/disputeStateMachine.js';
 import { emitLoanStateEvent } from '../services/loanStateEventStore.js';
 
 /**
@@ -38,6 +39,14 @@ export const contestDefault = asyncHandler(
       `INSERT INTO loan_disputes (loan_id, borrower, reason, status) VALUES ($1, $2, $3, 'open') RETURNING id`,
       [loanId, borrower, reason],
     );
+
+    await recordDisputeTransition({
+      actor: borrower,
+      disputeId: disputeResult.rows[0].id,
+      from: 'none',
+      to: 'open',
+      note: reason,
+    });
 
     await query(
       `INSERT INTO contract_events (loan_id, address, event_type, amount, ledger, ledger_closed_at) VALUES ($1, $2, 'LoanDisputed', NULL, NULL, NOW())`,

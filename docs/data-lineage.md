@@ -62,6 +62,18 @@ The Stellar ledger is the **ultimate authority**. Any discrepancy between the
 database and on-chain state must be resolved in favour of on-chain state by
 running `scoreReconciliationService`.
 
+`abuse_telemetry_events` is explicitly **not** a score input. The privacy-safe
+abuse telemetry added for #852 records only coarse action frequency, outcome,
+and risk tier, and carries no amount, currency, wallet address, or identity
+field. It cannot affect `scores`, loan terms, balances, or settlement; see
+[ABUSE_TELEMETRY.md](./ABUSE_TELEMETRY.md) for the full contract.
+`statement_manifest_issuances` records only the signed manifest text, key ID,
+source type, schema version, row count, daily salted subject hash, and issue
+timestamp for downloadable statement exports. It contains no CSV bytes, amounts,
+wallet addresses, or private signing material, is never a score or balance
+input, and cannot affect settlement. See
+[STATEMENT_VERIFICATION.md](./STATEMENT_VERIFICATION.md).
+
 ---
 
 ## Data Flow
@@ -255,6 +267,32 @@ Metrics to monitor in production:
 - Ratio of `LoanDefaulted` to `LoanRepaid` events (anomaly detection)
 - Redis cache hit rate on `score:userId:*` keys
 - Quarantine event queue depth
+
+---
+
+## Network submission telemetry lineage (#857)
+
+Per-network submission telemetry is derived from the selected RPC endpoint at
+submission time, never from user-supplied values. The authoritative source of
+truth remains the signed Stellar transaction and its network passphrase;
+telemetry labels and failover state are operational metadata only.
+
+```text
+signed transaction (unchanged XDR + hash)
+  -> bounded endpoint selection (config/networks.ts + networkFailoverService.ts)
+  -> per-network metrics + rolling in-memory window (networkTelemetryService.ts)
+  -> Prometheus /metrics + GET /api/v1/admin/network-telemetry
+  -> retry-storm indicator evaluation (retryStormAlertService.ts)
+  -> network_failover_events + optional FAILOVER_ALERT_WEBHOOK
+```
+
+`network_failover_events` is append-only and keyed by endpoint id, event type,
+and creation time. `soroban_write_queue` gains bounded retry metadata
+(`max_attempts`, `dead_lettered_at`, `dead_letter_reason`); signed payloads are
+preserved unchanged and are never exposed by admin listing endpoints. Dead
+letters only re-enter the queue through the audited redrive endpoint. See
+[NETWORK_TELEMETRY.md](./NETWORK_TELEMETRY.md) for the full state machine,
+configuration bounds, and migration impact.
 
 ---
 

@@ -35,11 +35,18 @@ import {
 } from './services/crossContractReconciler.js';
 import { sorobanService } from './services/sorobanService.js';
 import { validateLoanConfigOnStartup } from './config/loanConfig.js';
+import { startApiKeyExpiryCron, stopApiKeyExpiryCron } from './controllers/keyRotationController.js';
+import { assertNetworkReadiness } from './config/networkReadiness.js';
+import {
+  startCapacitySnapshotScheduler,
+  stopCapacitySnapshotScheduler,
+} from './services/capacityModel.js';
 import { startLoanDueCheckCron, stopLoanDueCheckCron } from './cron/loanCheckCron.js';
 import {
   startContractVerificationCron,
   stopContractVerificationCron,
 } from './cron/contractVerificationJob.js';
+import { startGovernanceSweepCron, stopGovernanceSweepCron } from './cron/governanceSweepJob.js';
 // Imported the score decay scheduler initialization wrapper
 import { startScoreDecayScheduler } from './cron/scoreDecayJob.js';
 import { initializePauseState } from './middleware/pauseGuard.js';
@@ -48,6 +55,19 @@ import {
   startSorobanWriteReplayProcessor,
   stopSorobanWriteReplayProcessor,
 } from './services/sorobanWriteReplayProcessor.js';
+import {
+  startAbuseTelemetryRetentionScheduler,
+  stopAbuseTelemetryRetentionScheduler,
+} from './services/abuseTelemetryService.js';
+  startBreakGlassExpirySweep,
+  stopBreakGlassExpirySweep,
+} from './services/breakGlassService.js';
+  startQueueBackpressureRefresh,
+  stopQueueBackpressureRefresh,
+} from './services/queueBackpressure.js';
+  startOrphanedTxReconciler,
+  stopOrphanedTxReconciler,
+} from './services/orphanedTxReconciler.js';
 
 const port = process.env.PORT || 3001;
 
@@ -78,6 +98,11 @@ try {
   process.exit(1);
 }
 
+// Validate network passphrase, RPC endpoint, all contract IDs, asset metadata,
+// and supported-version manifest — issue #862.
+// Critical failures abort startup; warnings are logged and startup continues.
+await assertNetworkReadiness();
+
 // Initialize pause state table and load initial state
 try {
   await initializePauseState();
@@ -98,6 +123,11 @@ const server = app.listen(port, () => {
   // Drain Soroban writes queued while the RPC was unavailable (#74)
   startSorobanWriteReplayProcessor();
 
+  // Start queue backpressure saturation refresh loop (#860)
+  startQueueBackpressureRefresh();
+  // Reconcile orphaned transaction submissions (lost-response intents) (#858)
+  startOrphanedTxReconciler();
+
   // Start webhook retry processor (5m/15m/45m backoff via WebhookService.processRetries)
   startWebhookRetryProcessor();
 
@@ -110,14 +140,26 @@ const server = app.listen(port, () => {
   // Start periodic notification cleanup
   startNotificationCleanupScheduler();
 
+  // Start periodic abuse telemetry retention purge
+  startAbuseTelemetryRetentionScheduler();
+
   // Start loan due check cron
   startLoanDueCheckCron();
+  startApiKeyExpiryCron();
 
   // Start contract verification polling against Stellar explorer
   startContractVerificationCron();
 
+  // Nightly purge of TTL-expired multisig governance proposals (#785)
+  startGovernanceSweepCron();
+
   // Wire up and activate the score decay daily scheduler loop
   scoreDecaySchedulerHandle = startScoreDecayScheduler() || null;
+
+  // Auto-revoke break-glass grants past their expiry (#849)
+  startBreakGlassExpirySweep();
+  // Start capacity snapshot scheduler (#865)
+  startCapacitySnapshotScheduler();
 });
 
 let shuttingDown = false;
@@ -160,14 +202,21 @@ const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
     }
 
     stopLoanDueCheckCron();
+    stopApiKeyExpiryCron();
     stopContractVerificationCron();
+    stopGovernanceSweepCron();
     await stopIndexer();
     stopDefaultCheckerScheduler();
     stopWebhookRetryProcessor();
     stopSorobanWriteReplayProcessor();
+    stopBreakGlassExpirySweep();
+    stopQueueBackpressureRefresh();
+    stopOrphanedTxReconciler();
     stopScoreReconciliationScheduler();
     stopCrossContractReconciler();
+    stopCapacitySnapshotScheduler();
     stopNotificationCleanupScheduler();
+    stopAbuseTelemetryRetentionScheduler();
     logger.info('All schedulers stopped.');
 
     // Step 3: Close event streams

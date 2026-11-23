@@ -11,7 +11,7 @@ import {
   normalizeYieldHistoryDays,
 } from '../services/yieldHistoryService.js';
 import logger from '../utils/logger.js';
-import { invalidateOnDeposit, invalidateOnWithdraw } from '../utils/cacheKeys.js';
+import { CacheKeys, invalidateOnDeposit, invalidateOnWithdraw } from '../utils/cacheKeys.js';
 
 /**
  * The on-chain share price is scaled by SHARE_PRICE_SCALE (1,000,000 = 1.0).
@@ -289,6 +289,8 @@ export const emergencyWithdrawFromPool = asyncHandler(async (req: Request, res: 
 
   const result = await sorobanService.buildEmergencyWithdrawTx(depositorPublicKey, token, shares);
 
+  await invalidateOnWithdraw(depositorPublicKey);
+
   logger.info('Emergency withdraw transaction built', {
     depositor: depositorPublicKey,
     token,
@@ -323,12 +325,12 @@ export const submitPoolTransaction = asyncHandler(async (req: Request, res: Resp
     async (stellarResult: unknown, client) => {
       const sr = stellarResult as { txHash: string; status: string };
       await client.query(
-        `INSERT INTO transaction_submissions (tx_hash, status, submitted_at, submitted_by, transaction_type)
-           VALUES ($1, $2, NOW(), $3, $4)
+        `INSERT INTO transaction_submissions (tx_hash, status, submitted_at, submitted_by, transaction_type, envelope_xdr)
+           VALUES ($1, $2, NOW(), $3, $4, $5)
            ON CONFLICT (tx_hash) DO UPDATE SET
              status = EXCLUDED.status,
              submitted_at = EXCLUDED.submitted_at`,
-        [sr.txHash, sr.status, req.user?.publicKey || null, 'pool'],
+        [sr.txHash, sr.status, req.user?.publicKey || null, 'pool', signedTxXdr],
       );
 
       logger.withContext().info('Pool transaction submission recorded', {
@@ -353,6 +355,9 @@ export const submitPoolTransaction = asyncHandler(async (req: Request, res: Resp
     status: sr.status,
   });
 
+  // A confirmed deposit/withdraw moves pool stats and share price.
+  await invalidateOnDeposit(req.user?.publicKey ?? '');
+
   res.json({
     success: true,
     txHash: sr.txHash,
@@ -373,7 +378,7 @@ export const getPoolSharePrice = asyncHandler(async (req: Request, res: Response
     throw AppError.badRequest('Token address is required');
   }
 
-  const cacheKey = `pool:share-price:${token}`;
+  const cacheKey = CacheKeys.poolSharePrice(token);
   const cached = await cacheService.get<{
     sharePrice: number;
     sharePriceRatio: number;

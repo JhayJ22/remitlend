@@ -203,4 +203,56 @@ describe('requireApiKey – scope support', () => {
       ).toThrow();
     });
   });
+
+  describe('admin:recovery scope (#866)', () => {
+    beforeEach(() => {
+      process.env.INTERNAL_API_KEY = 'admin:recovery:recovery-secret';
+    });
+
+    it('is accepted on the admin:recovery scope', async () => {
+      const requireApiKey = await loadMiddleware();
+      const next = makeNext();
+      requireApiKey('admin:recovery')(
+        makeReq('recovery-secret') as Request,
+        makeRes() as Response,
+        next,
+      );
+      expect(next.calls[0]![0]).toBeUndefined();
+    });
+
+    it('is rejected on admin:loans (different scope)', async () => {
+      const requireApiKey = await loadMiddleware();
+      const next = makeNext();
+      expect(() =>
+        requireApiKey('admin:loans')(
+          makeReq('recovery-secret') as Request,
+          makeRes() as Response,
+          next,
+        ),
+      ).toThrow(AppError);
+    });
+
+    it('legacy key is accepted on admin:recovery scope', async () => {
+      process.env.INTERNAL_API_KEY = 'legacy-plain-key';
+      const requireApiKey = await loadMiddleware();
+      const next = makeNext();
+      requireApiKey('admin:recovery')(
+        makeReq('legacy-plain-key') as Request,
+        makeRes() as Response,
+        next,
+      );
+      expect(next.calls[0]![0]).toBeUndefined();
+    });
+  });
+});
+
+describe('API key expiry and rotation (#792)', () => {
+  it('parseExpiry rejects past dates and dates beyond one year', async () => {
+    const { parseExpiry } = await import('../services/apiKeyService.js');
+    const now = Date.now();
+    expect(() => parseExpiry(new Date(now - 1000).toISOString(), now)).toThrow(/future/);
+    expect(() => parseExpiry(new Date(now + 400 * 86400000).toISOString(), now)).toThrow(/1 year/);
+    expect(() => parseExpiry('garbage', now)).toThrow(/ISO 8601/);
+    expect(parseExpiry(new Date(now + 86400000).toISOString(), now)).toBeInstanceOf(Date);
+  });
 });

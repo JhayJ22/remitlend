@@ -8,6 +8,8 @@ jest.unstable_mockModule('../db/connection.js', () => ({
   default: { query: mockQuery },
   query: mockQuery,
   getClient: jest.fn(),
+  withTransaction: async (fn: (c: { query: typeof mockQuery }) => unknown) =>
+    fn({ query: mockQuery }),
 }));
 jest.unstable_mockModule('../services/sorobanService.js', () => ({
   sorobanService: { submitSignedTx: mockSubmit },
@@ -57,8 +59,11 @@ describe('privileged action dual control', () => {
     expect(out.id).toBe(5);
     expect(out.payloadHash).toBe(hash);
     expect(out.expiresAt.getTime()).toBeGreaterThan(Date.now());
-    expect(mockQuery.mock.calls[1]![0]).toContain('audit_logs');
-    expect(mockQuery.mock.calls[1]![1]![1]).toBe('DUAL_CONTROL_REQUEST');
+    const auditInsert = mockQuery.mock.calls.find(([sql]) =>
+      sql.includes('INSERT INTO audit_logs'),
+    );
+    expect(auditInsert).toBeDefined();
+    expect(auditInsert![1]![1]).toBe('DUAL_CONTROL_REQUEST');
   });
 
   it('approval SQL requires distinct principal, unexpired, pending and matching hash', async () => {
@@ -173,6 +178,9 @@ describe('privileged action dual control', () => {
     mockQuery.mockResolvedValue({ rows: [{ id: 5 }] });
     await revokeRequest(5, 'GA');
     expect(mockQuery.mock.calls[0]![0]).toContain("status IN ('pending', 'approved')");
-    expect(mockQuery.mock.calls[1]![1]![1]).toBe('DUAL_CONTROL_REVOKE');
+    const revokeAudit = mockQuery.mock.calls.find(([sql]) =>
+      sql.includes('INSERT INTO audit_logs'),
+    );
+    expect(revokeAudit![1]![1]).toBe('DUAL_CONTROL_REVOKE');
   });
 });

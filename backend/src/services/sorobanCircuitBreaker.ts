@@ -1,5 +1,14 @@
+import { type rpc } from '@stellar/stellar-sdk';
 import logger from '../utils/logger.js';
 import { createSorobanRpcServer } from '../config/stellar.js';
+
+/**
+ * Factory used to obtain the `rpc.Server` the breaker probes. Defaults to the
+ * process-wide primary RPC server so the existing singleton behaviour is
+ * unchanged; the network registry injects a per-endpoint factory so each
+ * configured network gets its own independent breaker (#857).
+ */
+export type SorobanRpcServerFactory = () => rpc.Server;
 
 export type SorobanCircuitState = 'closed' | 'open' | 'half-open';
 
@@ -76,6 +85,16 @@ export class SorobanCircuitBreaker {
   private cachedAvailability: SorobanAvailability | null = null;
   private probeInFlight: Promise<SorobanAvailability> | null = null;
   private readonly snapshots = new Map<string, SorobanCircuitSnapshot>();
+  private readonly rpcServerFactory: SorobanRpcServerFactory;
+
+  /**
+   * @param rpcServerFactory Optional factory returning the `rpc.Server` this
+   *   breaker probes. When omitted the process-wide primary RPC server is
+   *   used, preserving the behaviour of the pre-existing singleton.
+   */
+  constructor(rpcServerFactory: SorobanRpcServerFactory = createSorobanRpcServer) {
+    this.rpcServerFactory = rpcServerFactory;
+  }
 
   private get healthTimeoutMs(): number {
     return readPositiveInt('SOROBAN_RPC_HEALTH_TIMEOUT_MS', 1500);
@@ -166,7 +185,7 @@ export class SorobanCircuitBreaker {
   }
 
   private async readLatestLedger(): Promise<number | undefined> {
-    const response = await createSorobanRpcServer().getLatestLedger();
+    const response = await this.rpcServerFactory().getLatestLedger();
     return response.sequence;
   }
 

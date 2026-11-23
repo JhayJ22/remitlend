@@ -37,6 +37,9 @@ stricter rate limit (10 requests/minute/IP) to prevent abuse.
 |---|---|---|---|---|---|---|
 | `LOG_LEVEL` | — | — | — | `debug` (dev) / `info` (other envs) | Winston log level override (`error`, `warn`, `info`, `http`, `debug`). Falls back to the `NODE_ENV` default when unset or invalid. | `backend/src/utils/logger.ts` |
 | `TRACE_CONTEXT_SAMPLE_RATE` | — | — | — | `1` | Fraction of *root* traces (requests arriving without a `traceparent`) that are marked sampled. Values outside `[0, 1]` fall back to `1`. Inheriting a caller's sampled flag is unaffected. | `backend/src/utils/traceContext.ts` |
+| `GRAPHQL_MAX_DEPTH` | — | — | — | `7` | Maximum GraphQL query depth. Invalid/non-positive values fall back to the default. Exceeding it returns HTTP 400 `QUERY_COMPLEXITY_EXCEEDED` with `actual`/`limit`. | `backend/src/graphql/queryBudget.ts` |
+| `GRAPHQL_MAX_COST` | — | — | — | `1000` | Maximum GraphQL query complexity units (list fields multiply by `limit`). Returns HTTP 400 `QUERY_COMPLEXITY_EXCEEDED` with `actual`/`limit`. | `backend/src/graphql/queryBudget.ts` |
+| `GRAPHQL_MAX_ALIASES` | — | — | — | `10` | Maximum field aliases per GraphQL query. | `backend/src/graphql/queryBudget.ts` |
 | `CORS_ALLOWED_ORIGINS` | ✓ | ✓ | ✓ | `http://localhost:3000,http://localhost:3001` | Comma-separated origins allowed by CORS | `backend/src/config/index.ts` |
 | `FRONTEND_URL` | ✓ | ✓ | ✓ | `http://localhost:3000` | Frontend base URL used for links | `backend/src/config/index.ts` |
 | `PORT` | ✓ | ✓ | ✓ | `3001` | HTTP port the API listens on | `backend/src/index.ts` |
@@ -62,6 +65,8 @@ stricter rate limit (10 requests/minute/IP) to prevent abuse.
 | `REMITTANCE_NFT_CONTRACT_ID` | ✓ | ✓ | ✓ | — | Deployed remittance NFT contract address | `backend/src/config/contracts.ts` |
 | `LENDING_POOL_CONTRACT_ID` | ✓ | ✓ | ✓ | — | Deployed lending pool contract address | `backend/src/config/stellar.ts` |
 | `MULTISIG_GOVERNANCE_CONTRACT_ID` | ✓ | ✓ | ✓ | — | Deployed multisig governance contract address | `backend/src/config/contracts.ts` |
+| `GOVERNANCE_SWEEP_SOURCE_SECRET` | — | — | — | `LOAN_MANAGER_ADMIN_SECRET` | Fee-paying account for the nightly governance `sweep_expired` call | `backend/src/cron/governanceSweepJob.ts` |
+| `GOVERNANCE_SWEEP_MAX_COUNT` | — | — | — | `50` | Proposals examined per nightly `sweep_expired` call (contract caps at 100) | `backend/src/cron/governanceSweepJob.ts` |
 | `POOL_TOKEN_ADDRESS` | ✓ | ✓ | ✓ | — | Pool token contract address | `backend/src/config/stellar.ts` |
 | `STELLAR_USDC_ISSUER` | — | ✓ | ✓ | — | USDC asset issuer address | `backend/src/config/stellar.ts` |
 | `STELLAR_EURC_ISSUER` | — | ✓ | ✓ | — | EURC asset issuer address | `backend/src/config/stellar.ts` |
@@ -93,6 +98,7 @@ stricter rate limit (10 requests/minute/IP) to prevent abuse.
 | `SCORE_RECONCILIATION_AUTOCORRECT_THRESHOLD` | ✓ | ✓ | ✓ | `50` | Max points auto-corrected per run | `backend/src/config/scores.ts` |
 | `JWT_SECRET` | ✓ | ✓ | ✓ | `your-super-secret-jwt-key-change-in-production` | JWT signing/verification secret | `backend/src/middleware/jwtAuth.ts` |
 | `INTERNAL_API_KEY` | ✓ | ✓ | ✓ | `change-me` | API key for internal endpoints | `backend/src/middleware/auth.ts` |
+| `AUDIT_LOG_KEY` | — | — | ✓ | — | HMAC key for the tamper-evident audit log chain; ≥32 chars, must differ from `JWT_SECRET`. See `docs/SECRETS-INVENTORY.md`. | `backend/src/services/auditLogService.ts` |
 | `ADMIN_WALLETS` | ✓ | ✓ | ✓ | — | Comma-separated Stellar public keys granted the `admin` role (`admin:all` scope). **Security-critical**: any wallet listed here receives full admin privileges. Unlisted wallets default to `borrower`. | `backend/src/auth/rbac.ts` |
 | `LENDER_WALLETS` | ✓ | ✓ | ✓ | — | Comma-separated Stellar public keys granted the `lender` role (`read:loans`, `read:pool` scopes). Unlisted wallets default to `borrower`. | `backend/src/auth/rbac.ts` |
 | `EXPOSE_STACK_TRACES` | — | — | — | `false` | When `"true"`, include stack traces in error responses. **Never enable in production.** | `backend/src/middleware/errorHandler.ts` |
