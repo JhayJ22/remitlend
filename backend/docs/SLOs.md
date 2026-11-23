@@ -24,6 +24,32 @@ can be attributed to the right dependency:
 5. **Indexer projection** — indexed state reflects the confirmed event.
 6. **Notification** — user-facing notification delivered (where applicable).
 
+## Low-bandwidth rendering states
+
+Core account journeys (loan request, repayment, eligible-funds inspection, withdrawal)
+are rendered under a supported connection state model so that constrained clients
+degrade predictably without weakening financial or security guarantees:
+
+| State | Trigger | Rendering behavior |
+| --- | --- | --- |
+| `normal` | Connection healthy | Full experience, all optional assets loaded. |
+| `constrained` | Slow/limited connection detected | Nonessential assets (decorative images, secondary widgets, noncritical data) are deferred or omitted; core journey controls remain. |
+| `offline` / `stale` | Connection lost or data older than the freshness bound | Cached data shown with an explicit user-visible stale-data warning; mutating actions are blocked. |
+
+Invariants that hold in every state:
+
+- **Transaction details** (amounts in exact money units, counterparty, fees) are always
+  rendered and never truncated or rounded.
+- **Security and authorization checks** are always enforced; constrained mode never
+  bypasses consent or access-control gates.
+- **Stale-data warnings** are always explicit and user-visible; stale data is never
+  presented as authoritative.
+- **Invalid or stale actions are rejected** client-side before dispatch, so no partial
+  financial side effects occur; the API remains the source of truth and re-validates.
+
+These states are a rendering concern only; they do not change the SLI event definitions
+below, which continue to be measured at the API and chain boundaries.
+
 ## SLI definitions
 
 Every SLI below specifies a precise event definition, an eligible denominator, and an

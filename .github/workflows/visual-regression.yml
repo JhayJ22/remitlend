@@ -10,6 +10,11 @@ name: Visual Regression
 # Issue #334 — also exercise right-to-left (RTL) and long-string layout
 # validation. The visual suite runs once per locale/direction matrix entry so
 # RTL rendering and overflow/truncation regressions are caught before merge.
+#
+# Issue #835 — also exercise the user-controlled high-contrast and large-text
+# visual modes so semantic status cues, focus visibility, chart legibility, and
+# responsive layouts are validated across loan, repayment, and remittance
+# journeys under both modes.
 
 on:
   pull_request:
@@ -31,13 +36,34 @@ jobs:
           - name: ltr
             locale: en-US
             direction: ltr
+            contrast: normal
+            text: normal
           - name: rtl
             locale: ar-EG
             direction: rtl
+            contrast: normal
+            text: normal
+          - name: ltr-high-contrast
+            locale: en-US
+            direction: ltr
+            contrast: high
+            text: normal
+          - name: ltr-large-text
+            locale: en-US
+            direction: ltr
+            contrast: normal
+            text: large
+          - name: ltr-high-contrast-large-text
+            locale: en-US
+            direction: ltr
+            contrast: high
+            text: large
     name: visual (${{ matrix.name }})
     env:
       VISUAL_LOCALE: ${{ matrix.locale }}
       VISUAL_DIRECTION: ${{ matrix.direction }}
+      VISUAL_CONTRAST: ${{ matrix.contrast }}
+      VISUAL_TEXT_SIZE: ${{ matrix.text }}
     steps:
       - uses: actions/checkout@v7
 
@@ -72,7 +98,7 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-visual-diffs
+          name: playwright-visual-diffs-${{ matrix.name }}
           path: |
             frontend/test-results/
             frontend/**/*-diff.png
@@ -84,12 +110,16 @@ jobs:
         if: ${{ failure() }}
         run: |
           {
-            echo "## Visual regression failures"
+            echo "## Visual regression failures (${{ matrix.name }})"
             echo ""
             echo "Critical financial states are covered by the visual suite. Review the"
-            echo "uploaded \`playwright-visual-report\` and \`playwright-visual-diffs\` artifacts"
-            echo "before approving any baseline update."
+            echo "uploaded \`playwright-visual-report-${{ matrix.name }}\` and"
+            echo "\`playwright-visual-diffs-${{ matrix.name }}\` artifacts before approving"
+            echo "any baseline update."
             echo ""
             echo "Covered states: success, authorization failure, boundary values,"
             echo "retries, stale data, dependency failure."
+            echo ""
+            echo "Visual modes: contrast=\`${{ matrix.contrast }}\`,"
+            echo "text-size=\`${{ matrix.text }}\`."
           } >> "$GITHUB_STEP_SUMMARY"
