@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 import { Menu, Search, User, Wallet, HelpCircle } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { ThemeToggle } from "../ui/ThemeToggle";
+import { ThemeSwitcher } from "./ThemeSwitcher";
 import { NotificationDropdown } from "./NotificationDropdown";
 import { RecentTransactionsDrawer } from "../transaction/RecentTransactionsDrawer";
 import { useWalletStore } from "../../stores/useWalletStore";
@@ -422,7 +422,7 @@ export function Header({ onMenuClick, className }: HeaderProps) {
 
         <div className="h-8 w-px bg-zinc-200 dark:bg-zinc-800 hidden sm:block" />
 
-        <ThemeToggle />
+        <ThemeSwitcher />
 
         <RecentTransactionsDrawer />
 

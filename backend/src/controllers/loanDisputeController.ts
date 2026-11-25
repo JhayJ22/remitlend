@@ -3,6 +3,7 @@ import { query } from '../db/connection.js';
 import { AppError } from '../errors/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import logger from '../utils/logger.js';
+import { sanitizeText } from '../utils/sanitize.js';
 import { notificationService } from '../services/notificationService.js';
 import { recordDisputeTransition } from '../services/disputeStateMachine.js';
 import { emitLoanStateEvent } from '../services/loanStateEventStore.js';
@@ -15,11 +16,15 @@ import { emitLoanStateEvent } from '../services/loanStateEventStore.js';
 export const contestDefault = asyncHandler(
   async (req: Request, res: Response, _next: NextFunction) => {
     const loanId = req.params.loanId as string;
-    const { reason } = req.body as { reason: string };
+    const rawReason = (req.body as { reason?: string }).reason;
+    const reason = sanitizeText(rawReason);
     const borrower = req.user?.publicKey;
 
     if (!reason || reason.trim().length < 5) {
       throw AppError.badRequest('A valid reason for contesting is required.');
+    }
+    if (reason.length > 1000) {
+      throw AppError.badRequest('Reason cannot exceed 1000 characters.');
     }
     if (!borrower) {
       throw AppError.unauthorized('Authentication required');

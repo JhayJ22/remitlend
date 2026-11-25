@@ -475,3 +475,69 @@ The production Compose configuration follows these principles:
 * Production environment files and secrets must not be committed to Git.
 
 Always review `docs/ENVIRONMENT.md` when adding or changing environment variables.
+
+## Load Shedding (issue #809)
+
+The backend includes a load-shedding middleware (`src/middleware/loadShedding.ts`)
+that returns `503 Service Unavailable` with a `Retry-After` header when the
+Node.js process exceeds capacity thresholds.
+
+### How it works
+
+Two metrics are sampled on every request:
+
+| Metric | Implementation |
+|---|---|
+| Event-loop lag | `perf_hooks.monitorEventLoopDelay` histogram mean (1 kHz poll, 20 ms resolution) |
+| V8 heap usage | `v8.getHeapStatistics().used_heap_size / heap_size_limit × 100` |
+
+When either metric exceeds its threshold, the middleware responds immediately
+with `503` and `Retry-After: 5` before any handler runs. The response body
+includes a human-readable error and `retryAfter` (seconds).
+
+Healthy endpoints (`/health`, `/healthz/*`, `/metrics`) are always exempt.
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOAD_SHED_LAG_MS` | `100` | Event-loop lag threshold in milliseconds |
+| `LOAD_SHED_HEAP_PCT` | `85` | Heap usage threshold as a percentage (0–100) |
+
+Example `.env.production` entries:
+
+```env
+LOAD_SHED_LAG_MS=100
+LOAD_SHED_HEAP_PCT=85
+```
+
+### Prometheus metrics
+
+| Metric | Labels | Description |
+|---|---|---|
+| `requests_shed_total` | `reason` (`event_loop_lag` \| `heap_usage`) | Requests rejected by load shedding |
+
+Alert example:
+
+```yaml
+# Alert when shed rate exceeds 5 rps over 2 minutes.
+- alert: HighLoadShedRate
+  expr: rate(requests_shed_total[2m]) > 5
+  for: 1m
+  labels:
+    severity: warning
+  annotations:
+    summary: "RemitLend backend is shedding load"
+    description: "{{ $value | humanize }} req/s rejected (reason={{ $labels.reason }})"
+```
+
+### Middleware ordering
+
+Load shedding is registered after `globalRateLimiter` (which also defends
+against external flooding) but before all other middleware and route handlers,
+so it incurs minimal per-request overhead.
+
+```
+globalRateLimiter → loadSheddingMiddleware → requestIdMiddleware → … → routes
+```
+

@@ -5,8 +5,22 @@ export const rejectLoanSchema = z.object({
   reason: z
     .string()
     .min(5, 'Reason must be at least 5 characters')
-    .max(500, 'Reason cannot exceed 500 characters'),
+    .max(1000, 'Reason cannot exceed 1000 characters'),
 });
+
+/** Schema for contesting a loan default — the free-text reason field. */
+export const contestDefaultSchema = z.object({
+  reason: z
+    .string()
+    .min(5, 'Reason must be at least 5 characters')
+    .max(1000, 'Reason cannot exceed 1000 characters'),
+});
+
+/** Schema for admin dispute actions (review, resolve, reject). */
+export const disputeNoteSchema = z
+  .string()
+  .max(1000, 'Note cannot exceed 1000 characters')
+  .optional();
 
 export type RejectLoanInput = z.infer<typeof rejectLoanSchema>;
 

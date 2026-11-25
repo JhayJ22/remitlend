@@ -1,4 +1,4 @@
-# Security Hardening — Issues #356, #357, #358, #359
+# Security Hardening — Issues #356, #357, #358, #359, #806, #807, #808, #809
 
 This document describes the security controls implemented to address four
 security issues filed against RemitLend. It serves as the threat-model notes,
@@ -201,3 +201,139 @@ test-fixture values already committed in `ci.yml`.
 | #357 | `cd backend && npm test -- apiAbuseCaseMatrix` |
 | #358 | `cd frontend && npm test -- confusedDeputy` |
 | #359 | `cd backend && npm test -- secretsInventory`; inspect `secrets-scan` job in GitHub Actions |
+| #806 | `cd backend && npm test -- security-issues` — look for the "Issue #806" describe block |
+| #807 | `cd contracts && cargo test -p lending_pool` — all three runtime invariants panic on violation; fuzz target at `contracts/fuzz/fuzz_targets/lending_pool_fuzz.rs` |
+| #808 | `cd frontend && npx playwright test e2e/theme-switcher.spec.ts` and `npm run storybook` → Global UI/ThemeSwitcher |
+| #809 | `cd backend && npm test -- loadShedding`; env vars `LOAD_SHED_LAG_MS` / `LOAD_SHED_HEAP_PCT` control thresholds |
+
+---
+
+## Issue #806 — Comprehensive input sanitization and injection prevention
+
+### What was the issue?
+
+User-supplied string fields (loan reason, dispute note, notification message
+body) were stored without consistent sanitization, creating XSS and SQL
+injection vectors for downstream consumers.
+
+### Changes made
+
+| File | Change |
+|---|---|
+| `backend/src/utils/sanitize.ts` | New: `sanitizeText` and `sanitizeFields` utility |
+| `backend/src/schemas/loanSchemas.ts` | Added `contestDefaultSchema`, `disputeNoteSchema`; upgraded `rejectLoanSchema` max to 1 000 |
+| `backend/src/controllers/loanDisputeController.ts` | Sanitize `reason` before storage |
+| `backend/src/controllers/adminDisputeController.ts` | Sanitize `note`, `adminNote`, `resolution`, `admin_note` |
+| `backend/src/controllers/loanLifecycleController.ts` | Sanitize parsed `reason` before passing to Soroban |
+| `backend/src/__tests__/security-issues.test.ts` | Added XSS, SQL metacharacter, and Unicode normalization vectors |
+| `backend/Dockerfile` | Added `CSP_DEFAULT_SRC` env-var anchor to reinforce CSP documentation |
+
+### Sanitization rules
+
+1. Unicode NFC normalization (collapse homoglyph bypass attempts).
+2. HTML / XML tag stripping (`<` … `>` and everything inside).
+3. SQL metacharacter removal: backtick, null byte, `--` → `-`, `/*` and `*/`, URL-encoded sequences.
+4. Whitespace trimming.
+5. Length truncation to `maxLength` (default 1 000 characters).
+
+### Compatibility impact
+
+Sanitization is applied at the controller layer after Zod validation.
+Existing stored values are unaffected; new writes are cleaned before INSERT.
+
+---
+
+## Issue #807 — Lending pool invariant assertions
+
+### What was the issue?
+
+The lending pool's share price had no runtime assertion ensuring it was
+monotonically non-decreasing. A silent miscalculation in yield distribution
+could reduce the share price without any on-chain signal.
+
+### Changes made
+
+| File | Change |
+|---|---|
+| `contracts/lending_pool/src/lib.rs` | Added `PoolError::InvariantViolation`, `assert_invariants` helper, and calls in `deposit`, `redeem_shares`, `distribute_yield` |
+| `contracts/lending_pool/src/commission_invariants.rs` | Updated header to document the three runtime invariants (INV-RT-1/2/3) |
+| `contracts/fuzz/fuzz_targets/lending_pool_fuzz.rs` | Rewritten to cover `DistributeYield` and to assert all three invariants after every operation |
+
+### Invariants enforced (panics + roll-back on violation)
+
+| ID | Invariant | Operations |
+|---|---|---|
+| INV-RT-1 | Share price non-decreasing: `new_managed × (prev_shares + V) ≥ prev_managed × (new_shares + V)` | deposit, distribute_yield |
+| INV-RT-2 | No dilution: `total_managed ≥ total_deposits` | all three |
+| INV-RT-3 | Conservation: `pool_balance + total_outstanding ≤ total_managed` | all three |
+
+Soroban's atomic transaction semantics guarantee any panic rolls back the full
+state change before it is committed to the ledger.
+
+### Compatibility impact
+
+The new `PoolError::InvariantViolation = 20` discriminant is additive.
+Existing clients that match only the error codes they know are unaffected.
+
+---
+
+## Issue #808 — Dark/light theme switcher
+
+### What was the issue?
+
+The UI had no three-way toggle and always rendered the dark Obsidian theme
+regardless of system preferences. Users preferring light mode (accessibility,
+outdoor use) had no option.
+
+### Changes made
+
+| File | Change |
+|---|---|
+| `frontend/src/app/components/global_ui/ThemeSwitcher.tsx` | New: three-mode switcher component |
+| `frontend/src/app/components/global_ui/ThemeSwitcher.stories.tsx` | New: Storybook stories (Light, Dark, System, AllModes) |
+| `frontend/src/app/components/global_ui/Header.tsx` | Replaced `ThemeToggle` import with `ThemeSwitcher` |
+| `frontend/e2e/theme-switcher.spec.ts` | New: Playwright spec covering all three modes, persistence, system-preference override |
+
+### Mode behaviour
+
+| Mode | `<html>` class | Persisted as |
+|---|---|---|
+| `light` | (no `dark` class) | `remitlend-theme=light` |
+| `dark` | `dark` | `remitlend-theme=dark` |
+| `system` | Follows OS `prefers-color-scheme` live | `remitlend-theme=system` |
+
+### Compatibility impact
+
+UI-only change. The existing `useThemeStore` and `lib/theme.ts` logic is
+unchanged; `ThemeSwitcher` is a drop-in companion to the original `ThemeToggle`.
+
+---
+
+## Issue #809 — Load-shedding middleware
+
+### What was the issue?
+
+Under extreme load the backend accepted all incoming requests until
+memory-exhaustion or event-loop starvation. There was no mechanism to return
+`503` and allow orchestrators to route traffic away.
+
+### Changes made
+
+| File | Change |
+|---|---|
+| `backend/src/middleware/loadShedding.ts` | New: `loadSheddingMiddleware`, `requestsShedTotal` Prometheus counter |
+| `backend/src/app.ts` | Registered `loadSheddingMiddleware()` after `globalRateLimiter` |
+| `backend/src/middleware/__tests__/loadShedding.test.ts` | New: 12 tests with mocked metrics |
+| `docs/DEPLOYMENT.md` | Added "Load Shedding" section with thresholds, env vars, alert example |
+
+### Thresholds
+
+| Metric | Env var | Default |
+|---|---|---|
+| Event-loop lag | `LOAD_SHED_LAG_MS` | 100 ms |
+| Heap usage | `LOAD_SHED_HEAP_PCT` | 85 % |
+
+### Compatibility impact
+
+The middleware is purely additive. Existing routes, middleware, and tests are
+unaffected. Health endpoints (`/health`, `/healthz/*`, `/metrics`) are exempt.

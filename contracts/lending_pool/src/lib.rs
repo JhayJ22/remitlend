@@ -39,6 +39,9 @@ pub enum PoolError {
     YieldExceedsCumulativeLimit = 18,
     /// Yield distribution path or method is not supported.
     UnauthorizedYieldPath = 19,
+    /// A post-operation invariant check failed.  The transaction is atomically
+    /// rolled back by the Soroban runtime before any state is committed.
+    InvariantViolation = 20,
 }
 
 /// Granular pause flags for pool operations.
@@ -544,6 +547,84 @@ impl LendingPool {
 
     /// LP shares to mint for `amount` of deposited assets.
     ///
+    // ── Post-operation invariant checks (issue #807) ─────────────────────
+    //
+    // `assert_invariants` is called after every state-changing operation
+    // (deposit, redeem/withdraw, distribute_yield) to verify that the three
+    // core pool invariants hold.  Soroban's atomic transaction semantics mean
+    // that any panic here rolls back the entire state change before it is
+    // committed to the ledger.
+    //
+    // Three invariants are checked:
+    //
+    //   INV-1 (non-decreasing share price): After non-withdrawal operations
+    //     the new share price must be ≥ the previous share price.  Encoded
+    //     as cross-multiplication to avoid fp:
+    //       new_managed  / (new_shares  + V_S) ≥
+    //       prev_managed / (prev_shares + V_S)
+    //     ⟺  new_managed  * (prev_shares + V_S) ≥
+    //         prev_managed * (new_shares  + V_S)
+    //
+    //   INV-2 (no dilution): total_shares * share_price ≥ total_deposits.
+    //     Encoded as:
+    //       total_managed * (total_shares + V_S) ≥
+    //       total_deposits * (total_shares + V_S)
+    //     which simplifies to total_managed ≥ total_deposits (they differ
+    //     only in that total_managed also includes distributed yield, while
+    //     total_deposits tracks principal; yield can only add, never remove).
+    //
+    //   INV-3 (conservation): pool_balance + total_outstanding ≤
+    //     total_managed_assets.  Outstanding loans reduce the idle balance
+    //     but are still tracked in total_managed, so the sum of idle tokens
+    //     and deployed tokens must not exceed the managed pool.  (Equality
+    //     is expected when there are no loans.)
+    //
+    // `is_withdrawal` relaxes INV-1: withdrawals legitimately reduce both
+    // managed assets and shares; whether the price moves up or stays flat
+    // depends on rounding, so we skip the monotonicity check for them.
+    fn assert_invariants(
+        env: &Env,
+        token: &Address,
+        prev_managed: i128,
+        prev_shares: i128,
+        is_withdrawal: bool,
+    ) -> Result<(), PoolError> {
+        let new_managed = Self::total_managed_assets(env, token);
+        let new_shares  = Self::total_shares(env, token);
+        let total_deps  = Self::total_deposits(env, token);
+        let outstanding = Self::read_total_outstanding(env, token);
+        let pool_bal    = Self::read_pool_balance(env, token);
+
+        let v = Self::VIRTUAL_SHARES; // same constant used for shares and assets
+
+        // INV-1: share price non-decreasing (deposit and distribute_yield only).
+        if !is_withdrawal {
+            // Cross-multiply to avoid division:
+            //   new_managed / (new_shares + V) >= prev_managed / (prev_shares + V)
+            //   <=> new_managed * (prev_shares + V) >= prev_managed * (new_shares + V)
+            let lhs = new_managed.saturating_mul(prev_shares.saturating_add(v));
+            let rhs = prev_managed.saturating_mul(new_shares.saturating_add(v));
+            if lhs < rhs {
+                return Err(PoolError::InvariantViolation);
+            }
+        }
+
+        // INV-2: no dilution — total_managed >= total_deposits.
+        // (Yield pushes managed above deposits; it never goes below.)
+        if new_managed < total_deps {
+            return Err(PoolError::InvariantViolation);
+        }
+
+        // INV-3: conservation — pool_balance + total_outstanding <= total_managed.
+        // (All assets are either idle in the pool or deployed in loans.)
+        let deployed = pool_bal.saturating_add(outstanding);
+        if deployed > new_managed {
+            return Err(PoolError::InvariantViolation);
+        }
+
+        Ok(())
+    }
+
     /// Uses the virtual shares/assets offset (`VIRTUAL_SHARES`,
     /// `VIRTUAL_ASSETS`) so that the formula is well-defined (and correctly
     /// gives a 1-for-1 allocation) even when the pool is empty, without a
@@ -713,6 +794,10 @@ impl LendingPool {
             assets_to_return,
             shares,
         );
+        // Post-withdraw invariant check (issue #807). is_withdrawal=true so
+        // the share-price monotonicity check is skipped (withdrawals reduce
+        // both numerator and denominator; exact movement depends on rounding).
+        Self::assert_invariants(env, token, total_managed_before, cur_total_shares, true)?;
         Ok(assets_to_return)
     }
 
@@ -976,6 +1061,9 @@ impl LendingPool {
             amount,
             shares_to_mint,
         );
+        // Post-deposit invariant check (issue #807). Soroban atomicity
+        // guarantees a panic here rolls back the entire deposit.
+        Self::assert_invariants(&env, &token, total_managed_before, cur_total_shares, false)?;
         Ok(())
     }
 
@@ -1053,14 +1141,19 @@ impl LendingPool {
         Self::set_total_managed_assets(&env, &token, updated);
         Self::bump_instance_ttl(&env);
 
+        let total_shares_after = Self::total_shares(&env, &token);
         yield_distributed(&env, token.clone(), amount);
         price_updated(
             &env,
             token.clone(),
             env.ledger().sequence(),
             updated,
-            Self::total_shares(&env, &token),
+            total_shares_after,
         );
+        // Post-distribution invariant check (issue #807).  Yield only ever
+        // increases managed assets without minting shares, so the share price
+        // must be non-decreasing and the accounting must still conserve.
+        Self::assert_invariants(&env, &token, total_managed, total_shares_after, false)?;
         Ok(())
     }
 

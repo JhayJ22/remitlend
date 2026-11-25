@@ -43,6 +43,7 @@ import { reportCSPViolation } from './controllers/cspReportController.js';
 import { pauseGuard } from './middleware/pauseGuard.js';
 import { deprecationHeadersMiddleware } from './middleware/deprecationHeaders.js';
 import { cacheInvalidationHeaderMiddleware } from './middleware/cacheInvalidationHeader.js';
+import { loadSheddingMiddleware } from './middleware/loadShedding.js';
 import { asyncHandler } from './utils/asyncHandler.js';
 import { AppError } from './errors/AppError.js';
 import logger from './utils/logger.js';
@@ -174,6 +175,7 @@ app.use(compression());
 // CSP reports (report-uri) arrive as `application/csp-report`, not plain JSON, so accept that type too.
 app.use(express.json({ limit: '100kb', type: ['application/json', 'application/csp-report'] }));
 app.use(globalRateLimiter);
+app.use(loadSheddingMiddleware());
 app.use(requestIdMiddleware);
 app.use(requestDeadlineMiddleware);
 // Trace context (#414): resolves/creates the W3C `traceparent` for the request
