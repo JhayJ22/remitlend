@@ -6,6 +6,7 @@ import { ErrorCode } from '../errors/errorCodes.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sorobanService } from '../services/sorobanService.js';
 import { rejectLoanSchema } from '../schemas/loanSchemas.js';
+import { sanitizeText } from '../utils/sanitize.js';
 import logger from '../utils/logger.js';
 import { emitLoanStateEvent } from '../services/loanStateEventStore.js';
 import {
@@ -102,7 +103,8 @@ export const buildRejectLoanTx = async (req: Request, res: Response, next: NextF
   try {
     const { loanId } = req.params;
 
-    const { reason } = rejectLoanSchema.parse(req.body);
+    const rawParsed = rejectLoanSchema.parse(req.body);
+    const reason = sanitizeText(rawParsed.reason);
 
     const result = await query('SELECT * FROM loans WHERE id = $1', [loanId]);
     const loan = result.rows[0] as Record<string, unknown> | undefined;

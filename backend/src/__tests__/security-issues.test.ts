@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, vi } from '@jest/globals';
 import { Keypair } from '@stellar/stellar-sdk';
 import * as authService from '../services/authService.js';
 import { resolveRoleForWallet } from '../auth/rbac.js';
+import { sanitizeText } from '../utils/sanitize.js';
 
 describe('Security Issues - Critical Fixes', () => {
   beforeAll(() => {
@@ -215,6 +216,119 @@ describe('Security Issues - Critical Fixes', () => {
 
       const unknownWallet = 'GUNKNOWN1234567890123456789012345678901234567890123456789012345678';
       expect(resolveRoleForWallet(unknownWallet)).toBe('borrower');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Issue #806: Input sanitization — XSS, SQL metacharacters, Unicode
+  // ─────────────────────────────────────────────────────────────────────────
+  describe('Issue #806: sanitizeText — injection prevention', () => {
+    // ── XSS in loan reason ─────────────────────────────────────────────────
+    it('strips <script> tags from loan reason (XSS vector)', () => {
+      const input = 'Need funds <script>alert("xss")</script> for rent';
+      const result = sanitizeText(input);
+      expect(result).not.toContain('<script>');
+      expect(result).not.toContain('</script>');
+      expect(result).toContain('Need funds');
+      expect(result).toContain('for rent');
+    });
+
+    it('strips HTML img tags with onerror from note text (XSS vector)', () => {
+      const input = 'Dispute: payment failed <img src=x onerror=alert(1)> please review';
+      const result = sanitizeText(input);
+      expect(result).not.toContain('<img');
+      expect(result).not.toContain('onerror');
+      expect(result).toContain('Dispute: payment failed');
+    });
+
+    it('strips HTML from notification message body (XSS vector)', () => {
+      const input = '<b>Your loan was approved</b><a href="http://evil.com">click here</a>';
+      const result = sanitizeText(input);
+      expect(result).not.toMatch(/<[^>]+>/);
+      expect(result).toContain('Your loan was approved');
+    });
+
+    it('strips self-closing tags and attributes (XSS vector)', () => {
+      const input = 'Hello <br/> World <input type="hidden" value="x"/>';
+      const result = sanitizeText(input);
+      expect(result).not.toMatch(/<[^>]+>/);
+    });
+
+    // ── SQL metacharacters in note text ────────────────────────────────────
+    it('removes backtick from note text (SQL metacharacter)', () => {
+      const input = 'Admin note: `DROP TABLE loans`';
+      const result = sanitizeText(input);
+      expect(result).not.toContain('`');
+    });
+
+    it('collapses SQL comment double-dash to single dash (SQL injection vector)', () => {
+      const input = "' OR 1=1 -- admin access";
+      const result = sanitizeText(input);
+      // Double-dash should be collapsed but content still readable
+      expect(result).not.toMatch(/--/);
+    });
+
+    it('removes SQL block comment delimiters (/* and */)', () => {
+      const input = "SELECT * FROM loans /* bypass */ WHERE 1=1";
+      const result = sanitizeText(input);
+      expect(result).not.toContain('/*');
+      expect(result).not.toContain('*/');
+    });
+
+    it('removes null bytes (SQL/filesystem injection vector)', () => {
+      const input = 'Note\x00with\x00null\x00bytes';
+      const result = sanitizeText(input);
+      expect(result).not.toContain('\x00');
+    });
+
+    it('strips URL-encoded bypass sequences (e.g. %3C for <)', () => {
+      const input = 'Reason%3Cscript%3Ealert(1)%3C/script%3E';
+      const result = sanitizeText(input);
+      expect(result).not.toMatch(/%[0-9a-fA-F]{2}/);
+    });
+
+    // ── Unicode normalization attacks ──────────────────────────────────────
+    it('NFC-normalizes Unicode to collapse homoglyph combining sequences', () => {
+      // "é" can be represented as a single codepoint U+00E9 or as
+      // U+0065 (e) + U+0301 (combining accent). Both must normalize to the
+      // same form before filtering so pattern-matching cannot be evaded.
+      const decomposed = 'e\u0301'; // e + combining accent = é
+      const precomposed = '\u00E9';  // single codepoint é
+      expect(sanitizeText(decomposed)).toBe(sanitizeText(precomposed));
+    });
+
+    it('handles zero-width joiners and invisible characters', () => {
+      // U+200D ZERO WIDTH JOINER is used to smuggle content through keyword
+      // filters. After normalization and trim the sanitized form must equal
+      // the visible text.
+      const input = 'scr\u200Dipt'; // "script" with invisible joiner
+      const result = sanitizeText(input);
+      // The ZWJ itself does not form an angle-bracket tag so the text
+      // survives, but the string must not contain the control character.
+      expect(result).not.toContain('\u200D');
+    });
+
+    // ── Length enforcement ─────────────────────────────────────────────────
+    it('truncates strings exceeding the default 1000-character limit', () => {
+      const longInput = 'a'.repeat(2000);
+      const result = sanitizeText(longInput);
+      expect(result.length).toBeLessThanOrEqual(1000);
+    });
+
+    it('truncates strings to a custom maxLength', () => {
+      const input = 'hello world';
+      const result = sanitizeText(input, 5);
+      expect(result).toBe('hello');
+    });
+
+    it('returns empty string for null and undefined', () => {
+      expect(sanitizeText(null)).toBe('');
+      expect(sanitizeText(undefined)).toBe('');
+    });
+
+    it('preserves safe plain text intact', () => {
+      const safe = 'I need a loan to cover my medical bills this month.';
+      expect(sanitizeText(safe)).toBe(safe);
     });
   });
 });

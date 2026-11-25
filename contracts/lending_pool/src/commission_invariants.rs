@@ -1,13 +1,31 @@
 //! Commission invariant tests for the LendingPool contract.
 //!
-//! # Security context — issue #356
+//! # Security context — issues #356 and #807
 //!
 //! The pool uses a share-based (ERC-4626-style) accounting model with
 //! `TotalManagedAssets` as the single source of truth for share pricing.
 //! Yield is realised by calling `distribute_yield`, which is the *only*
 //! authorised way to increase managed assets outside of a deposit.
 //!
-//! ## Economic attack vectors covered
+//! ## Issue #807 additions
+//!
+//! Three runtime invariants are now asserted inside the contract after every
+//! state-changing operation (deposit, withdraw/redeem, distribute_yield):
+//!
+//! | ID       | Invariant | Checked after |
+//! |----------|-----------|---------------|
+//! | INV-RT-1 | Share price is monotonically non-decreasing (deposit, yield) | deposit, distribute_yield |
+//! | INV-RT-2 | total_managed ≥ total_deposits (no dilution) | deposit, withdraw, distribute_yield |
+//! | INV-RT-3 | pool_balance + total_outstanding ≤ total_managed (conservation) | deposit, withdraw, distribute_yield |
+//!
+//! A violation of any invariant causes the transaction to panic with
+//! `PoolError::InvariantViolation`, and Soroban's atomic transaction semantics
+//! roll back the entire state change before it is committed to the ledger.
+//!
+//! The fuzz target `contracts/fuzz/fuzz_targets/lending_pool_fuzz.rs` asserts
+//! all three invariants after every random operation sequence (see #807).
+//!
+//! ## Economic attack vectors covered (issue #356)
 //!
 //! | ID     | Attack                                | Guard                                       |
 //! |--------|---------------------------------------|---------------------------------------------|
@@ -18,7 +36,7 @@
 //! | ATK-5  | Withdrawal cooldown bypass             | Cooldown checked against per-(provider, token) deposit timestamp, not wall-clock |
 //! | ATK-6  | Deposit to frozen pool                 | Granular pause flags gate deposits/withdrawals/yield independently |
 //!
-//! ## Invariants under test
+//! ## Invariants under test (issue #356 static tests)
 //!
 //! * INV-LP-1  Share price never decreases across deposit/withdraw round-trips.
 //! * INV-LP-2  A donation (direct token transfer) cannot move the share price.

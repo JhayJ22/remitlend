@@ -1,6 +1,7 @@
 import { query } from '../db/connection.js';
 import { AppError } from '../errors/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { sanitizeText } from '../utils/sanitize.js';
 import { notificationService, type NotificationType } from '../services/notificationService.js';
 import {
   assertDisputeTransition,
@@ -180,7 +181,8 @@ async function notifyBorrower(
  * POST /admin/disputes/:disputeId/review
  */
 export const reviewLoanDispute = asyncHandler(async (req, res) => {
-  const { note } = (req.body ?? {}) as { note?: string };
+  const rawNote = (req.body ?? {}).note as string | undefined;
+  const note = sanitizeText(rawNote);
   const dispute = await loadDispute(req.params.disputeId);
   assertDisputeTransition(dispute.status, 'under_review');
 
@@ -204,12 +206,15 @@ export const reviewLoanDispute = asyncHandler(async (req, res) => {
  * Body: { action, resolution, adminNote?, correctedRemittanceData? }
  */
 export const resolveLoanDispute = asyncHandler(async (req, res) => {
-  const { action, resolution, adminNote, correctedRemittanceData } = req.body as {
+  const rawBody = req.body as {
     action: string;
     resolution: string;
     adminNote?: string;
     correctedRemittanceData?: Record<string, unknown>;
   };
+  const { action, correctedRemittanceData } = rawBody;
+  const resolution = sanitizeText(rawBody.resolution);
+  const adminNote = sanitizeText(rawBody.adminNote);
 
   if (!['confirm', 'reverse'].includes(action)) {
     throw AppError.badRequest('Action must be confirm or reverse');
@@ -270,7 +275,8 @@ export const resolveLoanDispute = asyncHandler(async (req, res) => {
  * POST /admin/disputes/:disputeId/reject
  */
 export const rejectLoanDispute = asyncHandler(async (req, res) => {
-  const { admin_note } = (req.body ?? {}) as { admin_note?: string };
+  const rawAdminNote = (req.body ?? {}).admin_note as string | undefined;
+  const admin_note = sanitizeText(rawAdminNote) || undefined;
   const dispute = await loadDispute(req.params.disputeId);
   assertDisputeTransition(dispute.status, 'dismissed');
 

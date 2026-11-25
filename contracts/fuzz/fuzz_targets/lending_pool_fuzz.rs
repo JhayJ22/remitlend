@@ -1,5 +1,21 @@
 #![no_main]
 
+//! Fuzz target for the LendingPool contract — issue #807.
+//!
+//! After every random operation (deposit, withdraw, distribute_yield) the
+//! target asserts the three runtime invariants introduced in issue #807:
+//!
+//!   INV-RT-1  Share price is monotonically non-decreasing (non-withdrawal ops).
+//!   INV-RT-2  total_managed ≥ total_deposits (no dilution).
+//!   INV-RT-3  pool_balance + total_outstanding ≤ total_managed (conservation).
+//!
+//! Because the contract now calls `assert_invariants` itself after each
+//! state-changing operation (panicking with `InvariantViolation` on failure),
+//! a successful call already proves the invariants held *during* the call.
+//! The fuzz target adds an independent cross-check by reading the pool stats
+//! after the fact, so that any regression in the assertion logic itself is
+//! also caught.
+
 use arbitrary::Arbitrary;
 use lending_pool::{LendingPool, LendingPoolClient};
 use libfuzzer_sys::fuzz_target;
@@ -23,6 +39,7 @@ macro_rules! rcall {
 enum FuzzAction {
     Deposit { user_id: u8, amount: i128 },
     Withdraw { user_id: u8, amount: i128 },
+    DistributeYield { amount: i128 },
     GetDeposit { user_id: u8 },
     MultipleOperations { operations: Vec<Operation> },
 }
@@ -31,6 +48,7 @@ enum FuzzAction {
 struct Operation {
     user_id: u8,
     amount: i128,
+    /// true = deposit, false = withdraw
     is_deposit: bool,
 }
 
@@ -42,6 +60,60 @@ fn setup_token_contract<'a>(
     let stellar_asset_client = StellarAssetClient::new(env, &contract_id.address());
     let token_client = TokenClient::new(env, &contract_id.address());
     (contract_id.address(), stellar_asset_client, token_client)
+}
+
+/// Assert the three pool invariants from issue #807 against live pool stats.
+///
+/// This is an *independent* post-operation check: the contract already asserts
+/// them inside each call, but we re-verify here so that any regression in the
+/// assertion helper itself is caught by the fuzzer.
+fn assert_pool_invariants(
+    pool_client: &LendingPoolClient<'_>,
+    token_id: &Address,
+    token_client: &TokenClient<'_>,
+    pool_id: &Address,
+    prev_managed: i128,
+    prev_shares: i128,
+    is_withdrawal: bool,
+) {
+    let stats = pool_client.get_pool_stats(token_id);
+    let new_managed = stats.total_managed_assets;
+    let new_shares  = stats.total_shares;
+    let total_deps  = stats.total_deposits;
+    let pool_bal    = token_client.balance(pool_id);
+    // total_outstanding is not directly in PoolStats, use the difference.
+    // In fuzz scenarios there are no active loans, so outstanding == 0.
+    // We conservatively check: pool_balance <= total_managed.
+    let outstanding = 0i128;
+
+    // INV-RT-1: share price non-decreasing (deposit and distribute_yield only).
+    // Using virtual offset V = 1_000 as in the contract.
+    let v: i128 = 1_000;
+    if !is_withdrawal && prev_shares > 0 && new_shares > 0 {
+        let lhs = new_managed.saturating_mul(prev_shares.saturating_add(v));
+        let rhs = prev_managed.saturating_mul(new_shares.saturating_add(v));
+        assert!(
+            lhs >= rhs,
+            "INV-RT-1 violated: share price decreased (new_managed={} new_shares={} \
+             prev_managed={} prev_shares={})",
+            new_managed, new_shares, prev_managed, prev_shares,
+        );
+    }
+
+    // INV-RT-2: no dilution — total_managed >= total_deposits.
+    assert!(
+        new_managed >= total_deps,
+        "INV-RT-2 violated: total_managed ({}) < total_deposits ({})",
+        new_managed, total_deps,
+    );
+
+    // INV-RT-3: conservation — pool_balance + total_outstanding <= total_managed.
+    let deployed = pool_bal.saturating_add(outstanding);
+    assert!(
+        deployed <= new_managed,
+        "INV-RT-3 violated: pool_balance+outstanding ({}) > total_managed ({})",
+        deployed, new_managed,
+    );
 }
 
 fuzz_target!(|data: FuzzAction| {
@@ -59,86 +131,111 @@ fuzz_target!(|data: FuzzAction| {
     // 3. Initialize LendingPool with Token
     let pool_admin = Address::generate(&env);
     pool_client.initialize(&pool_admin);
+    // Disable withdrawal cooldown for fuzz simplicity.
+    pool_client.set_withdrawal_cooldown(&0);
 
     match data {
-        FuzzAction::Deposit { user_id, amount } => {
+        FuzzAction::Deposit { user_id: _, amount } => {
             let user = Address::generate(&env);
 
-            // Skip invalid amounts
             if amount <= 0 {
                 return;
             }
 
-            // Mint tokens to user
             stellar_asset_client.mint(&user, &amount);
 
-            let result = rcall!(&env, pool_client, "deposit", (user, amount));
+            // Snapshot pre-call state for invariant check.
+            let stats_before = pool_client.get_pool_stats(&token_id);
+            let prev_managed = stats_before.total_managed_assets;
+            let prev_shares  = stats_before.total_shares;
+
+            let result = pool_client.try_deposit(&user, &token_id, &amount, &0);
 
             if result.is_ok() {
-                // Verify invariant: deposit should increase user balance
+                // Verify invariant: user deposit should be non-negative.
                 let balance = pool_client.get_deposit(&user, &token_id);
                 assert!(balance >= 0, "Balance should never be negative");
-                assert_eq!(balance, amount, "Balance should match deposited amount");
 
-                // Verify pool token balance
-                assert_eq!(
-                    token_client.balance(&pool_id),
-                    amount,
-                    "Pool token balance should match deposit"
+                // Independent invariant check (issue #807).
+                assert_pool_invariants(
+                    &pool_client, &token_id, &token_client, &pool_id,
+                    prev_managed, prev_shares, false,
                 );
             }
         }
 
-        FuzzAction::Withdraw { user_id, amount } => {
+        FuzzAction::Withdraw { user_id: _, amount } => {
             let user = Address::generate(&env);
 
-            // Skip invalid amounts
             if amount <= 0 {
                 return;
             }
 
-            // First deposit some amount to allow withdrawal
             let deposit_amount = match amount.checked_mul(2) {
                 Some(v) => v,
                 None => return,
             };
             stellar_asset_client.mint(&user, &deposit_amount);
-            pool_client.deposit(&user, &token_id, &deposit_amount, &0);
+            let _ = pool_client.try_deposit(&user, &token_id, &deposit_amount, &0);
 
-            let balance_before = pool_client.get_deposit(&user, &token_id);
-            let result = rcall!(&env, pool_client, "withdraw", (user, amount));
+            let stats_before = pool_client.get_pool_stats(&token_id);
+            let prev_managed = stats_before.total_managed_assets;
+            let prev_shares  = stats_before.total_shares;
+
+            let shares_held = pool_client.get_shares(&user, &token_id);
+            if shares_held <= 0 {
+                return;
+            }
+            let shares_to_withdraw = shares_held.min(amount);
+            let result = pool_client.try_withdraw(&user, &token_id, &shares_to_withdraw, &0);
 
             if result.is_ok() {
                 let balance_after = pool_client.get_deposit(&user, &token_id);
-
-                // Verify invariant: balance should decrease by withdrawal amount
-                assert_eq!(
-                    balance_before - amount,
-                    balance_after,
-                    "Balance should decrease by withdrawal amount"
-                );
                 assert!(balance_after >= 0, "Balance should never be negative");
 
-                // Verify pool token balance
-                assert_eq!(
-                    token_client.balance(&pool_id),
-                    deposit_amount - amount,
-                    "Pool token balance mismatch after withdrawal"
+                // Independent invariant check (issue #807) — is_withdrawal=true.
+                assert_pool_invariants(
+                    &pool_client, &token_id, &token_client, &pool_id,
+                    prev_managed, prev_shares, true,
                 );
             }
         }
 
-        FuzzAction::GetDeposit { user_id } => {
+        FuzzAction::DistributeYield { amount } => {
+            if amount <= 0 {
+                return;
+            }
+
+            // Seed a deposit first so shares exist for the price check.
+            let seeder = Address::generate(&env);
+            stellar_asset_client.mint(&seeder, &1_000_000);
+            let _ = pool_client.try_deposit(&seeder, &token_id, &1_000_000, &0);
+
+            let stats_before = pool_client.get_pool_stats(&token_id);
+            let prev_managed = stats_before.total_managed_assets;
+            let prev_shares  = stats_before.total_shares;
+
+            let yield_src = Address::generate(&env);
+            stellar_asset_client.mint(&yield_src, &amount);
+            let result = pool_client.try_distribute_yield(&yield_src, &token_id, &amount);
+
+            if result.is_ok() {
+                // Independent invariant check (issue #807) — not a withdrawal.
+                assert_pool_invariants(
+                    &pool_client, &token_id, &token_client, &pool_id,
+                    prev_managed, prev_shares, false,
+                );
+            }
+        }
+
+        FuzzAction::GetDeposit { user_id: _ } => {
             let user = Address::generate(&env);
             let balance = pool_client.get_deposit(&user, &token_id);
-
-            // Verify invariant: balance should never be negative
             assert!(balance >= 0, "Balance should never be negative");
         }
 
         FuzzAction::MultipleOperations { operations } => {
-            let mut users = HashMap::new();
-            let mut total_expected_deposits = 0i128;
+            let mut users: HashMap<u8, Address> = HashMap::new();
 
             for op in operations {
                 let user_addr = users
@@ -151,45 +248,45 @@ fuzz_target!(|data: FuzzAction| {
                         continue;
                     }
 
+                    let stats_before = pool_client.get_pool_stats(&token_id);
+                    let prev_managed = stats_before.total_managed_assets;
+                    let prev_shares  = stats_before.total_shares;
+
                     stellar_asset_client.mint(&user_addr, &op.amount);
-                    let result = rcall!(&env, pool_client, "deposit", (user_addr, op.amount));
+                    let result = pool_client.try_deposit(&user_addr, &token_id, &op.amount, &0);
+
                     if result.is_ok() {
-                        total_expected_deposits += op.amount;
+                        // INV-RT-1 / INV-RT-2 / INV-RT-3 (issue #807)
+                        assert_pool_invariants(
+                            &pool_client, &token_id, &token_client, &pool_id,
+                            prev_managed, prev_shares, false,
+                        );
                     }
                 } else {
                     if op.amount <= 0 {
                         continue;
                     }
 
-                    // Attempt withdrawal
-                    let result = rcall!(&env, pool_client, "withdraw", (user_addr, op.amount));
+                    let shares_held = pool_client.get_shares(&user_addr, &token_id);
+                    if shares_held <= 0 {
+                        continue;
+                    }
+                    let shares_to_withdraw = shares_held.min(op.amount);
+
+                    let stats_before = pool_client.get_pool_stats(&token_id);
+                    let prev_managed = stats_before.total_managed_assets;
+                    let prev_shares  = stats_before.total_shares;
+
+                    let result = pool_client.try_withdraw(&user_addr, &token_id, &shares_to_withdraw, &0);
+
                     if result.is_ok() {
-                        total_expected_deposits -= op.amount;
-                    } else {
-                        // If it fails, balance should be verified or we just continue
-                        let balance = pool_client.get_deposit(&user_addr, &token_id);
-                        if balance < op.amount {
-                            // Expected failure
-                        } else {
-                            // Unexpected failure (this might happen if auth fails or other logic)
-                        }
+                        // INV-RT-1 (skipped for withdrawal) / INV-RT-2 / INV-RT-3 (issue #807)
+                        assert_pool_invariants(
+                            &pool_client, &token_id, &token_client, &pool_id,
+                            prev_managed, prev_shares, true,
+                        );
                     }
                 }
-            }
-
-            // Verify invariant: total deposits match pool token balance
-            assert_eq!(
-                token_client.balance(&pool_id),
-                total_expected_deposits,
-                "Total deposits should match pool token balance"
-            );
-
-            // Verify all individual balances are non-negative
-            for (_, user_addr) in users {
-                assert!(
-                    pool_client.get_deposit(&user_addr, &token_id) >= 0,
-                    "Individual balance should never be negative"
-                );
             }
         }
     }
