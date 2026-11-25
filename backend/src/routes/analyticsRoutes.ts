@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import { requireJwtAuth } from '../middleware/jwtAuth.js';
+import { requireJwtAuth, requireRoles } from '../middleware/jwtAuth.js';
 import { validateQuery } from '../middleware/validation.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 import { createSwrCacheMiddleware } from '../middleware/swrCacheMiddleware.js';
 import { CacheKeys } from '../utils/cacheKeys.js';
-import { ANALYTICS_BUCKETS, computeProtocolStats } from '../services/analyticsService.js';
+import { ANALYTICS_BUCKETS, computeProtocolStats, computeExceptionSummary } from '../services/analyticsService.js';
 
 const router = Router();
 
@@ -104,6 +105,49 @@ router.get(
   requireJwtAuth,
   validateQuery(querySchema),
   protocolStatsCache,
+);
+
+const exceptionsQuerySchema = z.object({
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+});
+
+/**
+ * @swagger
+ * /analytics/exceptions:
+ *   get:
+ *     summary: Settlement and payout exceptions aggregated by source and age
+ *     description: >
+ *       Returns open/critical reconciliation discrepancies (settlement and payout
+ *       exceptions) grouped by source and age bucket, plus a recent list. Read-only:
+ *       no financial data is corrected. Permissioned to admins.
+ *     tags: [Analytics]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: from
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: to
+ *         schema: { type: string, format: date-time }
+ *     responses:
+ *       200:
+ *         description: Exception summary
+ */
+router.get(
+  '/exceptions',
+  protocolStatsRateLimiter,
+  requireJwtAuth,
+  requireRoles('admin'),
+  validateQuery(exceptionsQuerySchema),
+  asyncHandler(async (req, res) => {
+    const minute = 60_000;
+    const to = req.query.to ? new Date(String(req.query.to)) : new Date(Math.floor(Date.now() / minute) * minute);
+    const from = req.query.from ? new Date(String(req.query.from)) : new Date(to.getTime() - 30 * 24 * 3600 * 1000);
+    const summary = await computeExceptionSummary(from, to);
+    res.json(summary);
+  }),
 );
 
 export default router;

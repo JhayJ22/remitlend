@@ -20,6 +20,31 @@ export interface ProtocolStats {
   scoreDistribution: { bucket: string; count: number }[];
 }
 
+export interface ExceptionBucket {
+  source: string;
+  ageBucket: string;
+  open: number;
+  resolved: number;
+  critical: number;
+}
+
+export interface ExceptionSummary {
+  from: string;
+  to: string;
+  totalOpen: number;
+  totalResolved: number;
+  totalCritical: number;
+  bySource: ExceptionBucket[];
+  recent: Array<{
+    id: number;
+    subjectRef: string;
+    source: string;
+    severity: string;
+    status: string;
+    detectedAt: string;
+  }>;
+}
+
 /**
  * Indexed aggregations over loan_history (created_at/status indexes) and
  * scores. Money sums stay as numeric strings to avoid float drift.
@@ -89,5 +114,74 @@ export async function computeProtocolStats(
     })),
     defaultRateByCorridor,
     scoreDistribution: SCORE_BUCKETS.map((b, i) => ({ bucket: b.label, count: counts.get(i) ?? 0 })),
+  };
+}
+
+/**
+ * Aggregate settlement / payout exceptions (reconciliation discrepancies) by
+ * source (discrepancy class) and age bucket, for the operational exceptions
+ * dashboard. Amounts are never corrected here; this is a read-only view.
+ */
+export async function computeExceptionSummary(
+  from: Date,
+  to: Date,
+): Promise<ExceptionSummary> {
+  const range: [string, string] = [from.toISOString(), to.toISOString()];
+
+  const [bucketRes, recentRes] = await Promise.all([
+    query(
+      `SELECT
+        discrepancy_class AS source,
+        CASE
+          WHEN detected_at >= NOW() - INTERVAL '24 hours' THEN '0-24h'
+          WHEN detected_at >= NOW() - INTERVAL '7 days' THEN '1-7d'
+          WHEN detected_at >= NOW() - INTERVAL '30 days' THEN '8-30d'
+          ELSE '30d+'
+        END AS age_bucket,
+        COUNT(*) FILTER (WHERE status = 'open')::int AS open,
+        COUNT(*) FILTER (WHERE status = 'resolved')::int AS resolved,
+        COUNT(*) FILTER (WHERE severity = 'critical')::int AS critical
+       FROM reconciliation_discrepancies
+       WHERE detected_at >= $1 AND detected_at <= $2
+       GROUP BY 1, 2
+       ORDER BY source, age_bucket`,
+      range,
+    ),
+    query(
+      `SELECT id, subject_ref AS subjectRef, discrepancy_class AS source,
+              severity, status, detected_at
+       FROM reconciliation_discrepancies
+       WHERE detected_at >= $1 AND detected_at <= $2
+       ORDER BY detected_at DESC
+       LIMIT 50`,
+      range,
+    ),
+  ]);
+
+  const bySource: ExceptionBucket[] = bucketRes.rows.map((r) => ({
+    source: String(r.source),
+    ageBucket: String(r.age_bucket),
+    open: Number(r.open),
+    resolved: Number(r.resolved),
+    critical: Number(r.critical),
+  }));
+
+  const recent = recentRes.rows.map((r) => ({
+    id: Number(r.id),
+    subjectRef: String(r.subjectRef),
+    source: String(r.source),
+    severity: String(r.severity),
+    status: String(r.status),
+    detectedAt: r.detected_at ? new Date(r.detected_at).toISOString() : null,
+  }));
+
+  return {
+    from: range[0],
+    to: range[1],
+    totalOpen: bySource.reduce((sum, b) => sum + b.open, 0),
+    totalResolved: bySource.reduce((sum, b) => sum + b.resolved, 0),
+    totalCritical: bySource.reduce((sum, b) => sum + b.critical, 0),
+    bySource,
+    recent,
   };
 }

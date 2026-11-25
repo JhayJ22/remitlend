@@ -6,6 +6,7 @@ import { ErrorBoundary } from "../../components/global_ui/ErrorBoundary";
 import { useWalletStore, selectWalletAddress } from "../../stores/useWalletStore";
 import { ProtocolAnalytics } from "../../components/analytics/ProtocolAnalytics";
 import { PrintButton } from "../../components/ui/PrintButton";
+import { SettlementExceptions } from "../../../components/SettlementExceptions";
 
 type ViewType = "borrower" | "lender" | "protocol";
 
@@ -56,6 +57,8 @@ export default function AnalyticsPage() {
           />
         )}
       </ErrorBoundary>
+
+      <SettlementExceptions />
     </main>
   );
 }

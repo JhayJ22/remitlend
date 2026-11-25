@@ -12,3 +12,14 @@ export const getContractVerificationStatus = asyncHandler(
     res.json({ ...stats, contracts });
   },
 );
+
+/**
+ * GET /admin/contract-verification
+ * Returns the last WASM hash verification result for each tracked contract.
+ */
+export const getContractVerification = asyncHandler(
+  async (_req: Request, res: Response) => {
+    const results = await contractVerificationService.getWasmHashVerificationResults();
+    res.json({ contracts: results, count: results.length });
+  },
+);

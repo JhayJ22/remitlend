@@ -268,6 +268,16 @@
     "language": "Wika",
     "selectLanguage": "Piliin ang Wika"
   },
+  "Breadcrumbs": {
+    "dashboard": "Dashboard",
+    "loans": "Pautang",
+    "repay": "Bayad",
+    "admin": "Admin",
+    "disputes": "Disputa",
+    "loanItem": "Loan #{id}",
+    "currentPage": "Kasalukuyang pahina",
+    "itemId": "Item"
+  },
   "LoanDetails": {
     "actions": {
       "refinance": "I-refinance",

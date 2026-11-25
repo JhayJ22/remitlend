@@ -33,7 +33,10 @@ import {
   reviewLoanDispute,
 } from '../controllers/adminDisputeController.js';
 import { getPendingGovernance } from '../controllers/adminGovernanceController.js';
-import { getContractVerificationStatus } from '../controllers/adminContractVerificationController.js';
+import {
+  getContractVerification,
+  getContractVerificationStatus,
+} from '../controllers/adminContractVerificationController.js';
 import { query } from '../db/connection.js';
 import { getReconciliationStatus } from '../services/crossContractReconciler.js';
 import { createSupportedAsset } from '../services/assetAllowlistService.js';
@@ -367,6 +370,25 @@ router.get(
   requireJwtAuth,
   requireRoles('admin'),
   getContractVerificationStatus,
+);
+
+/**
+ * @swagger
+ * /admin/contract-verification:
+ *   get:
+ *     summary: Last WASM hash integrity verification result per deployed contract
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Per-contract WASM hash verification results
+ */
+router.get(
+  '/contract-verification',
+  requireJwtAuth,
+  requireRoles('admin'),
+  getContractVerification,
 );
 
 const checkDefaultsBodySchema = z.object({

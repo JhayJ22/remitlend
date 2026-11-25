@@ -15,6 +15,7 @@ import { RepaymentProgress } from "../../../components/ui/RepaymentProgress";
 import { LoanTimeline } from "../../../components/ui/LoanTimeline";
 import { TxHashLink } from "../../../components/ui/TxHashLink";
 import { LoanHealth } from "../../../components/loan/LoanHealth";
+import { Breadcrumbs } from "../../../components/global_ui/Breadcrumbs";
 import { rowsToCsv } from "../../../utils/csv";
 import { downloadSignedCsv } from "../../../utils/statementExport";
 import { StatementVerificationNotice } from "../../../components/security/StatementVerificationNotice";
@@ -127,20 +128,7 @@ export function LoanDetailsPageClient() {
 
   return (
     <section className="space-y-6">
-      <nav
-        aria-label="Breadcrumb"
-        className="flex items-center gap-1.5 text-sm text-zinc-500 dark:text-zinc-400"
-      >
-        <Link href="/" className="hover:text-zinc-900 dark:hover:text-zinc-100 transition">
-          Home
-        </Link>
-        <ChevronRight className="h-3.5 w-3.5" />
-        <Link href="/loans" className="hover:text-zinc-900 dark:hover:text-zinc-100 transition">
-          Loans
-        </Link>
-        <ChevronRight className="h-3.5 w-3.5" />
-        <span className="font-medium text-zinc-900 dark:text-zinc-50">Loan #{loanId}</span>
-      </nav>
+      <Breadcrumbs />
 
       <header className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm shadow-zinc-200/50 dark:border-zinc-800 dark:bg-zinc-950 dark:shadow-none">
         <div className="flex flex-wrap items-start justify-between gap-4">
