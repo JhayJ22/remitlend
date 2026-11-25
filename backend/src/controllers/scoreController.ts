@@ -4,7 +4,7 @@ import { query } from '../db/connection.js';
 import { cacheService } from '../services/cacheService.js';
 import { sorobanService } from '../services/sorobanService.js';
 import { calculateTieredScore } from '../services/bayesianScoringService.js';
-import { invalidateOnScoreUpdate } from '../utils/cacheKeys.js';
+import { CacheKeys, invalidateOnScoreUpdate } from '../utils/cacheKeys.js';
 
 // ---------------------------------------------------------------------------
 // Score computation helpers
@@ -359,7 +359,7 @@ export async function computeScoreBreakdownResponse(
 export const getOnChainScoreHistory = asyncHandler(async (req: Request, res: Response) => {
   const { walletAddress } = req.params as { walletAddress: string };
 
-  const cacheKey = `score:history:onchain:${walletAddress}`;
+  const cacheKey = CacheKeys.scoreHistoryOnchain(walletAddress);
   const cached = await cacheService.get<{
     walletAddress: string;
     history: Array<{ score: number; timestamp: number; reason: string }>;
@@ -387,7 +387,7 @@ export const getOnChainScoreHistory = asyncHandler(async (req: Request, res: Res
 export const getRemittanceNft = asyncHandler(async (req: Request, res: Response) => {
   const { walletAddress } = req.params as { walletAddress: string };
 
-  const cacheKey = `score:nft:${walletAddress}`;
+  const cacheKey = CacheKeys.scoreNft(walletAddress);
   const cached = await cacheService.get<Record<string, unknown>>(cacheKey);
   if (cached) {
     res.json({ success: true, walletAddress, nft: cached });

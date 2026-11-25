@@ -193,3 +193,33 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Validated manifests under \`${{ inputs.contracts-dir }}/<contract>/${{ inputs.manifests-subdir }}/\`." >> "$GITHUB_STEP_SUMMARY"
           echo "Breaking migrations must declare a rollback path; chains must be gap-free from version 0." >> "$GITHUB_STEP_SUMMARY"
+
+  check-query-plans:
+    name: Check critical query plans
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --no-audit --no-fund
+
+      - name: Run query plan check
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node ../scripts/check-query-plans.mjs
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Query plan check" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Runs \`EXPLAIN ANALYZE\` on critical queries and fails on Seq Scans over 1,000 estimated rows." >> "$GITHUB_STEP_SUMMARY"

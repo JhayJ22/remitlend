@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { query, withTransaction } from '../db/connection.js';
 import logger from '../utils/logger.js';
 import { getOutboundTraceparent } from '../utils/requestContext.js';
-import { sendWebhookRequest } from './webhookEgress.js';
+import { EgressPolicyViolation, validateWebhookUrl } from './webhookEgress.js';
 
 // #1520 — this array is the single source of truth for which event types
 // external webhook subscribers can register for. docs/webhooks.md's
@@ -250,6 +250,10 @@ async function postWebhook(
   signature: string | undefined,
   identity?: { eventId?: string; generation?: number },
 ): Promise<Response> {
+  // Egress policy (#784): HTTPS only, public addresses only, optional allowlist.
+  // Throws EgressPolicyViolation before any bytes leave the process.
+  await validateWebhookUrl(callbackUrl);
+
   const timeoutMs = getWebhookRequestTimeoutMs();
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
@@ -472,6 +476,27 @@ export class WebhookService {
       }
     } catch (error) {
       const newAttemptCount = attemptCount + 1;
+      if (error instanceof EgressPolicyViolation) {
+        const reason = redactFailureSummary(`${error.name}: ${error.message}`);
+        await query(
+          `UPDATE webhook_deliveries
+           SET attempt_count = $1,
+               last_error = $2,
+               next_retry_at = NULL,
+               updated_at = $3,
+               dead_lettered_at = $3,
+               dead_letter_reason = $2
+           WHERE id = $4`,
+          [newAttemptCount, reason, new Date(), deliveryId],
+        );
+        logger.withContext().warn('Webhook delivery rejected by egress policy, dead-lettered', {
+          deliveryId,
+          subscriptionId,
+          eventId,
+          reason,
+        });
+        return;
+      }
       const nextRetryTime =
         newAttemptCount < MAX_RETRY_ATTEMPTS
           ? new Date(Date.now() + getRetryDelayMs(newAttemptCount))
@@ -854,6 +879,32 @@ export class WebhookService {
         });
       }
     } catch (error) {
+      if (error instanceof EgressPolicyViolation) {
+        // Policy violations are permanent: dead-letter immediately, never retry.
+        const reason = redactFailureSummary(`${error.name}: ${error.message}`);
+        const now = new Date();
+        await query(
+          `INSERT INTO webhook_deliveries (
+            subscription_id,
+            event_id,
+            event_type,
+            attempt_count,
+            last_error,
+            payload,
+            next_retry_at,
+            dead_lettered_at,
+            dead_letter_reason
+          )
+          VALUES ($1, $2, $3, 1, $4, $5::jsonb, NULL, $6, $4)`,
+          [subscriptionId, payload.payload.eventId, payload.payload.eventType, reason, body, now],
+        );
+        logger.withContext().warn('Webhook delivery rejected by egress policy, dead-lettered', {
+          subscriptionId,
+          eventId: payload.payload.eventId,
+          reason,
+        });
+        return;
+      }
       // Network error or timeout, schedule first retry
       const nextRetryAt = new Date(Date.now() + getRetryDelayMs(1));
       await query(

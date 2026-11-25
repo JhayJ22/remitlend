@@ -26,6 +26,40 @@ pub const KEY_PENDING_PAUSE: Symbol = symbol_short!("PNPAUSE");
 pub const KEY_PAUSED_FUNCTIONS: Symbol = symbol_short!("PSFUNCS");
 pub const KEY_PAUSE_HISTORY: Symbol = symbol_short!("PHIST");
 
+/// Storage key for the pause-proposal id counter.
+pub const KEY_PAUSE_ID: &str = "PAUSEID";
+
+/// Builds the persistent storage key `PAUSE<id>` for a pause proposal
+/// without heap allocation (this crate is `no_std`).
+pub fn pause_proposal_key(env: &Env, id: u32) -> Symbol {
+    let mut buf = [0u8; 15];
+    buf[..5].copy_from_slice(b"PAUSE");
+    let mut digits = [0u8; 10];
+    let mut n = id;
+    let mut len = 0;
+    loop {
+        digits[len] = b'0' + (n % 10) as u8;
+        len += 1;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    for i in 0..len {
+        buf[5 + i] = digits[len - 1 - i];
+    }
+    // SAFETY-free: buf contains only ASCII letters and digits.
+    Symbol::new(env, core::str::from_utf8(&buf[..5 + len]).unwrap_or("PAUSE"))
+}
+
+/// Highest pause-proposal id issued so far (0 when none).
+pub fn last_pause_id(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&Symbol::new(env, KEY_PAUSE_ID))
+        .unwrap_or(0)
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────
 
 /// Status of a pending pause/unpause proposal
@@ -156,7 +190,7 @@ pub fn propose_pause(
     }
 
     // Generate new proposal ID
-    let pause_id_key = Symbol::new(env, "PAUSEID");
+    let pause_id_key = Symbol::new(env, KEY_PAUSE_ID);
     let current_id: u32 = env
         .storage()
         .instance()
@@ -188,7 +222,7 @@ pub fn propose_pause(
     };
 
     // Store proposal
-    let proposal_key = Symbol::new(env, &format!("PAUSE{}", new_id));
+    let proposal_key = pause_proposal_key(env, new_id);
     env.storage().persistent().set(&proposal_key, &pending);
 
     // Emit event
@@ -213,7 +247,7 @@ pub fn propose_pause(
 pub fn approve_pause(env: &Env, proposal_id: u32, signer: &Address) -> Result<(), GovernanceError> {
     signer.require_auth();
 
-    let proposal_key = Symbol::new(env, &format!("PAUSE{}", proposal_id));
+    let proposal_key = pause_proposal_key(env, proposal_id);
     let mut proposal: PendingPause = env
         .storage()
         .persistent()
@@ -272,7 +306,7 @@ pub fn approve_pause(env: &Env, proposal_id: u32, signer: &Address) -> Result<()
 pub fn execute_pause(env: &Env, proposal_id: u32, executor: &Address) -> Result<(), GovernanceError> {
     executor.require_auth();
 
-    let proposal_key = Symbol::new(env, &format!("PAUSE{}", proposal_id));
+    let proposal_key = pause_proposal_key(env, proposal_id);
     let proposal: PendingPause = env
         .storage()
         .persistent()
@@ -287,6 +321,12 @@ pub fn execute_pause(env: &Env, proposal_id: u32, executor: &Address) -> Result<
     let current_timestamp = env.ledger().timestamp();
     if current_timestamp < proposal.executable_after {
         return Err(GovernanceError::TimelockNotElapsed);
+    }
+
+    // Proposals past the governance TTL can no longer execute (and may be
+    // purged by `sweep_expired`).
+    if current_timestamp >= proposal.proposed_at.saturating_add(crate::PROPOSAL_TTL_SECONDS) {
+        return Err(GovernanceError::ProposalExpired);
     }
 
     // Count approvals
@@ -366,7 +406,7 @@ pub fn cancel_pause(
 ) -> Result<(), GovernanceError> {
     canceller.require_auth();
 
-    let proposal_key = Symbol::new(env, &format!("PAUSE{}", proposal_id));
+    let proposal_key = pause_proposal_key(env, proposal_id);
     let mut proposal: PendingPause = env
         .storage()
         .persistent()

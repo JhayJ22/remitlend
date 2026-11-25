@@ -28,6 +28,7 @@ import { useContractToast } from "../../../hooks/useContractToast";
 import { TransactionPreviewModal } from "../../../components/transaction/TransactionPreviewModal";
 import { RepaymentFormSkeleton } from "../../../components/skeletons/RepaymentFormSkeleton";
 import { useTransactionPreview } from "../../../hooks/useTransactionPreview";
+import { Breadcrumbs } from "../../../components/global_ui/Breadcrumbs";
 import {
   buildAmountHelperText,
   getPrecisionError,
@@ -247,6 +248,7 @@ export default function RepayLoanPage() {
 
   return (
     <section className="mx-auto max-w-3xl space-y-6">
+      <Breadcrumbs />
       <header>
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-indigo-600">
           Borrower Portal

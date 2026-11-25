@@ -1,5 +1,6 @@
 # Issue #409 – Reusable workflow: Soroban smart-contract checks
 # Issue #537 – Reproducible optimized WASM builds gated by a release manifest.
+# Issue #818 – Storage-key audit verification against contracts/STORAGE_AUDIT.md.
 # Least-privilege: read-only checkout; artifacts uploaded for inspection.
 name: Contracts CI (reusable)
 
@@ -52,6 +53,45 @@ jobs:
         working-directory: contracts
       - name: Share-price rounding policy tests
         run: cargo test -p vault rounding -- --test-threads=1 --nocapture
+      - name: Verify storage keys are documented in STORAGE_AUDIT.md
+        run: |
+          set -euo pipefail
+          audit="STORAGE_AUDIT.md"
+          if [ ! -f "$audit" ]; then
+            echo "::error::Storage audit $audit is missing."
+            exit 1
+          fi
+          # Collect every persistent storage key written via
+          # env.storage().persistent().set(...) across all contract sources.
+          mapfile -t keys < <(
+            grep -rhoE 'persistent\(\)\.set\([^,]+' --include='*.rs' . \
+              | sed -E 's/.*set\(//' \
+              | sed -E 's/^[[:space:]]+//' \
+              | sort -u
+          )
+          if [ "${#keys[@]}" -eq 0 ]; then
+            echo "::error::No persistent storage keys were detected; audit check cannot run."
+            exit 1
+          fi
+          failed=0
+          for key in "${keys[@]}"; do
+            # Normalise the key expression to its trailing identifier so that
+            # both `DataKey::Foo` and `&DataKey::Foo` match the audit table.
+            ident=$(printf '%s' "$key" | grep -oE '[A-Za-z_][A-Za-z0-9_]*$' || true)
+            if [ -z "$ident" ]; then
+              echo "::warning::Could not derive an identifier from storage key expression: $key"
+              continue
+            fi
+            if ! grep -qF "$ident" "$audit"; then
+              echo "::error file=$audit::Persistent storage key '$ident' (from '$key') is not documented in the storage audit."
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::Undocumented persistent storage keys detected; update STORAGE_AUDIT.md."
+            exit 1
+          fi
+          echo "All ${#keys[@]} persistent storage keys are documented in $audit."
         working-directory: contracts
       - name: Build contracts for wasm32 and enforce size budget
         run: |
@@ -73,6 +113,11 @@ jobs:
               exit 1
             fi
           done
+        working-directory: contracts
+      - name: Enforce per-contract WASM size budgets
+        run: |
+          bash ../scripts/test-wasm-size-budgets.sh
+          bash ../scripts/check-wasm-size-budgets.sh ./target/"$WASM_TARGET"/release ./size-budgets.json
         working-directory: contracts
       - name: Analyze per-function contract sizes
         run: bash ../scripts/analyze-contract-sizes.sh ./target/"$WASM_TARGET"/release
@@ -197,9 +242,3 @@ jobs:
             exit 1
           fi
         working-directory: contracts
-      - name: Upload optimized wasm artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: contracts-wasm-optimized
-          path: contracts/.wasm-optimized/*.wasm
-          if-no-files-found: error

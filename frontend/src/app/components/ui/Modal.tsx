@@ -4,6 +4,8 @@ import * as React from "react";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useModalFocusTrap } from "../../hooks/useModalFocusTrap";
+import { useIsMobile } from "../../hooks/useMediaQuery";
+import { BottomSheet } from "../atoms/BottomSheet";
 
 import { cn } from "@/app/utils/cn";
 
@@ -24,7 +26,31 @@ const sizeClasses = {
   xl: "max-w-xl",
 };
 
-const Modal: React.FC<ModalProps> = ({
+/**
+ * Action dialog. Renders a centered overlay on desktop and a swipe-to-dismiss
+ * BottomSheet on screens < 768px (UIUX Mobile First spec), with identical
+ * accessibility behaviour in both forms.
+ */
+const Modal: React.FC<ModalProps> = (props) => {
+  const isMobile = useIsMobile();
+  if (isMobile) {
+    const { isOpen, onClose, title, ariaLabel, children, className } = props;
+    return (
+      <BottomSheet
+        isOpen={isOpen}
+        onClose={onClose}
+        title={title}
+        ariaLabel={ariaLabel}
+        className={className}
+      >
+        {children}
+      </BottomSheet>
+    );
+  }
+  return <CenteredModal {...props} />;
+};
+
+const CenteredModal: React.FC<ModalProps> = ({
   isOpen,
   onClose,
   title,
@@ -69,6 +95,7 @@ const Modal: React.FC<ModalProps> = ({
             aria-labelledby={title ? titleId : undefined}
             aria-label={!title ? ariaLabel : undefined}
             tabIndex={-1}
+            data-testid="modal-dialog"
             className={cn(
               "relative w-full overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-zinc-950 dark:border dark:border-zinc-800 focus:outline-none",
               sizeClasses[size],

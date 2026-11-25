@@ -20,6 +20,23 @@ The current version includes migrations for:
 - `RateOracle` - Optional oracle address for dynamic interest rates
 - `MinRateBps` / `MaxRateBps` - Bounds on interest rate calculations
 
+## MigrationHelper pattern (storage schema, lazy reads)
+
+`src/migration.rs` (also `remittance_nft/src/migration.rs`) implements `MigrationHelper`:
+
+- Keep the previous struct layout as `<Name>V{N}` (e.g. `LoanV1`) and add a
+  `migrate_v{N}_to_v{N+1}` function that fills new fields with safe defaults.
+- Reads go through `MigrationHelper::load_loan`, which tries the current layout and
+  falls back to the legacy layout, then rewrites the entry in the new layout
+  (**lazy migration**: no panic on old entries, no bulk rewrite needed).
+- `get_storage_version() -> u32` is a read-only entry point reporting the schema
+  version (defaults to 1 until `migrate()` or an upgrade records a newer one).
+- `upgrade_proxy::execute_upgrade` calls `migration::on_upgrade`, recording the
+  expected schema version in the upgrade transaction; `migrate()` re-asserts it.
+- Tests: `test_lazy_migration_reads_legacy_loan_and_reports_storage_version`
+  (loan_manager) and `test_storage_version_and_lazy_metadata_migration`
+  (remittance_nft); see also `expandContractMigration.test.ts` on the backend.
+
 ## Migration Guard
 
 Each migration is guarded by:

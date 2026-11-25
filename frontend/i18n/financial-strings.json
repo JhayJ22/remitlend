@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "locales": ["en", "es", "tl"],
+  "reviewerRole": "admin",
+  "criticalStrings": [
+    {
+      "key": "HomePage.stats.netWorth",
+      "category": "money",
+      "source": "Net Worth",
+      "context": "Dashboard statistic for the borrower's net worth. Never omit the currency unit supplied by the caller.",
+      "glossaryTermIds": ["net-worth"],
+      "placeholders": [],
+      "unit": "currency"
+    },
+    {
+      "key": "HomePage.stats.totalRemitted",
+      "category": "money",
+      "source": "Total Remitted",
+      "context": "Dashboard statistic for the lifetime value of remittances sent by the borrower.",
+      "glossaryTermIds": ["remittance"],
+      "placeholders": [],
+      "unit": "currency"
+    },
+    {
+      "key": "HomePage.stats.yieldApy",
+      "category": "money",
+      "source": "Yield (APY)",
+      "context": "Dashboard statistic for annual percentage yield. APY is a glossary term and must stay recognizable.",
+      "glossaryTermIds": ["apy"],
+      "placeholders": [],
+      "unit": "percent"
+    },
+    {
+      "key": "HomePage.reminder.due",
+      "category": "loan-term",
+      "source": "Repayment due in {hours}h — Loan #{loanId}",
+      "context": "Time-boxed repayment reminder. Keep both placeholders and the hour unit; do not translate the loan identifier prefix.",
+      "glossaryTermIds": ["repayment", "loan"],
+      "placeholders": ["hours", "loanId"],
+      "unit": "duration"
+    },
+    {
+      "key": "LoanCard.totalOwed",
+      "category": "money",
+      "source": "Total Owed",
+      "context": "Label for the full outstanding balance of a loan, including principal and accrued interest.",
+      "glossaryTermIds": ["total-owed", "principal", "interest"],
+      "placeholders": [],
+      "unit": "currency"
+    },
+    {
+      "key": "LoanCard.principal",
+      "category": "loan-term",
+      "source": "Principal",
+      "context": "Loan term for the original amount borrowed, excluding interest. Do not replace with 'balance'.",
+      "glossaryTermIds": ["principal"],
+      "placeholders": [],
+      "unit": "currency"
+    },
+    {
+      "key": "LoanCard.accruedInterest",
+      "category": "money",
+      "source": "Accrued Interest",
+      "context": "Interest accumulated so far on an active loan. Distinct from the interest rate.",
+      "glossaryTermIds": ["interest", "accrued-interest"],
+      "placeholders": [],
+      "unit": "currency"
+    },
+    {
+      "key": "LoanCard.interest",
+      "category": "loan-term",
+      "source": "Interest",
+      "context": "Cost of borrowing expressed as an amount or rate. Do not use for penalties or fees.",
+      "glossaryTermIds": ["interest"],
+      "placeholders": [],
+      "unit": "currency-or-percent"
+    },
+    {
+      "key": "LoanCard.nextPayment",
+      "category": "money",
+      "source": "Next Payment",
+      "context": "Amount and date of the next scheduled repayment. Keep the amount and date supplied by the caller.",
+      "glossaryTermIds": ["repayment"],
+      "placeholders": [],
+      "unit": "currency"
+    },
+    {
+      "key": "LoanCard.daysRemaining",
+      "category": "loan-term",
+      "source": "{days} days remaining",
+      "context": "Days left in the repayment window. The {days} placeholder must remain intact.",
+      "glossaryTermIds": ["repayment-window"],
+      "placeholders": ["days"],
+      "unit": "days"
+    },
+    {
+      "key": "LoanCard.daysOverdue",
+      "category": "loan-term",
+      "source": "{days} days overdue",
+      "context": "Days past the repayment deadline. The {days} placeholder must remain intact.",
+      "glossaryTermIds": ["overdue"],
+      "placeholders": ["days"],
+      "unit": "days"
+    },
+    {
+      "key": "Loans.outstanding",
+      "category": "money",
+      "source": "Outstanding",
+      "context": "Remaining balance owed across active loans. Do not use for credit score or available credit.",
+      "glossaryTermIds": ["outstanding-balance"],
+      "placeholders": [],
+      "unit": "currency"
+    },
+    {
+      "key": "Loans.dueThisWeek",
+      "category": "loan-term",
+      "source": "Due This Week",
+      "context": "Summary label for repayments whose deadline falls in the current week.",
+      "glossaryTermIds": ["repayment", "repayment-window"],
+      "placeholders": [],
+      "unit": "date"
+    },
+    {
+      "key": "Loans.due",
+      "category": "loan-term",
+      "source": "Due {date}",
+      "context": "Repayment deadline label. The {date} placeholder must remain intact and use the caller-provided localized date.",
+      "glossaryTermIds": ["repayment-window"],
+      "placeholders": ["date"],
+      "unit": "date"
+    }
+  ]
+}

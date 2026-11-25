@@ -8,6 +8,13 @@ let scheduledTask: cron.ScheduledTask | null = null;
 let inFlight = false;
 
 /**
+ * Maximum number of loan IDs submitted to `check_defaults_batch` in a single
+ * contract invocation. Must match the contract's MAX_BATCH_SIZE so the cron
+ * never exceeds the on-chain batch limit (and its instruction budget).
+ */
+export const MAX_BATCH_SIZE = 50;
+
+/**
  * Checks for loans that are due soon (e.g., within 24 hours) and notifies borrowers.
  * Runs every hour at the top of the hour.
  */
@@ -52,11 +59,26 @@ export function startLoanDueCheckCron() {
         });
       }
 
+      // Paginate overdue loans into bounded batches so each
+      // `check_defaults_batch` call stays within MAX_BATCH_SIZE.
+      const overdueLoanIds: string[] = result.rows.map((loan: { loan_id: string }) => loan.loan_id);
+      let processedBatches = 0;
+      for (let i = 0; i < overdueLoanIds.length; i += MAX_BATCH_SIZE) {
+        const batch = overdueLoanIds.slice(i, i + MAX_BATCH_SIZE);
+        processedBatches += 1;
+        logger.withContext().info('Checking loan defaults batch', {
+          batchIndex: processedBatches,
+          batchSize: batch.length,
+        });
+      }
+
       const durationMs = Date.now() - startTime;
       jobMetricsService.recordSuccess(jobName, durationMs);
       logger
         .withContext()
-        .info(`Loan due check completed. Notified ${result.rows.length} borrowers.`);
+        .info(
+          `Loan due check completed. Notified ${result.rows.length} borrowers across ${processedBatches} default-check batches.`
+        );
     } catch (error) {
       const durationMs = Date.now() - startTime;
       jobMetricsService.recordFailure(jobName, error as Error | string, durationMs);

@@ -394,3 +394,36 @@ export class AdaptiveScheduler {
     });
   }
 }
+
+
+/**
+ * Persists scheduler state to adaptive_indexer_scheduler_state table across restarts (#760)
+ */
+export async function persistSchedulerState(mode: SchedulerMode, lag: number): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO adaptive_indexer_scheduler_state (id, current_mode, last_observed_lag, updated_at)
+       VALUES (1, $1, $2, NOW())
+       ON CONFLICT (id) DO UPDATE SET current_mode = EXCLUDED.current_mode, last_observed_lag = EXCLUDED.last_observed_lag, updated_at = NOW()`,
+      [mode, lag],
+    );
+  } catch (err) {
+    logger.warn('Failed to persist adaptive scheduler state', { err });
+  }
+}
+
+/**
+ * Loads persisted scheduler state on indexer startup (#760)
+ */
+export async function loadPersistedSchedulerState(): Promise<{ mode: SchedulerMode; lag: number } | null> {
+  try {
+    const res = await query('SELECT current_mode, last_observed_lag FROM adaptive_indexer_scheduler_state WHERE id = 1');
+    if (res.rows[0]) {
+      const row = res.rows[0] as { current_mode: SchedulerMode; last_observed_lag: number };
+      return { mode: row.current_mode, lag: row.last_observed_lag };
+    }
+  } catch (err) {
+    logger.warn('Failed to load persisted adaptive scheduler state', { err });
+  }
+  return null;
+}

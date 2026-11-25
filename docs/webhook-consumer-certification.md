@@ -369,3 +369,12 @@ or by revoking subscriptions with persistent signature-check failures.
 4. After go-live, monitor delivery success rate and processing lag for 48 hours.
 5. Schedule a post-go-live review at 30 days to confirm the DLQ is empty and
    error rate is within bounds.
+
+
+## Certification API Reference (#768)
+RemitLend provides programmatic endpoints to record and query consumer certifications:
+
+- `POST /admin/webhooks/consumers/:id/certify`: Records completed certification checklist (HMAC verification, retry handling, idempotency, TLS).
+- `GET /admin/webhooks/consumers/:id/certification`: Retrieves current certification status and checklist evidence.
+- Deliveries to uncertified consumers include the header `X-Consumer-Certified: false`.
+- Prometheus metric `webhook_uncertified_consumers_total` tracks uncertified consumers for operational alerting.

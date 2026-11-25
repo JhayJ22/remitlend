@@ -135,6 +135,9 @@ impl UpgradeProxy {
             .instance()
             .set(&UpgradeProxyKey::CurrentWasm, &scheduled.wasm_hash);
 
+        // Record the expected storage schema version; structs migrate lazily on read.
+        crate::migration::on_upgrade(env);
+
         // Clear scheduled upgrade
         env.storage()
             .instance()

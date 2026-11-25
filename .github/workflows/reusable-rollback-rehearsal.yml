@@ -1,0 +1,203 @@
+# Reusable workflow: rollout / rollback rehearsal (issue #861)
+#
+# Runs automated rollout and rollback rehearsals for every registered
+# expand-contract migration pair, mixed-application-version window, and
+# worker-compatibility scenario. Fails the release pipeline when any
+# registered pair has no passing rehearsal coverage.
+#
+# Two jobs:
+#   coverage-gate  — static check (no DB needed); verifies registry integrity
+#                    and that every entry has a rehearsal test file on disk.
+#   rehearsal      — live database job; runs the full rehearsal test suite
+#                    against an isolated Postgres instance.
+#
+# The live rehearsal job is skipped when no migration files or rollback
+# registry changed, unless the caller forces it via force-run.
+name: Reusable rollback rehearsal
+
+on:
+  workflow_call:
+    inputs:
+      force-run:
+        description: "Run even when no migration files changed"
+        required: false
+        type: boolean
+        default: false
+      node-version:
+        description: "Node.js version"
+        required: false
+        type: string
+        default: "20"
+      postgres-version:
+        description: "Postgres Docker image tag"
+        required: false
+        type: string
+        default: "16"
+    outputs:
+      rehearsal-passed:
+        description: "true if the live rehearsal job ran and passed"
+        value: ${{ jobs.rehearsal.outputs.passed }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Static coverage gate (no DB, runs on every PR) ─────────────────────────
+  coverage-gate:
+    name: Rollback registry coverage gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Use Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Check rollback coverage registry
+        run: node scripts/check-rollback-coverage.mjs
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Rollback coverage gate" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Every expand-contract pair in \`backend/src/__tests__/fixtures/rollbackRegistry.json\` must have a matching rehearsal test file." >> "$GITHUB_STEP_SUMMARY"
+          echo "Add a new registry entry **and** a rehearsal test whenever a new expand migration is merged." >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Path filter (decides whether the live rehearsal needs to run) ───────────
+  rehearsal-paths:
+    name: Detect migration / rehearsal changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.filter.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            changed:
+              - 'backend/migrations/**'
+              - 'backend/migrations-contract/**'
+              - 'backend/src/__tests__/rollbackRehearsal.test.ts'
+              - 'backend/src/__tests__/fixtures/rollbackRegistry.json'
+              - 'scripts/check-rollback-coverage.mjs'
+
+  # ── Live rehearsal (requires Postgres) ─────────────────────────────────────
+  rehearsal:
+    name: Live rollback rehearsal
+    needs: [coverage-gate, rehearsal-paths]
+    # Run when: any relevant file changed OR the caller forced it.
+    if: >
+      needs.rehearsal-paths.outputs.changed == 'true' ||
+      inputs.force-run == true ||
+      github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      passed: ${{ steps.mark.outputs.passed }}
+
+    services:
+      postgres:
+        image: postgres:${{ inputs.postgres-version }}
+        env:
+          POSTGRES_USER: rehearsal
+          POSTGRES_PASSWORD: rehearsal
+          POSTGRES_DB: rehearsal
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rehearsal"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Use Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Wait for Postgres to be ready
+        run: |
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -U rehearsal -d rehearsal && break
+            echo "Waiting for Postgres ($i/30)..."
+            sleep 2
+          done
+
+      - name: Run rollback rehearsal suite
+        id: run-rehearsal
+        env:
+          DATABASE_URL: postgres://rehearsal:rehearsal@localhost:5432/rehearsal
+          NODE_ENV: test
+          # No production host indicators in this URL — the access-control
+          # test in the suite will verify this.
+          ROLLBACK_REHEARSAL_ALLOW_PROD: ""
+          # Provide stub values for env validation (no real services).
+          JWT_SECRET: test_jwt_secret_rehearsal
+          STELLAR_RPC_URL: https://rpc.test.invalid
+          STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          LOAN_MANAGER_CONTRACT_ID: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          LENDING_POOL_CONTRACT_ID: CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+          REMITTANCE_NFT_CONTRACT_ID: CDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+          MULTISIG_GOVERNANCE_CONTRACT_ID: CEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+          POOL_TOKEN_ADDRESS: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+          LOAN_MANAGER_ADMIN_SECRET: test_admin_secret
+          INTERNAL_API_KEY: test_internal_api_key
+          FRONTEND_URL: https://frontend.example.com
+        run: npm run test:rollback -- --forceExit
+        working-directory: backend
+
+      - name: Mark rehearsal passed
+        id: mark
+        if: success()
+        run: echo "passed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload rehearsal test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollback-rehearsal-results
+          path: backend/test-results/rollback-rehearsal/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Summary
+        if: always()
+        env:
+          REHEARSAL_STATUS: ${{ steps.run-rehearsal.outcome }}
+        run: |
+          {
+            echo "### Rollback rehearsal results (issue #861)"
+            echo ""
+            echo "| Scenario | Coverage |"
+            echo "| --- | --- |"
+            echo "| A. Clean forward rollout | all migrations up, schema invariants verified |"
+            echo "| B. Full rollback | every down() applied from latest to 0 |"
+            echo "| C. Expand-only window | old + new writer against expanded schema |"
+            echo "| D. Expand → contract | promotion gate, column drop, trigger removal |"
+            echo "| E. Expand rollback | down() on expand, original data preserved |"
+            echo "| F. Contract rollback | down() on contract, old column restored from new |"
+            echo "| G. Concurrent writes | idempotency and no-duplicate guarantees |"
+            echo "| H. Worker compatibility | queue / scheduler / dead-letter survive rollback |"
+            echo "| I. Idempotency | re-running up() is a safe no-op |"
+            echo "| J. Gate rejection | contract aborts on unbackfilled / missing expand |"
+            echo "| K. Access-control | no production host, no unbounded money mutations |"
+            echo ""
+            echo "Overall status: **${REHEARSAL_STATUS}**"
+          } >> "$GITHUB_STEP_SUMMARY"

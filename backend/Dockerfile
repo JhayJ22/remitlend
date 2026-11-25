@@ -27,7 +27,13 @@ WORKDIR /app
 ARG GIT_SHA=""
 ARG BUILD_TIME=""
 ENV GIT_SHA=$GIT_SHA \
-    BUILD_TIME=$BUILD_TIME
+    BUILD_TIME=$BUILD_TIME \
+    # Reinforce helmet's Content-Security-Policy default so the header is
+    # applied even if the application-level cspHeadersMiddleware is bypassed
+    # (e.g. by a future middleware ordering mistake). The backend sets its own
+    # fine-grained policy at runtime; this env var acts as a documentation
+    # anchor and a fallback for orchestrators that read it.
+    CSP_DEFAULT_SRC="'self'"
 
 # Install only production dependencies.
 # Remove the lockfile afterwards so it is not part of the final layer cache.

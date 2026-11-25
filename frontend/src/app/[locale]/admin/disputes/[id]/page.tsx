@@ -13,6 +13,7 @@ import {
 } from "../../../../hooks/useApi";
 import { Modal } from "../../../../components/ui/Modal";
 import { useUserStore } from "../../../../stores/useUserStore";
+import { Breadcrumbs } from "../../../../components/global_ui/Breadcrumbs";
 
 type ResolutionAction = "resolve" | "reject";
 
@@ -156,6 +157,7 @@ export default function AdminDisputeDetailPage() {
 
   return (
     <section className="space-y-6">
+      <Breadcrumbs />
       <Link
         href={`/${locale}/admin/disputes`}
         className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-500"

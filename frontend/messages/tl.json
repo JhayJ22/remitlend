@@ -86,7 +86,8 @@
     "wallet": "Wallet",
     "walletStatus": "Status ng Wallet",
     "disconnected": "Nakaputol",
-    "connected": "Nakakonekta"
+    "connected": "Nakakonekta",
+    "glossary": "Talasalitaan"
   },
   "Loans": {
     "title": "Mga Loan",
@@ -204,7 +205,8 @@
     "details": "Mga Detalye"
   },
   "AdminLayout": {
-    "adminArea": "Lugar ng Admin"
+    "adminArea": "Lugar ng Admin",
+    "translationsReview": "Mga pinansyal na pagsasalin"
   },
   "AdminDisputes": {
     "eyebrow": "Pagsusuri ng Admin",
@@ -265,6 +267,16 @@
   "Settings": {
     "language": "Wika",
     "selectLanguage": "Piliin ang Wika"
+  },
+  "Breadcrumbs": {
+    "dashboard": "Dashboard",
+    "loans": "Pautang",
+    "repay": "Bayad",
+    "admin": "Admin",
+    "disputes": "Disputa",
+    "loanItem": "Loan #{id}",
+    "currentPage": "Kasalukuyang pahina",
+    "itemId": "Item"
   },
   "LoanDetails": {
     "actions": {
@@ -376,5 +388,275 @@
     "notScheduled": "Hindi naka-iskedyul",
     "unknown": "Hindi alam",
     "executableNow": "Maaaring ipatupad ngayon"
+  },
+  "Glossary": {
+    "pageTitle": "Talasalitaan ng Pananalapi",
+    "pageDescription": "Mga paliwanag sa simpleng wika ng mga terminong ginagamit sa RemitLend.",
+    "searchPlaceholder": "Maghanap ng mga termino…",
+    "noResults": "Walang termino ang tumutugma sa \"{query}\". Subukan ang mas malawak na paghahanap.",
+    "tooltipLabel": "Ano ang {term}?",
+    "terms": {
+      "apr": {
+        "term": "APR",
+        "definition": "Annual Percentage Rate (Taunang Porsyentong Rate) — ang taunang gastos ng isang pautang na ipinahayag bilang porsyento, kasama ang interes ngunit hindi ang compounding. Pinapahintulutan ka ng APR na ikumpara ang tunay na gastos ng iba't ibang pautang nang pantay-pantay."
+      },
+      "apy": {
+        "term": "APY",
+        "definition": "Annual Percentage Yield (Taunang Porsyentong Kita) — ang taunang kita sa isang deposito, isinasaalang-alang ang compounding. Ang mas mataas na APY ay nangangahulugang mas mabilis na lumalaki ang iyong pera. Ang APY ay palaging bahagyang mas mataas kaysa sa nabanggit na rate ng interes kapag may compounding."
+      },
+      "principal": {
+        "term": "Punong halaga",
+        "definition": "Ang orihinal na halaga ng pera na hiniram o idineposito mo, bago idagdag ang anumang interes o bayarin. Binabawasan ng iyong mga bayad ang natitirang punong halaga sa paglipas ng panahon."
+      },
+      "interest": {
+        "term": "Interes",
+        "definition": "Ang gastos na babayaran mo para sa paghiram ng pera, kinakalkula bilang porsyento ng natitirang punong halaga. Nag-iipon ang interes bawat araw na bukas ang iyong pautang at idinaragdag sa iyong kabuuang utang."
+      },
+      "accruedInterest": {
+        "term": "Naipon na interes",
+        "definition": "Interes na naipon sa iyong pautang mula nang huling bayad ngunit hindi pa nababayaran. Bahagi ito ng kabuuang halagang utang mo sa kasalukuyan."
+      },
+      "originationFee": {
+        "term": "Bayad sa paglikha ng pautang",
+        "definition": "Isang beses na bayad na sinisingil kapag nalilikha ang iyong pautang para masaklaw ang gastos sa pagproseso ng aplikasyon. Ibinabawas ito mula sa halagang ibinibigay sa iyo, kaya bahagyang mas mababa ang matatanggap mo kaysa sa hinalang mo."
+      },
+      "effectiveApr": {
+        "term": "Epektibong APR",
+        "definition": "Ang kabuuang taunang gastos ng iyong pautang kapag kasama na ang mga bayarin tulad ng origination fee, kasabay ng interes. Ang epektibong APR ay palaging mas mataas kaysa sa nominal na rate at ang pinaka-tumpak na paraan upang ikumpara ang buong gastos ng iba't ibang pautang."
+      },
+      "collateral": {
+        "term": "Kolateral",
+        "definition": "Isang asset (tulad ng cryptocurrency) na ila-lock mo upang ma-secure ang isang pautang. Kung hindi ka makabayad ng pautang, ang kolateral ay maaaring i-liquidate (ibenta) upang mabawi ang utang. Mas maraming kolateral kumpara sa iyong utang ay nangangahulugang mas malusog at mas ligtas na posisyon."
+      },
+      "collateralRatio": {
+        "term": "Ratio ng kolateral",
+        "definition": "Ang ratio ng halaga ng iyong nakalock na kolateral sa iyong kabuuang utang. Ang ratio na 1.5 ay nangangahulugang mayroon kang ₱1.50 ng kolateral para sa bawat ₱1.00 ng utang. Mas mataas ay mas ligtas; ang pagbaba sa ibaba ng liquidation threshold ay nagdudulot ng liquidation."
+      },
+      "healthFactor": {
+        "term": "Health factor",
+        "definition": "Isang numero na nagpapakita kung gaano kalapit na ma-liquidate ang iyong pautang. Ang health factor na higit sa 1.0 ay nangangahulugang ligtas ang iyong posisyon; sa 1.0 o mas mababa ay maaaring ma-liquidate. Magdagdag ng kolateral upang mapataas ang iyong health factor."
+      },
+      "liquidationThreshold": {
+        "term": "Liquidation threshold",
+        "definition": "Ang pinakamababang ratio ng kolateral na dapat mapanatili ng iyong pautang. Kung bumagsak ang halaga ng iyong kolateral at ang ratio ay bumaba sa o sa ibaba ng antas na ito, ang iyong kolateral ay maaaring awtomatikong ibenta upang mabayaran ang pautang."
+      },
+      "liquidation": {
+        "term": "Liquidasyon",
+        "definition": "Ang awtomatikong proseso ng pagbebenta ng ilan o lahat ng iyong kolateral upang mabayaran ang isang pautang kapag masyadong bumaba ang health factor. Pinoprotektahan ng liquidasyon ang mga nagpapahiram ngunit maaaring magresulta sa pagkalugi para sa nanghihiram."
+      },
+      "utilizationRate": {
+        "term": "Rate ng paggamit",
+        "definition": "Ang porsyento ng isang lending pool na kasalukuyang napautang. Halimbawa, ang 60% na rate ng paggamit ay nangangahulugang 60% ng mga idineposito ay aktibong kumikita ng interes sa pamamagitan ng mga pautang. Ang mas mataas na paggamit ay karaniwang nagpapataas ng APY para sa mga nagdedeposito ngunit maaaring limitahan ang agarang pag-withdraw."
+      },
+      "creditScore": {
+        "term": "Credit score",
+        "definition": "Isang on-chain na sukatan ng iyong pagiging maaasahan sa pagbabayad, kinakalkula mula sa iyong kasaysayan ng paghiram at pagbabayad. Ang mas mataas na puntos ay maaaring mag-unlock ng mas magandang mga tuntunin ng pautang, mas mababang bayarin, at mas mataas na limitasyon ng paghiram sa paglipas ng panahon."
+      },
+      "remittance": {
+        "term": "Remitansa",
+        "definition": "Isang paglipat ng pera na ipinapadala sa ibayong dagat, karaniwang sa pamilya o mga kaibigan. Sa RemitLend, ang mga remitansa ay naitala on-chain upang mabuo ang iyong kasaysayan ng kredito, na maaaring mapabuti ang iyong puntos at mag-unlock ng mas magandang mga tuntunin."
+      },
+      "amortization": {
+        "term": "Amortisasyon",
+        "definition": "Ang proseso ng pagbabayad ng pautang sa pamamagitan ng mga regular na nakatakdang bayad. Bawat bayad ay sumasaklaw sa interes na naipon mula nang huling bayad kasama ang isang bahagi ng punong halaga, kaya ang utang ay unti-unting bumababa sa buong termino ng pautang."
+      },
+      "lateFee": {
+        "term": "Bayad sa pagkahuli",
+        "definition": "Isang karagdagang bayarin na inilalapat sa iyong natitirang balanse kapag ang isang bayad ay natutulog na. Nag-iipon ang mga bayad sa pagkahuli habang nananatiling hindi nabayaran ang bayad, na nagpapataas ng iyong kabuuang utang."
+      },
+      "withdrawal": {
+        "term": "Pag-withdraw",
+        "definition": "Ang pagkuha ng iyong mga idineposito mula sa lending pool. Ang mga pag-withdraw ay maaaring sumailalim sa isang cooldown period — isang panahon ng paghihintay pagkatapos ng deposito — upang maprotektahan ang pool mula sa mabilis na pagpasok at paglabas ng pondo."
+      },
+      "cooldown": {
+        "term": "Cooldown ng pag-withdraw",
+        "definition": "Isang panahon ng paghihintay pagkatapos na gumawa ng deposito bago mo ma-withdraw ang mga pondong iyon. Pinoprotektahan ng cooldown ang pool mula sa mabilis na pag-ikot ng mga deposito at pag-withdraw, na nagpapanatili nitong matatag para sa lahat ng kalahok."
+      },
+      "yield": {
+        "term": "Kita",
+        "definition": "Ang mga kita na nagmumula sa pagdedeposito ng mga pondo sa lending pool. Ang kita ay nagmumula sa interes na binabayaran ng mga nanghihiram at ibinahagi nang proporsyonal sa mga nagdedeposito batay sa kanilang bahagi sa pool."
+      },
+      "shareOfPool": {
+        "term": "Bahagi ng pool",
+        "definition": "Ang porsyento ng kabuuang lending pool na kinakatawan ng iyong mga deposito. Tinutukoy ng iyong bahagi kung magkano ang kita ng pool na ipinamamahagi sa iyo. Kung ang pool ay 10,000 USDC at nagdeposito ka ng 1,000 USDC, ang iyong bahagi ay 10%."
+      },
+      "default": {
+        "term": "Default ng pautang",
+        "definition": "Ang isang pautang ay nag-default kapag hindi nakagawa ng kinakailangang bayad ang nanghihiram sa takdang petsa at naabot na ang threshold ng napalampas na bayad. Ang mga defaulted na pautang ay maaaring magdulot ng liquidasyon ng kolateral ng nanghihiram."
+      }
+    }
+  "TranslationReview": {
+    "eyebrow": "QA sa Lokalisasyon",
+    "title": "Pagsusuri ng pinansyal na pagsasalin",
+    "description": "Suriin ang mga terminong pang-pera at pautang batay sa glossary bago ilabas. Nakaugnay ang pag-apruba sa ipinapakitang bersyon ng pinagmulan.",
+    "forbidden": "Kailangan ng role na admin upang suriin ang mga pinansyal na string.",
+    "releaseReady": "Gate ng paglalabas: handa na",
+    "releaseBlocked": "Gate ng paglalabas: naka-block",
+    "reviewed": "{approved} sa {checked} na kasalukuyang pagsusuri",
+    "issues": "Mga hadlang sa paglalabas",
+    "noIssues": "Walang hadlang sa paglalabas.",
+    "source": "Pinagmulan",
+    "translation": "Pagsasalin",
+    "context": "Konteksto",
+    "glossary": "Glossary",
+    "status": "Status",
+    "approve": "Aprubahan",
+    "reject": "Humingi ng pagbabago",
+    "approved": "Naaprubahan",
+    "rejected": "Hiniling ang pagbabago",
+    "pending": "Nakabinbin",
+    "reviewer": "Tagasuri",
+    "reviewedAt": "Sinuri",
+    "none": "-",
+    "stale": "Nagbago ang pinagmulan mula sa pagsusuri",
+    "update": "Aprubahan ang kasalukuyang pinagmulan",
+    "updated": "Naitala ang pagsusuri.",
+    "error": "Hindi naitala ang pagsusuri.",
+    "locale": "Wika",
+    "key": "Key",
+    "actions": "Mga aksyon"
+  "Errors": {
+    "referenceLabel": "ID ng reference",
+    "actions": {
+      "retry": "Subukan ulit",
+      "reauthenticate": "Mag-sign in ulit",
+      "contact_support": "Makipag-ugnayan sa support",
+      "refresh": "I-refresh",
+      "none": "Isara"
+    },
+    "guidance": {
+      "invalidAmount": {
+        "title": "Suriin ang halaga",
+        "message": "Maglagay ng halagang mas malaki sa zero.",
+        "guidance": "Gamitin ang perang ipinapakita sa screen na ito. Hindi awtomatikong binabago ang halaga."
+      },
+      "invalidCredentials": {
+        "title": "Suriin ang iyong pag-sign in",
+        "message": "Hindi napatunayan ang signature ng iyong wallet o ang identifier ng account.",
+        "guidance": "Ikonekta muli ang iyong wallet, aprubahan ang bagong request, at subukan ulit. Hindi sinasalin ang mga address ng wallet."
+      },
+      "invalidInput": {
+        "title": "Suriin ang mga detalye",
+        "message": "May ilang halagang hindi tinanggap.",
+        "guidance": "Suriin ang mga naka-highlight na field at panatilihin ang mga identifier na eksaktong ibinigay."
+      },
+      "sessionExpired": {
+        "title": "Kailangan ang session",
+        "message": "Hindi na aktibo ang iyong ligtas na session.",
+        "guidance": "Mag-sign in muli upang magpatuloy. Huwag ulitin ang pagbabayad hangga’t hindi mo nakikita ang final na status."
+      },
+      "accessDenied": {
+        "title": "Limitado ang access",
+        "message": "Wala kang pahintulot para sa aksyong ito.",
+        "guidance": "Lumipat sa account na may kinakailangang access o makipag-ugnayan sa support gamit ang reference sa ibaba."
+      },
+      "notFound": {
+        "title": "Hindi available",
+        "message": "Hindi namin natagpuan ang hiniling na item.",
+        "guidance": "I-refresh ang listahan at suriin ang identifier bago subukan ulit."
+      },
+      "conflict": {
+        "title": "Nagbago ang estado",
+        "message": "May nagbago habang pinoproseso ang iyong request.",
+        "guidance": "I-refresh upang makita ang pinakabagong estado, at mag-retry lamang kung kailangan pa rin ang aksyon."
+      },
+      "duplicateRequest": {
+        "title": "Naisumite na",
+        "message": "Tinanggap na ang request na ito.",
+        "guidance": "Tingnan ang kasalukuyang status sa halip na isumite ulit; hindi ito magbabago ng resulta."
+      },
+      "rateLimited": {
+        "title": "Maghintay muna",
+        "message": "Masyadong maraming request ang ipinadala sa maikling panahon.",
+        "guidance": "Hintayin ang mungkahing delay, pagkatapos ay subukan nang isang beses."
+      },
+      "unavailable": {
+        "title": "Pansamantalang hindi available",
+        "message": "Hindi tumutugon ang isang kinakailangang serbisyo.",
+        "guidance": "Maghintay at mag-retry. Walang perang lumipat maliban na lang kung may nakumpirmang transaksyon."
+      },
+      "invalidLoan": {
+        "title": "Suriin ang pautang",
+        "message": "Hindi wasto ang identifier o reference ng pautang.",
+        "guidance": "Kopyahin ang identifier na eksaktong ipinapakita sa detalye ng pautang at subukan ulit."
+      },
+      "loanState": {
+        "title": "Nagbago ang estado ng pautang",
+        "message": "Hindi available ang aksyong ito sa kasalukuyang estado ng pautang.",
+        "guidance": "I-refresh ang mga detalye. Ang mga nabayaran nang pautang ay hindi nangangailangan ng karagdagang bayaran."
+      },
+      "insufficientFunds": {
+        "title": "Mababa ang balance",
+        "message": "Hindi sapat ang available na balance ng account.",
+        "guidance": "Magdagdag ng pondo o bawasan ang halaga. Ang eksaktong asset at unit ay ipinapakita sa form."
+      },
+      "blockchain": {
+        "title": "Isyu sa network",
+        "message": "Hindi nakumpirma ng network ang operasyon.",
+        "guidance": "Suriin ang status ng transaksyon bago mag-retry. Huwag ipadala nang dalawang beses ang parehong nilagdaang transaksyon."
+      },
+      "internal": {
+        "title": "May naganap na problema",
+        "message": "Hindi namin natapos ang request.",
+        "guidance": "Subukan muli sandali. Kung magpapatuloy, makipag-ugnayan sa support gamit ang reference sa ibaba."
+      },
+      "fallback": {
+        "title": "Hindi inaasahang error",
+        "message": "Naganap ang hindi inaasahang error.",
+        "guidance": "Mag-retry nang isang beses, pagkatapos ay makipag-ugnayan sa support kung magpapatuloy."
+      }
+    }
+  "Offers": {
+    "title": "Paghahambing ng loan at pool offers",
+    "description": "Pag-uri-uriin ang mga column gamit ang keyboard o ihambing ang card layout sa maliliit na screen. Panatilihin ng mga halaga ang kanilang orihinal na currency.",
+    "caption": "Paghahambing ng loan at pool offers. Ang mga column header ay nag-uuri ng talahanayan; bawat pangalan ng row ay isang row header.",
+    "summary": "Ipinapakita ang {visible} sa {total} na offer. Nakaayos ayon sa {column} {direction}. Mga filter: {filters}.",
+    "sortAction": "I-activate upang pag-urisin ayon sa column na ito",
+    "sortAscending": "pataas",
+    "sortDescending": "pababa",
+    "loanName": "Loan {id}",
+    "poolName": "Lending pool",
+    "rate": "{value}%",
+    "termNone": "Flexible",
+    "filters": {
+      "searchLabel": "Maghanap ng offer",
+      "searchPlaceholder": "Maghanap ayon sa pangalan o ID",
+      "currencyLabel": "Currency",
+      "kindLabel": "Uri ng offer",
+      "statusLabel": "Status",
+      "all": "Lahat",
+      "loan": "Loan",
+      "pool": "Pool"
+    },
+    "columns": {
+      "name": "Offer",
+      "kind": "Uri",
+      "amount": "Available na halaga",
+      "ratePercent": "Rate / APY",
+      "termDays": "Termino (araw)",
+      "status": "Status"
+    },
+    "states": {
+      "loading": "Nilo-load ang mga offer…",
+      "error": "Hindi ma-load ang mga offer. Subukan muli mula sa lender portal.",
+      "empty": "Walang offer na tumutugma sa kasalukuyang filter.",
+      "invalid": "Ang sort o filter action ay hindi wasto at hindi pinansin."
+    }
+  "Privacy": {
+    "title": "Pagkapribado",
+    "description": "Kontrolin kung paano ipinapakita ang sensitibong data ng account sa device na ito.",
+    "reducedDataMode": "Reduced Data Mode",
+    "reducedDataModeDesc": "Itinatago ang mga identifier ng account at balanse sa sensitibong mga screen. Hindi makikita ang mga nakatagong halaga sa kinopyang teksto, screenshots, at accessible names.",
+    "whenEnabled": "Kapag naka-enable",
+    "addressesMasked": "Ang mga wallet address ay ipinapakita bilang mask sa halip na totoong address",
+    "balancesMasked": "Ang mga balanse at halaga ay ipinapakita bilang mask sa halip na totoong halaga",
+    "scoresMasked": "Ang credit scores ay ipinapakita bilang mask sa halip na totoong numero",
+    "copyDisabled": "Naka-disable ang copy buttons sa mga nakatagong halaga",
+    "revealHint": "Gamitin ang eye toggle sa anumang nakatagong halaga para pansamantalang ipakita ito",
+    "localOnly": "Ang preference na ito ay naka-store lamang sa device na ito. Hindi nito naaapektuhan ang data ng account mo sa blockchain o backend.",
+    "reveal": "Ipakita",
+    "hide": "Itago",
+    "hidden": "nakatago",
+    "copyDisabledHint": "Naka-disable ang copy (nakatago)"
   }
 }

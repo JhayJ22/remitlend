@@ -37,6 +37,88 @@ export const chainConfirmationDurationHistogram = new client.Histogram({
   registers: [metricsRegistry],
 });
 
+// ---------------------------------------------------------------------------
+// Per-network transaction submission telemetry (#857)
+// ---------------------------------------------------------------------------
+// Throughput, latency, throttling and error rates are recorded per configured
+// network endpoint (label `network` = the endpoint id, low cardinality).
+// These complement the existing chain_confirmation_* metrics, which capture
+// only the final confirmation outcome and are not network-labelled.
+
+export const txSubmissionTotalCounter = new client.Counter({
+  name: 'tx_submission_total',
+  help: 'Transaction submission attempts per network, by outcome (submitted, queued, failed, throttled, duplicate, dead_lettered).',
+  labelNames: ['network', 'outcome'] as const,
+  registers: [metricsRegistry],
+});
+
+export const txSubmissionDurationHistogram = new client.Histogram({
+  name: 'tx_submission_duration_seconds',
+  help: 'Wall-clock seconds from submission attempt to resolved outcome, per network.',
+  labelNames: ['network'] as const,
+  buckets: [0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120],
+  registers: [metricsRegistry],
+});
+
+export const txSubmissionThrottledCounter = new client.Counter({
+  name: 'tx_submission_throttled_total',
+  help: 'Times the network asked the client to retry later (TRY_AGAIN_LATER / throttle), per network.',
+  labelNames: ['network'] as const,
+  registers: [metricsRegistry],
+});
+
+export const txSubmissionErrorsCounter = new client.Counter({
+  name: 'tx_submission_errors_total',
+  help: 'Transaction submission errors per network, by error class (transient, rejected, poll_error, no_endpoint).',
+  labelNames: ['network', 'error_class'] as const,
+  registers: [metricsRegistry],
+});
+
+export const txSubmissionInFlightGauge = new client.Gauge({
+  name: 'tx_submission_in_flight',
+  help: 'Transactions currently mid-submission (send + poll) per network.',
+  labelNames: ['network'] as const,
+  registers: [metricsRegistry],
+});
+
+export const txSubmissionCircuitStateGauge = new client.Gauge({
+  name: 'tx_submission_circuit_state',
+  help: 'Per-network circuit breaker state (0 = closed, 1 = half-open, 2 = open).',
+  labelNames: ['network'] as const,
+  registers: [metricsRegistry],
+});
+
+export const sorobanWriteQueueDepthGauge = new client.Gauge({
+  name: 'soroban_write_queue_depth',
+  help: 'Signed writes waiting in the durable Soroban write queue (pending).',
+  registers: [metricsRegistry],
+});
+
+export const sorobanWriteQueueDeadLetterDepthGauge = new client.Gauge({
+  name: 'soroban_write_queue_dead_letter_depth',
+  help: 'Signed writes dead-lettered (exhausted retries) in the Soroban write queue.',
+  registers: [metricsRegistry],
+});
+
+export const sorobanWriteQueueDeadLetteredCounter = new client.Counter({
+  name: 'soroban_write_queue_dead_lettered_total',
+  help: 'Cumulative signed writes moved to the dead-letter store after exhausting bounded retries.',
+  registers: [metricsRegistry],
+});
+
+export const txSubmissionStormAlertGauge = new client.Gauge({
+  name: 'tx_submission_storm_alert_active',
+  help: '1 when a retry-storm alert is active (submission backpressure), 0 when healthy.',
+  registers: [metricsRegistry],
+});
+
+export const txSubmissionFailoverCounter = new client.Counter({
+  name: 'tx_submission_failover_total',
+  help: 'Network failover events by type (failover_activated, failover_deactivated, failover_exhausted).',
+  labelNames: ['event_type'] as const,
+  registers: [metricsRegistry],
+});
+
 export const indexerLastLedgerGauge = new client.Gauge({
   name: 'indexer_last_ledger',
   help: 'Last ledger successfully processed by the event indexer.',
@@ -58,6 +140,62 @@ export const indexerLagLedgersGauge = new client.Gauge({
 export const webhookRetryQueueDepthGauge = new client.Gauge({
   name: 'webhook_retry_queue_depth',
   help: 'Number of webhook deliveries currently waiting for retry.',
+  registers: [metricsRegistry],
+});
+
+// ---------------------------------------------------------------------------
+// Queue backpressure saturation metrics (issue #860)
+// ---------------------------------------------------------------------------
+
+/**
+ * Current number of pending rows in the Soroban write queue.
+ * Values at or above SOROBAN_QUEUE_HARD_LIMIT indicate the queue is saturated.
+ */
+export const sorobanWriteQueueDepthGauge = new client.Gauge({
+  name: 'soroban_write_queue_depth',
+  help: 'Number of pending rows in the Soroban on-chain write queue.',
+  registers: [metricsRegistry],
+});
+
+/**
+ * Current backpressure saturation ratio for the Soroban write queue (0–1).
+ * Value = soroban_write_queue_depth / SOROBAN_QUEUE_HARD_LIMIT.
+ */
+export const sorobanWriteQueueSaturationGauge = new client.Gauge({
+  name: 'soroban_write_queue_saturation_ratio',
+  help: 'Soroban write-queue saturation as a fraction of the hard-capacity limit (0=empty, 1=fully saturated).',
+  registers: [metricsRegistry],
+});
+
+/**
+ * Overall queue saturation ratio across all job classes (0–1).
+ * Maximum of the per-queue saturation ratios.
+ */
+export const overallQueueSaturationGauge = new client.Gauge({
+  name: 'queue_overall_saturation_ratio',
+  help: 'Maximum saturation ratio across all job-class queues (0=empty, 1=fully saturated).',
+  registers: [metricsRegistry],
+});
+
+/**
+ * Number of financial write requests rejected due to queue saturation.
+ * Incremented each time the admission-control middleware returns 503.
+ */
+export const queueAdmissionRejectionsCounter = new client.Counter({
+  name: 'queue_admission_rejections_total',
+  help: 'Financial write requests rejected by the queue backpressure admission-control middleware.',
+  labelNames: ['job_class'] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Number of background job ticks shed due to queue pressure.
+ * Incremented each time shouldBackgroundJobRun() returns run=false.
+ */
+export const queueBackgroundShedsCounter = new client.Counter({
+  name: 'queue_background_sheds_total',
+  help: 'Background job ticks shed by the queue backpressure gate.',
+  labelNames: ['job_class'] as const,
   registers: [metricsRegistry],
 });
 
@@ -359,6 +497,28 @@ export function recordCacheMiss(keyPattern: string): void {
   cacheMissRateCounter.inc({ key_pattern: keyPattern });
 }
 
+/**
+ * Update the queue-depth and saturation-ratio gauges from a backpressure
+ * snapshot.  Call this after every backpressure refresh pass so Prometheus
+ * always has an up-to-date view of queue capacity.
+ *
+ * @param sorobanDepth      Current pending row count in soroban_write_queue.
+ * @param webhookDepth      Current retry row count in webhook_deliveries.
+ * @param saturationRatio   Overall saturation ratio (max across all queues).
+ */
+export function recordQueueSaturation(
+  sorobanDepth: number,
+  webhookDepth: number,
+  saturationRatio: number,
+): void {
+  sorobanWriteQueueDepthGauge.set(sorobanDepth);
+  webhookRetryQueueDepthGauge.set(webhookDepth);
+  sorobanWriteQueueSaturationGauge.set(
+    Math.min(saturationRatio, 1),
+  );
+  overallQueueSaturationGauge.set(Math.min(saturationRatio, 1));
+}
+
 export function recordLoanApproval(loanType: string = 'standard'): void {
   loanApprovalRateCounter.inc({ loan_type: loanType });
 }
@@ -410,3 +570,147 @@ export const dbPoolRejectedCounter = new client.Counter({
   help: 'Requests rejected immediately because the pool wait queue was full.',
   registers: [metricsRegistry],
 });
+
+
+export const webhookUncertifiedConsumersGauge = new client.Gauge({
+  name: 'webhook_uncertified_consumers_total',
+  help: 'Total number of active webhook consumers lacking verified certification',
+  registers: [metricsRegistry],
+});
+export const discrepancyLedgerUnacknowledgedGauge = new client.Gauge({
+  name: 'discrepancy_ledger_unacknowledged_total',
+  help: 'Total count of unacknowledged financial reconciliation discrepancies',
+  registers: [metricsRegistry],
+});
+export const dbConnectionsActiveGauge = new client.Gauge({
+  name: 'db_connections_active',
+  help: 'Number of active PostgreSQL connections currently checked out of the pool',
+  registers: [metricsRegistry],
+});
+// ---------------------------------------------------------------------------
+// Capacity model metrics (issue #865)
+// ---------------------------------------------------------------------------
+
+/**
+ * Estimated live size in bytes for each tracked database table.
+ * Label `table` carries the table name.
+ */
+export const dbTableEstimatedBytesGauge = new client.Gauge({
+  name: 'db_table_estimated_bytes',
+  help: 'Estimated live storage size in bytes for a database table (rowCount × bytesPerRow).',
+  labelNames: ['table'] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Projected storage size in bytes for each tracked database table
+ * after the configured forecast horizon.
+ */
+export const dbTableProjectedBytesGauge = new client.Gauge({
+  name: 'db_table_projected_bytes',
+  help: 'Projected storage size in bytes for a database table after the capacity forecast horizon.',
+  labelNames: ['table'] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Live row count for each tracked database table.
+ */
+export const dbTableRowCountGauge = new client.Gauge({
+  name: 'db_table_row_count',
+  help: 'Current approximate row count for a database table (pg_class.reltuples estimate).',
+  labelNames: ['table'] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Rows eligible for purge under the current retention policy, per table.
+ */
+export const dbTablePurgeEligibleGauge = new client.Gauge({
+  name: 'db_table_purge_eligible_rows',
+  help: 'Rows that are eligible for deletion under the current retention policy.',
+  labelNames: ['table'] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Capacity threshold level per table encoded as a numeric gauge.
+ * 0 = ok, 1 = warn, 2 = critical.
+ */
+export const dbTableThresholdLevelGauge = new client.Gauge({
+  name: 'db_table_capacity_threshold_level',
+  help: 'Capacity threshold level for a table: 0=ok, 1=warn, 2=critical.',
+  labelNames: ['table'] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Peak database connection demand (api_replicas × pool_max + background_jobs).
+ */
+export const dbConnectionPeakGauge = new client.Gauge({
+  name: 'db_connection_peak_demand',
+  help: 'Peak concurrent database connections based on the capacity demand model.',
+  registers: [metricsRegistry],
+});
+
+/**
+ * Connection utilization ratio: peak demand / POSTGRES_MAX_CONNECTIONS (0–1).
+ */
+export const dbConnectionUtilizationGauge = new client.Gauge({
+  name: 'db_connection_utilization_ratio',
+  help: 'Fraction of POSTGRES_MAX_CONNECTIONS consumed by peak demand (0=empty, 1=fully consumed).',
+  registers: [metricsRegistry],
+});
+
+/**
+ * Estimated total Redis memory demand in bytes.
+ */
+export const redisMemoryEstimateGauge = new client.Gauge({
+  name: 'redis_memory_estimate_bytes',
+  help: 'Estimated total Redis memory demand from idempotency keys, rate limiters, and stale-read cache.',
+  registers: [metricsRegistry],
+});
+
+/**
+ * Overall capacity threshold level across all tables and connections.
+ * 0 = ok, 1 = warn, 2 = critical.
+ */
+export const capacityOverallThresholdGauge = new client.Gauge({
+  name: 'capacity_overall_threshold_level',
+  help: 'Overall capacity threshold level across all tables and the connection model: 0=ok, 1=warn, 2=critical.',
+  registers: [metricsRegistry],
+});
+
+const CAPACITY_THRESHOLD_VALUE: Record<string, number> = {
+  ok: 0,
+  warn: 1,
+  critical: 2,
+};
+
+/**
+ * Update all capacity Prometheus gauges from a capacity snapshot.
+ * Call this after every scheduled capacity snapshot pass.
+ */
+export function recordCapacitySnapshot(
+  snapshot: import('../services/capacityModel.js').CapacitySnapshot,
+): void {
+  for (const entry of snapshot.tables) {
+    dbTableEstimatedBytesGauge.set({ table: entry.table }, entry.estimatedBytes);
+    dbTableProjectedBytesGauge.set({ table: entry.table }, entry.projectedBytes);
+    dbTableRowCountGauge.set({ table: entry.table }, entry.rowCount);
+    if (entry.eligibleForPurge !== null) {
+      dbTablePurgeEligibleGauge.set({ table: entry.table }, entry.eligibleForPurge);
+    }
+    dbTableThresholdLevelGauge.set(
+      { table: entry.table },
+      CAPACITY_THRESHOLD_VALUE[entry.thresholdLevel] ?? 0,
+    );
+  }
+
+  dbConnectionPeakGauge.set(snapshot.connectionDemand.peakConnections);
+  dbConnectionUtilizationGauge.set(snapshot.connectionDemand.connectionUtilizationRatio);
+  redisMemoryEstimateGauge.set(snapshot.redisMemoryModel.totalBytesEstimate);
+  capacityOverallThresholdGauge.set(
+    CAPACITY_THRESHOLD_VALUE[snapshot.overallThresholdLevel] ?? 0,
+  );
+}

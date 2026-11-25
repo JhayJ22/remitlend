@@ -12,6 +12,34 @@ import {
   type LoanCostError,
   type ReconciliationResult,
 } from "../../utils/loanCostDisclosure";
+import { GlossaryTerm, type GlossaryTermKey } from "../glossary/GlossaryTerm";
+
+/**
+ * Maps disclosure row labels to glossary term keys.
+ * Only labels where a glossary definition adds meaning are included.
+ * Labels describing the loan amount or repayment total are intentionally
+ * omitted to avoid annotating material disclosure numbers that must stand alone.
+ */
+const LABEL_TO_GLOSSARY_KEY: Record<string, GlossaryTermKey> = {
+  "Amount requested": "principal",
+  "Origination fee": "originationFee",
+  "Interest over the term": "interest",
+  "Accrued interest": "accruedInterest",
+  "Late fee": "lateFee",
+};
+
+/** Wraps a row label with a GlossaryTerm tooltip when a matching key exists. */
+function DisclosureRowLabel({ label }: { label: string }) {
+  const glossaryKey = LABEL_TO_GLOSSARY_KEY[label];
+  if (glossaryKey) {
+    return (
+      <GlossaryTerm termKey={glossaryKey} variant="inline" placement="bottom-start">
+        {label}
+      </GlossaryTerm>
+    );
+  }
+  return <>{label}</>;
+}
 
 interface LoanCostDisclosurePanelProps {
   disclosure: LoanCostDisclosure;
@@ -64,7 +92,9 @@ export function LoanCostDisclosurePanel({
                 role="row"
                 className="flex items-baseline justify-between gap-4 px-4 py-2.5 text-sm"
               >
-                <span className="text-zinc-500 dark:text-zinc-400">{row.label}</span>
+                <span className="text-zinc-500 dark:text-zinc-400">
+                  <DisclosureRowLabel label={row.label} />
+                </span>
                 <span
                   className={
                     row.emphasis === "total"
@@ -99,7 +129,13 @@ export function LoanCostDisclosurePanel({
           data-testid="loan-cost-effective-apr"
           className="text-sm text-zinc-600 dark:text-zinc-400"
         >
-          Nominal APR {formatBps(disclosure.annualRateBps)} — effective APR{" "}
+          <GlossaryTerm termKey="apr" variant="inline" placement="top">
+            Nominal APR
+          </GlossaryTerm>{" "}
+          {formatBps(disclosure.annualRateBps)} —{" "}
+          <GlossaryTerm termKey="effectiveApr" variant="inline" placement="top">
+            effective APR
+          </GlossaryTerm>{" "}
           <strong className="font-semibold text-zinc-900 dark:text-zinc-100">
             {formatBps(disclosure.effectiveAprBps)}
           </strong>{" "}

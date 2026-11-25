@@ -7,9 +7,11 @@ import {
   Address,
   StrKey,
   Keypair,
+  type rpc,
 } from '@stellar/stellar-sdk';
 import logger from '../utils/logger.js';
 import { AppError } from '../errors/AppError.js';
+import { assertAssetSupported } from './assetAllowlistService.js';
 import { getTraceContext } from '../utils/requestContext.js';
 import { formatTraceparent, outboundTraceContext } from '../utils/traceContext.js';
 import {
@@ -23,6 +25,24 @@ import {
 } from '../config/stellar.js';
 import { sorobanCircuitBreaker } from './sorobanCircuitBreaker.js';
 import { sorobanWriteQueue, type SorobanQueuedWrite } from './sorobanWriteQueue.js';
+import {
+  selectEndpointForSubmission,
+  recordEndpointFailure,
+  recordEndpointSuccess,
+  recordFailoverExhausted,
+  NoHealthyEndpointError,
+} from './networkFailoverService.js';
+import {
+  recordSubmissionAttempt,
+  recordSubmissionOutcome,
+  recordSubmissionThrottle,
+  recordSubmissionError,
+  incSubmissionInFlight,
+  decSubmissionInFlight,
+  type SubmissionOutcome,
+} from './networkTelemetryService.js';
+import { evaluateRetryStorm } from './retryStormAlertService.js';
+import { getActiveNetworkEndpointId } from '../config/networks.js';
 
 /**
  * Service for building and submitting Soroban contract transactions.
@@ -374,6 +394,7 @@ class SorobanService {
     tokenAddress: string,
     amount: number,
   ): Promise<{ unsignedTxXdr: string; networkPassphrase: string }> {
+    await assertAssetSupported(tokenAddress);
     const server = this.getRpcServer();
     const contractId = this.getLendingPoolContractId();
     const passphrase = this.getNetworkPassphrase();
@@ -522,7 +543,9 @@ class SorobanService {
   async buildApproveLoanTx(
     adminPublicKey: string,
     loanId: number,
+    tokenAddress: string,
   ): Promise<{ unsignedTxXdr: string; networkPassphrase: string }> {
+    await assertAssetSupported(tokenAddress);
     const server = this.getRpcServer();
     const contractId = this.getLoanManagerContractId();
     const passphrase = this.getNetworkPassphrase();
@@ -851,7 +874,6 @@ class SorobanService {
     resultXdr?: string;
     queued?: boolean;
   }> {
-    const server = this.getRpcServer();
     const isReplay = options.replay === true;
 
     // Chain confirmation is its own traced span (#414): it derives from the
@@ -869,129 +891,177 @@ class SorobanService {
     const tx = TransactionBuilder.fromXDR(signedTxXdr, this.getNetworkPassphrase());
     const txHash = tx.hash().toString('hex');
 
-    // Graceful degradation (#74): when the RPC circuit is open, persist the
-    // signed transaction instead of failing the request so the write is never
-    // lost. The replay processor drains the queue once the RPC recovers.
-    if (!isReplay && sorobanCircuitBreaker.shouldShortCircuit()) {
-      await this.enqueueSignedTx(signedTxXdr, txHash);
-      confirmationLogger.warn('Soroban RPC unavailable - queued transaction for replay', {
-        txHash,
-      });
-      return { txHash, status: 'QUEUED', queued: true };
-    }
-
-    let sendResult: Awaited<ReturnType<typeof server.sendTransaction>> | null = null;
+    // Bounded failover (#857): select a healthy RPC endpoint — primary first,
+    // then same-passphrase failover endpoints within the hop bound. When no
+    // endpoint is healthy, persist the signed transaction (the write is never
+    // lost) for the replay processor to drain once an endpoint recovers. The
+    // signed XDR and tx hash are never altered; only the relay node may change,
+    // so on-chain money semantics and the authoritative source of truth are
+    // preserved.
+    let endpointId: string;
+    let server: rpc.Server;
     try {
-      sendResult = await server.sendTransaction(tx);
+      const selected = selectEndpointForSubmission();
+      endpointId = selected.endpointId;
+      server = selected.server;
     } catch (error) {
-      sorobanCircuitBreaker.recordFailure(error);
-      const message = error instanceof Error ? error.message : String(error);
-      if (!isReplay && this.isTransientRpcError(message)) {
-        await this.enqueueSignedTx(signedTxXdr, txHash);
-        confirmationLogger.warn('Transaction submission failed - queued for replay', {
-          txHash,
-          error: message,
-        });
-        return { txHash, status: 'QUEUED', queued: true };
+      if (error instanceof NoHealthyEndpointError) {
+        recordFailoverExhausted(error.message);
+        recordSubmissionError(getActiveNetworkEndpointId(), 'no_endpoint');
+        if (!isReplay) {
+          await this.enqueueSignedTx(signedTxXdr, txHash);
+          confirmationLogger.warn('No healthy submission endpoint - queued transaction for replay', {
+            txHash,
+          });
+          recordSubmissionOutcome(getActiveNetworkEndpointId(), 'queued', null);
+          void evaluateRetryStorm();
+          return { txHash, status: 'QUEUED', queued: true };
+        }
+        throw error;
       }
       throw error;
     }
 
-    if (!sendResult) {
-      throw AppError.internal('Transaction submission returned no response');
-    }
+    recordSubmissionAttempt(endpointId);
+    incSubmissionInFlight(endpointId);
 
-    if (!sendResult.hash) {
-      chainConfirmationCounter.inc({ status: 'error' });
-      confirmationLogger.error('Transaction submission returned no hash');
-      throw AppError.internal('Transaction submission returned no hash');
-    }
+    try {
+      let sendResult: Awaited<ReturnType<typeof server.sendTransaction>> | null = null;
+      try {
+        sendResult = await server.sendTransaction(tx);
+      } catch (error) {
+        recordEndpointFailure(endpointId, error);
+        const message = error instanceof Error ? error.message : String(error);
+        const errorClass = this.isTransientRpcError(message) ? 'transient' : 'rejected';
+        recordSubmissionError(endpointId, errorClass);
+        if (!isReplay && this.isTransientRpcError(message)) {
+          await this.enqueueSignedTx(signedTxXdr, txHash);
+          confirmationLogger.warn('Transaction submission failed - queued for replay', {
+            txHash,
+            network: endpointId,
+            error: message,
+          });
+          recordSubmissionOutcome(endpointId, 'queued' as SubmissionOutcome, Date.now() - confirmationStartedAt);
+          void evaluateRetryStorm();
+          return { txHash, status: 'QUEUED', queued: true };
+        }
+        throw error;
+      }
 
-    sorobanCircuitBreaker.recordSuccess();
+      if (!sendResult) {
+        throw AppError.internal('Transaction submission returned no response');
+      }
 
-    confirmationLogger.info('Transaction submitted', {
-      txHash,
-      status: sendResult.status,
-      // Outbound hop header for the RPC call, for correlation with RPC-side logs.
-      traceparent: formatTraceparent(confirmationTrace),
-    });
+      if (!sendResult.hash) {
+        chainConfirmationCounter.inc({ status: 'error' });
+        recordSubmissionError(endpointId, 'rejected');
+        confirmationLogger.error('Transaction submission returned no hash');
+        throw AppError.internal('Transaction submission returned no hash');
+      }
 
-    if (sendResult.status === 'TRY_AGAIN_LATER' && !isReplay) {
-      await this.enqueueSignedTx(signedTxXdr, txHash);
-      confirmationLogger.warn('RPC asked the client to retry later - queued for replay', {
-        txHash,
-      });
-      return { txHash, status: 'QUEUED', queued: true };
-    }
+      recordEndpointSuccess(endpointId);
 
-    if ((sendResult.status as string) === 'DUPLICATE') {
-      // Idempotent replay: the signed transaction is already known to the network.
-      this.recordChainConfirmation('success', confirmationStartedAt);
-      confirmationLogger.info('Transaction already known to the network', { txHash });
-      return { txHash, status: 'DUPLICATE' };
-    }
-
-    if (sendResult.status === 'ERROR' || sendResult.status === 'TRY_AGAIN_LATER') {
-      confirmationLogger.warn('Transaction rejected at submission', {
+      confirmationLogger.info('Transaction submitted', {
         txHash,
         status: sendResult.status,
-        errorResult: sendResult.errorResult?.toXDR('base64'),
+        network: endpointId,
+        // Outbound hop header for the RPC call, for correlation with RPC-side logs.
+        traceparent: formatTraceparent(confirmationTrace),
       });
-      this.recordChainConfirmation('error', confirmationStartedAt);
-      return { txHash, status: sendResult.status };
-    }
 
-    // Poll for final result. `pollTransaction` throws on RPC/timeout failures;
-    // the throw is preserved (callers already handle it) but the outcome is
-    // now observable in metrics + logs with the trace id attached.
-    let polled: Awaited<ReturnType<typeof server.pollTransaction>>;
-    try {
-      polled = await server.pollTransaction(txHash, {
-        attempts: 30,
-        sleepStrategy: () => 1000,
-      });
-    } catch (error) {
-      this.recordChainConfirmation('error', confirmationStartedAt);
-      confirmationLogger.error('Chain confirmation dependency failure', {
-        txHash,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
+      if (sendResult.status === 'TRY_AGAIN_LATER' && !isReplay) {
+        recordSubmissionThrottle(endpointId);
+        await this.enqueueSignedTx(signedTxXdr, txHash);
+        confirmationLogger.warn('RPC asked the client to retry later - queued for replay', {
+          txHash,
+          network: endpointId,
+        });
+        recordSubmissionOutcome(endpointId, 'throttled', Date.now() - confirmationStartedAt);
+        void evaluateRetryStorm();
+        return { txHash, status: 'QUEUED', queued: true };
+      }
 
-    const resultXdr =
-      polled.status === 'SUCCESS' && polled.resultXdr
-        ? polled.resultXdr.toXDR('base64')
-        : undefined;
+      if ((sendResult.status as string) === 'DUPLICATE') {
+        // Idempotent replay: the signed transaction is already known to the network.
+        this.recordChainConfirmation('success', confirmationStartedAt);
+        recordSubmissionOutcome(endpointId, 'duplicate', Date.now() - confirmationStartedAt);
+        confirmationLogger.info('Transaction already known to the network', { txHash });
+        return { txHash, status: 'DUPLICATE' };
+      }
 
-    const confirmationStatus =
-      polled.status === 'SUCCESS'
-        ? 'success'
-        : polled.status === 'FAILED'
-          ? 'failed'
-          : polled.status === 'NOT_FOUND'
-            ? 'not_found'
-            : 'unknown';
+      if (sendResult.status === 'ERROR' || sendResult.status === 'TRY_AGAIN_LATER') {
+        confirmationLogger.warn('Transaction rejected at submission', {
+          txHash,
+          status: sendResult.status,
+          errorResult: sendResult.errorResult?.toXDR('base64'),
+        });
+        this.recordChainConfirmation('error', confirmationStartedAt);
+        recordSubmissionError(endpointId, 'rejected');
+        recordSubmissionOutcome(endpointId, 'failed', Date.now() - confirmationStartedAt);
+        return { txHash, status: sendResult.status };
+      }
 
-    this.recordChainConfirmation(confirmationStatus, confirmationStartedAt);
+      // Poll for final result. `pollTransaction` throws on RPC/timeout failures;
+      // the throw is preserved (callers already handle it) but the outcome is
+      // now observable in metrics + logs with the trace id attached.
+      let polled: Awaited<ReturnType<typeof server.pollTransaction>>;
+      try {
+        polled = await server.pollTransaction(txHash, {
+          attempts: 30,
+          sleepStrategy: () => 1000,
+        });
+      } catch (error) {
+        this.recordChainConfirmation('error', confirmationStartedAt);
+        recordSubmissionError(endpointId, 'poll_error');
+        confirmationLogger.error('Chain confirmation dependency failure', {
+          txHash,
+          network: endpointId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
 
-    if (confirmationStatus === 'success') {
-      confirmationLogger.info('Chain confirmation observed', {
+      const resultXdr =
+        polled.status === 'SUCCESS' && polled.resultXdr
+          ? polled.resultXdr.toXDR('base64')
+          : undefined;
+
+      const confirmationStatus =
+        polled.status === 'SUCCESS'
+          ? 'success'
+          : polled.status === 'FAILED'
+            ? 'failed'
+            : polled.status === 'NOT_FOUND'
+              ? 'not_found'
+              : 'unknown';
+
+      this.recordChainConfirmation(confirmationStatus, confirmationStartedAt);
+      recordSubmissionOutcome(
+        endpointId,
+        confirmationStatus === 'success' ? 'submitted' : 'failed',
+        Date.now() - confirmationStartedAt,
+      );
+
+      if (confirmationStatus === 'success') {
+        confirmationLogger.info('Chain confirmation observed', {
+          txHash,
+          status: polled.status,
+        });
+      } else {
+        confirmationLogger.warn('Chain confirmation did not succeed', {
+          txHash,
+          status: polled.status,
+        });
+      }
+
+      return {
         txHash,
         status: polled.status,
-      });
-    } else {
-      confirmationLogger.warn('Chain confirmation did not succeed', {
-        txHash,
-        status: polled.status,
-      });
+        ...(resultXdr ? { resultXdr } : {}),
+      };
+    } finally {
+      decSubmissionInFlight(endpointId);
     }
-
-    return {
-      txHash,
-      status: polled.status,
-      ...(resultXdr ? { resultXdr } : {}),
-    };
   }
 
   /**

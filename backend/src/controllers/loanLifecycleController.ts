@@ -6,8 +6,15 @@ import { ErrorCode } from '../errors/errorCodes.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sorobanService } from '../services/sorobanService.js';
 import { rejectLoanSchema } from '../schemas/loanSchemas.js';
+import { sanitizeText } from '../utils/sanitize.js';
 import logger from '../utils/logger.js';
 import { emitLoanStateEvent } from '../services/loanStateEventStore.js';
+import {
+  invalidateOnLoanMutation,
+  invalidateOnRepay,
+  invalidateOnScoreUpdate,
+  invalidateOnUnscopedLoanWrite,
+} from '../utils/cacheKeys.js';
 
 // ─── Loan lifecycle / test-dev helpers (split from loanController, issue #41) ──
 
@@ -80,6 +87,7 @@ export const buildCancelLoanTx = async (req: Request, res: Response, next: NextF
     }
 
     const transaction = await sorobanService.buildCancelLoanTx(borrower, loanId as string);
+    await invalidateOnLoanMutation(borrower);
 
     return res.json({
       success: true,
@@ -95,7 +103,8 @@ export const buildRejectLoanTx = async (req: Request, res: Response, next: NextF
   try {
     const { loanId } = req.params;
 
-    const { reason } = rejectLoanSchema.parse(req.body);
+    const rawParsed = rejectLoanSchema.parse(req.body);
+    const reason = sanitizeText(rawParsed.reason);
 
     const result = await query('SELECT * FROM loans WHERE id = $1', [loanId]);
     const loan = result.rows[0] as Record<string, unknown> | undefined;
@@ -156,6 +165,13 @@ export const markLoanDefaulted = asyncHandler(async (req: Request, res: Response
     actor: borrower,
   });
 
+  if (borrower) {
+    await invalidateOnLoanMutation(borrower);
+    await invalidateOnScoreUpdate(borrower);
+  } else {
+    await invalidateOnUnscopedLoanWrite();
+  }
+
   res.json({
     success: true,
     message: 'Loan marked as defaulted for test setup.',
@@ -179,12 +195,12 @@ export const submitTransaction = asyncHandler(async (req: Request, res: Response
     async (stellarResult: unknown, client) => {
       const sr = stellarResult as { txHash: string; status: string };
       await client.query(
-        `INSERT INTO transaction_submissions (tx_hash, status, submitted_at, submitted_by)
-           VALUES ($1, $2, NOW(), $3)
+        `INSERT INTO transaction_submissions (tx_hash, status, submitted_at, submitted_by, envelope_xdr)
+           VALUES ($1, $2, NOW(), $3, $4)
            ON CONFLICT (tx_hash) DO UPDATE SET
              status = EXCLUDED.status,
              submitted_at = EXCLUDED.submitted_at`,
-        [sr.txHash, sr.status, req.user?.publicKey || null],
+        [sr.txHash, sr.status, req.user?.publicKey || null, signedTxXdr],
       );
 
       logger.withContext().info('Transaction submission recorded', {
@@ -207,6 +223,14 @@ export const submitTransaction = asyncHandler(async (req: Request, res: Response
     txHash: sr.txHash,
     status: sr.status,
   });
+
+  // The confirmed tx can change loan, pool and score projections for the submitter.
+  const submitter = req.user?.publicKey;
+  if (submitter) {
+    await invalidateOnRepay(submitter, Number(req.params.loanId));
+  } else {
+    await invalidateOnUnscopedLoanWrite();
+  }
 
   res.json({
     success: true,

@@ -1,5 +1,9 @@
 import logger from '../utils/logger.js';
 import pool from '../db/connection.js';
+import { createHash } from 'crypto';
+import { readFileSync } from 'fs';
+
+const WASM_HASHES_PATH = new URL('../../../contracts/wasm-hashes.sha256', import.meta.url).pathname;
 
 interface VerificationStatus {
   contractId: string;
@@ -7,6 +11,16 @@ interface VerificationStatus {
   verifiedAt?: string;
   sourceCodeHash: string;
   explorerUrl: string;
+  error?: string;
+}
+
+interface WasmHashCheckResult {
+  contractId: string;
+  contractName: string;
+  expectedHash: string | null;
+  actualHash: string | null;
+  matched: boolean;
+  checkedAt: string;
   error?: string;
 }
 
@@ -248,6 +262,115 @@ class ContractVerificationService {
       };
     } catch (error) {
       logger.error('Error getting verification stats', { error });
+      throw error;
+    }
+  }
+
+  /**
+   * Parse the expected WASM hashes from wasm-hashes.sha256.
+   * Returns a map of contract name (from the WASM filename) to its expected SHA-256 hash.
+   */
+  parseExpectedWasmHashes(): Map<string, string> {
+    const hashes = new Map<string, string>();
+    try {
+      const content = readFileSync(WASM_HASHES_PATH, 'utf-8');
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        // Format: "<sha256>  <path>" (two spaces)
+        const parts = trimmed.split(/\s{2,}/);
+        if (parts.length < 2) continue;
+        const [hash, path] = parts;
+        const fileName = path.split('/').pop() ?? '';
+        const contractName = fileName.replace('.wasm', '');
+        if (hash && contractName) {
+          hashes.set(contractName, hash);
+        }
+      }
+    } catch (error) {
+      logger.warn('Could not read wasm-hashes.sha256', { path: WASM_HASHES_PATH, error });
+    }
+    return hashes;
+  }
+
+  /**
+   * Record the result of a WASM hash integrity check for a deployed contract.
+   */
+  async recordWasmHashVerification(
+    contractId: string,
+    contractName: string,
+    expectedHash: string | null,
+    actualHash: string | null,
+    matched: boolean,
+    error?: string,
+  ): Promise<void> {
+    try {
+      await pool.query(
+        `
+        INSERT INTO contract_verification (contract_id, contract_name, source_code_hash, wasm_hash, verified, verified_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        ON CONFLICT (contract_id) DO UPDATE SET
+          contract_name = EXCLUDED.contract_name,
+          source_code_hash = COALESCE(EXCLUDED.source_code_hash, contract_verification.source_code_hash),
+          wasm_hash = EXCLUDED.wasm_hash,
+          verified = EXCLUDED.verified,
+          verified_at = EXCLUDED.verified_at,
+          updated_at = NOW()
+      `,
+        [contractId, contractName, expectedHash ?? null, actualHash ?? null, matched, matched ? new Date().toISOString() : null],
+      );
+
+      await pool.query(
+        `
+        INSERT INTO contract_verification_attempts (contract_id, success, message, attempted_at)
+        VALUES ($1, $2, $3, NOW())
+      `,
+        [
+          contractId,
+          matched,
+          error ?? (matched ? 'Wasm hash matches expected' : 'Wasm hash mismatch detected'),
+        ],
+      );
+
+      logger.info('Recorded WASM hash verification', {
+        contractId,
+        contractName,
+        matched,
+        error,
+      });
+    } catch (error) {
+      logger.error('Error recording WASM hash verification', { contractId, error });
+      throw error;
+    }
+  }
+
+  /**
+   * Return the last WASM hash verification result for every tracked contract,
+   * for the admin verification endpoint.
+   */
+  async getWasmHashVerificationResults(): Promise<WasmHashCheckResult[]> {
+    try {
+      const result = await pool.query(`
+        SELECT
+          contract_id,
+          contract_name,
+          wasm_hash AS actual_hash,
+          source_code_hash AS expected_hash,
+          verified AS matched,
+          updated_at AS checked_at
+        FROM contract_verification
+        ORDER BY contract_name ASC
+      `);
+      return result.rows.map((row) => ({
+        contractId: row.contract_id,
+        contractName: row.contract_name,
+        expectedHash: row.expected_hash ?? null,
+        actualHash: row.actual_hash ?? null,
+        matched: Boolean(row.matched),
+        checkedAt: row.checked_at ? new Date(row.checked_at).toISOString() : null,
+      }));
+    } catch (error) {
+      logger.error('Error getting WASM hash verification results', { error });
       throw error;
     }
   }

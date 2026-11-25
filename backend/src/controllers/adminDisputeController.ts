@@ -1,7 +1,14 @@
 import { query } from '../db/connection.js';
 import { AppError } from '../errors/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { sanitizeText } from '../utils/sanitize.js';
 import { notificationService, type NotificationType } from '../services/notificationService.js';
+import {
+  assertDisputeTransition,
+  recordDisputeTransition,
+} from '../services/disputeStateMachine.js';
+import { updateUserScoresBulk } from '../services/scoresService.js';
+import { sorobanService } from '../services/sorobanService.js';
 import { encodeCursor, decodeCursor, parseKeysetParams } from '../utils/pagination.js';
 
 /**
@@ -25,6 +32,8 @@ export const listLoanDisputes = asyncHandler(async (req, res) => {
   if (
     statusFilter !== 'open' &&
     statusFilter !== 'resolved' &&
+    statusFilter !== 'under_review' &&
+    statusFilter !== 'dismissed' &&
     statusFilter !== 'rejected' &&
     statusFilter !== 'all'
   ) {
@@ -48,9 +57,9 @@ export const listLoanDisputes = asyncHandler(async (req, res) => {
   const params: unknown[] = [];
   let whereClause = '';
 
-  // Status filter
+  // Status filter ('rejected' is a legacy alias of 'dismissed')
   if (statusFilter !== 'all') {
-    params.push(statusFilter);
+    params.push(statusFilter === 'rejected' ? 'dismissed' : statusFilter);
     whereClause = `WHERE status = $${params.length}`;
   }
 
@@ -92,7 +101,7 @@ export const listLoanDisputes = asyncHandler(async (req, res) => {
   let countWhereClause = '';
 
   if (statusFilter !== 'all') {
-    countParams.push(statusFilter);
+    countParams.push(statusFilter === 'rejected' ? 'dismissed' : statusFilter);
     countWhereClause = `WHERE status = $${countParams.length}`;
   }
 
@@ -139,18 +148,73 @@ export const getLoanDispute = asyncHandler(async (req, res) => {
   res.json({ success: true, dispute: disputeResult.rows[0] });
 });
 
+const adminActor = (req: { user?: { publicKey?: string } }): string =>
+  req.user?.publicKey ?? 'admin-api-key';
+
+async function loadDispute(disputeId: string | string[] | undefined) {
+  const r = await query(`SELECT * FROM loan_disputes WHERE id = $1`, [disputeId]);
+  if (r.rows.length === 0) throw AppError.notFound('Dispute not found');
+  return r.rows[0];
+}
+
+async function notifyBorrower(
+  dispute: any,
+  title: string,
+  message: string,
+  type: NotificationType,
+) {
+  try {
+    await notificationService.createNotification({
+      userId: dispute.borrower,
+      type,
+      title,
+      message,
+      loanId: dispute.loan_id,
+    });
+  } catch {
+    // notification failures must not fail the transition
+  }
+}
+
 /**
- * Admin resolves a dispute: confirm or reverse default
+ * Admin moves an open dispute to under_review.
+ * POST /admin/disputes/:disputeId/review
+ */
+export const reviewLoanDispute = asyncHandler(async (req, res) => {
+  const rawNote = (req.body ?? {}).note as string | undefined;
+  const note = sanitizeText(rawNote);
+  const dispute = await loadDispute(req.params.disputeId);
+  assertDisputeTransition(dispute.status, 'under_review');
+
+  await query(`UPDATE loan_disputes SET status = 'under_review', reviewed_by = $1 WHERE id = $2`, [
+    adminActor(req),
+    dispute.id,
+  ]);
+  await recordDisputeTransition({
+    actor: adminActor(req),
+    disputeId: dispute.id,
+    from: dispute.status,
+    to: 'under_review',
+    note,
+  });
+  res.json({ success: true, message: 'Dispute moved to under review.' });
+});
+
+/**
+ * Admin resolves a dispute under review: confirm or reverse default.
  * POST /admin/loan-disputes/:disputeId/resolve
- * Body: { action: 'confirm' | 'reverse', resolution: string, adminNote?: string }
+ * Body: { action, resolution, adminNote?, correctedRemittanceData? }
  */
 export const resolveLoanDispute = asyncHandler(async (req, res) => {
-  const { disputeId } = req.params;
-  const { action, resolution, adminNote } = req.body as {
+  const rawBody = req.body as {
     action: string;
     resolution: string;
     adminNote?: string;
+    correctedRemittanceData?: Record<string, unknown>;
   };
+  const { action, correctedRemittanceData } = rawBody;
+  const resolution = sanitizeText(rawBody.resolution);
+  const adminNote = sanitizeText(rawBody.adminNote);
 
   if (!['confirm', 'reverse'].includes(action)) {
     throw AppError.badRequest('Action must be confirm or reverse');
@@ -159,90 +223,82 @@ export const resolveLoanDispute = asyncHandler(async (req, res) => {
     throw AppError.badRequest('Resolution reason required');
   }
 
-  // Get dispute and loan
-  const disputeResult = await query(
-    `SELECT * FROM loan_disputes WHERE id = $1 AND status = 'open'`,
-    [disputeId],
-  );
-  if (disputeResult.rows.length === 0) {
-    throw AppError.notFound('Dispute not found or already resolved');
-  }
-  const dispute = disputeResult.rows[0];
+  const dispute = await loadDispute(req.params.disputeId);
+  assertDisputeTransition(dispute.status, 'resolved');
 
-  // Mark dispute as resolved with admin note
   await query(
-    `UPDATE loan_disputes SET status = 'resolved', resolution = $1, admin_note = $2, resolved_at = NOW() WHERE id = $3`,
-    [resolution, adminNote || null, disputeId],
+    `UPDATE loan_disputes SET status = 'resolved', resolution = $1, admin_note = $2,
+       corrected_remittance_data = $3, resolved_at = NOW() WHERE id = $4`,
+    [
+      resolution,
+      adminNote || null,
+      correctedRemittanceData ? JSON.stringify(correctedRemittanceData) : null,
+      dispute.id,
+    ],
   );
 
-  if (action === 'confirm') {
-    // Leave loan as defaulted, optionally log event
-    await query(
-      `INSERT INTO contract_events (loan_id, address, event_type, amount, ledger, ledger_closed_at) VALUES ($1, $2, 'DefaultConfirmed', NULL, NULL, NOW())`,
-      [dispute.loan_id, dispute.borrower],
-    );
-  } else if (action === 'reverse') {
-    // Insert event to mark loan as active again
-    await query(
-      `INSERT INTO contract_events (loan_id, address, event_type, amount, ledger, ledger_closed_at) VALUES ($1, $2, 'DefaultReversed', NULL, NULL, NOW())`,
-      [dispute.loan_id, dispute.borrower],
-    );
+  await query(
+    `INSERT INTO contract_events (loan_id, address, event_type, amount, ledger, ledger_closed_at) VALUES ($1, $2, $3, NULL, NULL, NOW())`,
+    [
+      dispute.loan_id,
+      dispute.borrower,
+      action === 'confirm' ? 'DefaultConfirmed' : 'DefaultReversed',
+    ],
+  );
+
+  await recordDisputeTransition({
+    actor: adminActor(req),
+    disputeId: dispute.id,
+    from: dispute.status,
+    to: 'resolved',
+    note: adminNote ?? resolution,
+  });
+
+  // Score recomputation: a reversed default undoes the default penalty.
+  if (action === 'reverse') {
+    const { defaultPenalty } = sorobanService.getScoreConfig();
+    await updateUserScoresBulk(new Map([[dispute.borrower, defaultPenalty]]));
   }
 
-  // Notify borrower via notifications + SSE (and external email if enabled)
-  try {
-    const msg = `Your dispute for loan ${dispute.loan_id} has been resolved: ${resolution}`;
-    const type = action === 'reverse' ? 'repayment_confirmed' : 'loan_defaulted';
-    await notificationService.createNotification({
-      userId: dispute.borrower,
-      type: type as NotificationType,
-      title: 'Dispute resolved',
-      message: msg,
-      loanId: dispute.loan_id,
-    });
-  } catch {
-    // Log and continue — resolution shouldn't fail because of notifications
-    // notificationService already logs errors internally
-  }
+  await notifyBorrower(
+    dispute,
+    'Dispute resolved',
+    `Your dispute for loan ${dispute.loan_id} has been resolved: ${resolution}`,
+    (action === 'reverse' ? 'repayment_confirmed' : 'loan_defaulted') as NotificationType,
+  );
 
   res.json({ success: true, message: 'Dispute resolved.' });
 });
 
 /**
- * Admin rejects a dispute (keeps default status)
- * POST /admin/loan-disputes/:disputeId/reject
+ * Admin dismisses a dispute under review (keeps default status).
+ * POST /admin/disputes/:disputeId/reject
  */
 export const rejectLoanDispute = asyncHandler(async (req, res) => {
-  const { disputeId } = req.params;
-  const { admin_note } = req.body as { admin_note?: string };
-
-  const disputeResult = await query(
-    `SELECT * FROM loan_disputes WHERE id = $1 AND status = 'open'`,
-    [disputeId],
-  );
-  if (disputeResult.rows.length === 0) {
-    throw AppError.notFound('Dispute not found or already processed');
-  }
-
-  const dispute = disputeResult.rows[0];
+  const rawAdminNote = (req.body ?? {}).admin_note as string | undefined;
+  const admin_note = sanitizeText(rawAdminNote) || undefined;
+  const dispute = await loadDispute(req.params.disputeId);
+  assertDisputeTransition(dispute.status, 'dismissed');
 
   await query(
-    `UPDATE loan_disputes SET status = 'rejected', resolution = $1, resolved_at = NOW() WHERE id = $2`,
-    [admin_note ?? 'rejected by admin', disputeId],
+    `UPDATE loan_disputes SET status = 'dismissed', resolution = $1, admin_note = $2, resolved_at = NOW() WHERE id = $3`,
+    [admin_note ?? 'dismissed by admin', admin_note ?? null, dispute.id],
+  );
+  await recordDisputeTransition({
+    actor: adminActor(req),
+    disputeId: dispute.id,
+    from: dispute.status,
+    to: 'dismissed',
+    note: admin_note,
+  });
+
+  const msg = `Your dispute for loan ${dispute.loan_id} was dismissed by admin.`;
+  await notifyBorrower(
+    dispute,
+    'Dispute dismissed',
+    admin_note ? `${msg} Note: ${admin_note}` : msg,
+    'loan_defaulted' as NotificationType,
   );
 
-  try {
-    const msg = `Your dispute for loan ${dispute.loan_id} was rejected by admin.`;
-    await notificationService.createNotification({
-      userId: dispute.borrower,
-      type: 'loan_defaulted' as NotificationType,
-      title: 'Dispute rejected',
-      message: admin_note ? `${msg} Note: ${admin_note}` : msg,
-      loanId: dispute.loan_id,
-    });
-  } catch {
-    // swallow
-  }
-
-  res.json({ success: true, message: 'Dispute rejected.' });
+  res.json({ success: true, message: 'Dispute dismissed.' });
 });

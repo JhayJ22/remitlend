@@ -5,7 +5,12 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { sorobanService } from '../services/sorobanService.js';
 import logger from '../utils/logger.js';
 import { cacheService } from '../services/cacheService.js';
-import { invalidateOnRepay, invalidateOnLoanRequest } from '../utils/cacheKeys.js';
+import {
+  invalidateOnRepay,
+  invalidateOnLoanRequest,
+  invalidateOnLoanMutation,
+  invalidateOnUnscopedLoanWrite,
+} from '../utils/cacheKeys.js';
 
 export const requestLoan = asyncHandler(async (req: Request, res: Response) => {
   const { amount, borrowerPublicKey } = req.body as {
@@ -189,6 +194,7 @@ export const depositCollateral = asyncHandler(async (req: Request, res: Response
   );
 
   await cacheService.set(cacheKey, result, 60);
+  await invalidateOnLoanMutation(borrowerPublicKey);
 
   logger.withContext().info('Deposit collateral transaction built', {
     borrower: borrowerPublicKey,
@@ -245,6 +251,7 @@ export const releaseCollateral = asyncHandler(async (req: Request, res: Response
   const result = await sorobanService.buildReleaseCollateralTx(borrowerPublicKey, loanIdNum);
 
   await cacheService.set(cacheKey, result, 60);
+  await invalidateOnLoanMutation(borrowerPublicKey);
 
   logger.withContext().info('Release collateral transaction built', {
     borrower: borrowerPublicKey,
@@ -309,6 +316,7 @@ export const refinanceLoan = asyncHandler(async (req: Request, res: Response) =>
   );
 
   await cacheService.set(cacheKey, result, 60);
+  await invalidateOnLoanMutation(borrowerPublicKey);
 
   logger.withContext().info('Refinance loan transaction built', {
     borrower: borrowerPublicKey,
@@ -368,6 +376,7 @@ export const extendLoan = asyncHandler(async (req: Request, res: Response) => {
   const result = await sorobanService.buildExtendLoanTx(borrowerPublicKey, loanIdNum, extraLedgers);
 
   await cacheService.set(cacheKey, result, 60);
+  await invalidateOnLoanMutation(borrowerPublicKey);
 
   logger.withContext().info('Extend loan transaction built', {
     borrower: borrowerPublicKey,
@@ -424,6 +433,7 @@ export const buildLiquidateLoan = asyncHandler(async (req: Request, res: Respons
   const result = await sorobanService.buildLiquidateTx(liquidatorPublicKey, loanIdNum);
 
   await cacheService.set(cacheKey, result, 60);
+  await invalidateOnUnscopedLoanWrite();
 
   logger.withContext().info('Liquidate loan transaction built', {
     liquidator: liquidatorPublicKey,

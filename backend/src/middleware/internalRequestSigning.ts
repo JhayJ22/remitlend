@@ -3,16 +3,78 @@ import crypto from 'crypto';
 import logger from '../utils/logger.js';
 import { AppError } from '../errors/AppError.js';
 
-const SIGNING_SECRET = process.env.INTERNAL_SIGNING_SECRET || 'default-dev-secret';
 const SIGNATURE_HEADER = 'x-remitlend-signature';
 const TIMESTAMP_HEADER = 'x-remitlend-timestamp';
 const MAX_REQUEST_AGE_SECONDS = 300; // 5 minutes
+
+/**
+ * Active signing secrets for internal request verification.
+ *
+ * `currentSecret` is always the newest secret and is used for signing
+ * outbound requests.  `previousSecret` is the old secret retained during the
+ * overlap window of a rotation (#851) so that in-flight requests signed with
+ * the old secret still verify.  After revocation, `previousSecret` is cleared
+ * and only `currentSecret` is accepted.
+ *
+ * This is an in-process registry: each replica maintains its own copy.  The
+ * credential rotation service (#851) coordinates the overlap window and
+ * signals when to clear the previous secret.
+ */
+let currentSecret: string = process.env.INTERNAL_SIGNING_SECRET || 'default-dev-secret';
+let previousSecret: string | null = null;
+
+/**
+ * Begin the overlap window by setting both the new (current) and old
+ * (previous) secrets.  Called by the credential rotation service at the
+ * `overlap` stage.  After this call, `verifyRequestSignature` accepts
+ * requests signed with either secret, and `signRequest` signs with the
+ * new one.
+ *
+ * @param newSecret  The new signing secret.
+ * @param oldSecret  The secret being rotated out (retained for overlap).
+ */
+export function beginSigningSecretOverlap(newSecret: string, oldSecret: string): void {
+  previousSecret = oldSecret;
+  currentSecret = newSecret;
+  logger.info('internal_signing_secret_overlap_started', {
+    current_hash: crypto.createHash('sha256').update(newSecret).digest('hex').slice(0, 8),
+    previous_hash: crypto.createHash('sha256').update(oldSecret).digest('hex').slice(0, 8),
+  });
+}
+
+/**
+ * Revoke the old signing secret, ending the overlap window.  After this call,
+ * only `currentSecret` is accepted for verification.
+ */
+export function revokeOldSigningSecret(): void {
+  logger.info('internal_signing_secret_overlap_revoked', {
+    previous_hash: previousSecret
+      ? crypto.createHash('sha256').update(previousSecret).digest('hex').slice(0, 8)
+      : null,
+  });
+  previousSecret = null;
+}
+
+/**
+ * Get all active secrets that should be accepted for verification.
+ * During overlap, returns [current, previous].  Otherwise returns [current].
+ */
+export function getActiveSigningSecrets(): string[] {
+  return previousSecret ? [currentSecret, previousSecret] : [currentSecret];
+}
+
+/**
+ * Get the current (newest) signing secret.  Used for signing outbound requests.
+ */
+export function getCurrentSigningSecret(): string {
+  return currentSecret;
+}
 
 export function signRequest(
   method: string,
   path: string,
   body: string | Record<string, unknown> = '',
-  secret: string = SIGNING_SECRET,
+  secret: string = currentSecret,
 ): { signature: string; timestamp: string } {
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
@@ -26,26 +88,44 @@ export function signRequest(
   };
 }
 
+/**
+ * Verify a request signature against all active secrets (current + previous
+ * during overlap).  Returns true if the signature matches any active secret.
+ */
 export function verifyRequestSignature(
   method: string,
   path: string,
   body: string | Record<string, unknown>,
   signature: string,
   timestamp: string,
-  secret: string = SIGNING_SECRET,
+  secret?: string,
 ): boolean {
   const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
   const message = `${method}|${path}|${bodyStr}|${timestamp}`;
 
-  const expectedSignature = crypto
-    .createHmac('sha256', secret)
-    .update(message)
-    .digest('hex');
+  const secretsToCheck = secret ? [secret] : getActiveSigningSecrets();
 
-  return crypto.timingSafeEqual(
-    Buffer.from(signature, 'hex'),
-    Buffer.from(expectedSignature, 'hex'),
-  );
+  for (const s of secretsToCheck) {
+    const expectedSignature = crypto
+      .createHmac('sha256', s)
+      .update(message)
+      .digest('hex');
+
+    try {
+      if (
+        expectedSignature.length === signature.length &&
+        crypto.timingSafeEqual(
+          Buffer.from(signature, 'hex'),
+          Buffer.from(expectedSignature, 'hex'),
+        )
+      ) {
+        return true;
+      }
+    } catch {
+      // signature hex decode failed — try next secret
+    }
+  }
+  return false;
 }
 
 export function internalRequestSigningMiddleware(

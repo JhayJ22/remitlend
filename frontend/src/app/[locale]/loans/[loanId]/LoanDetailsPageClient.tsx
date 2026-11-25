@@ -15,7 +15,10 @@ import { RepaymentProgress } from "../../../components/ui/RepaymentProgress";
 import { LoanTimeline } from "../../../components/ui/LoanTimeline";
 import { TxHashLink } from "../../../components/ui/TxHashLink";
 import { LoanHealth } from "../../../components/loan/LoanHealth";
-import { downloadCsv, rowsToCsv } from "../../../utils/csv";
+import { Breadcrumbs } from "../../../components/global_ui/Breadcrumbs";
+import { rowsToCsv } from "../../../utils/csv";
+import { downloadSignedCsv } from "../../../utils/statementExport";
+import { StatementVerificationNotice } from "../../../components/security/StatementVerificationNotice";
 import { useDepositCollateral, useReleaseCollateral } from "@/app/hooks/useApi";
 
 import CollateralActionModal from "@/app/components/transaction/CollateralActionModal";
@@ -49,6 +52,8 @@ export function LoanDetailsPageClient() {
   const loanId = params.loanId;
   const [isRefinanceOpen, setIsRefinanceOpen] = useState(false);
   const [isExtensionOpen, setIsExtensionOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const realtimeStatus = useLoanStream(loanId);
   const { data: loan, isLoading, isError } = useLoan(loanId);
   const amortizationQuery = useLoanAmortizationSchedule(loanId, {
@@ -93,7 +98,7 @@ export function LoanDetailsPageClient() {
   const normalizedStatus = String(loan.status).toLowerCase();
   const canManageApprovedLoan = normalizedStatus === "approved" || normalizedStatus === "active";
 
-  function exportCsv() {
+  async function exportCsv() {
     const sourceEvents = events ?? loanData.events;
     const rows = sourceEvents.map((event) => ({
       date: event.timestamp,
@@ -104,25 +109,26 @@ export function LoanDetailsPageClient() {
       transactionHash: event.txHash ?? "",
     }));
 
-    downloadCsv(`loan-${loanId}.csv`, rowsToCsv(rows));
+    setExportError(null);
+    setIsExporting(true);
+    try {
+      await downloadSignedCsv({
+        filename: `loan-${loanId}.csv`,
+        csv: rowsToCsv(rows),
+        sourceType: "loan_events",
+        sourceCheckpoint: `loan-events:${loanId}:${sourceEvents[0]?.id ?? sourceEvents[0]?.timestamp ?? "empty"}`,
+        rowCount: rows.length,
+      });
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "Statement export failed.");
+    } finally {
+      setIsExporting(false);
+    }
   }
 
   return (
     <section className="space-y-6">
-      <nav
-        aria-label="Breadcrumb"
-        className="flex items-center gap-1.5 text-sm text-zinc-500 dark:text-zinc-400"
-      >
-        <Link href="/" className="hover:text-zinc-900 dark:hover:text-zinc-100 transition">
-          Home
-        </Link>
-        <ChevronRight className="h-3.5 w-3.5" />
-        <Link href="/loans" className="hover:text-zinc-900 dark:hover:text-zinc-100 transition">
-          Loans
-        </Link>
-        <ChevronRight className="h-3.5 w-3.5" />
-        <span className="font-medium text-zinc-900 dark:text-zinc-50">Loan #{loanId}</span>
-      </nav>
+      <Breadcrumbs />
 
       <header className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm shadow-zinc-200/50 dark:border-zinc-800 dark:bg-zinc-950 dark:shadow-none">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -165,10 +171,10 @@ export function LoanDetailsPageClient() {
           <button
             type="button"
             onClick={exportCsv}
-            disabled={!events || events.length === 0}
+            disabled={!events || events.length === 0 || isExporting}
             className="inline-flex items-center justify-center rounded-full border border-zinc-300 bg-white px-4 py-2 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
           >
-            Export CSV
+            {isExporting ? "Signing…" : "Export CSV"}
           </button>
         </div>
 
@@ -199,6 +205,13 @@ export function LoanDetailsPageClient() {
           )}
         </div>
       </header>
+
+      {exportError ? (
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+          {exportError}
+        </p>
+      ) : null}
+      <StatementVerificationNotice />
 
       <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
         <article className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm shadow-zinc-200/50 dark:border-zinc-800 dark:bg-zinc-950 dark:shadow-none">

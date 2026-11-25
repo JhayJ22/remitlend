@@ -9,8 +9,11 @@ import { ErrorBoundary } from "../../components/global_ui/ErrorBoundary";
 import { StatusIndicator } from "../../components/ui/StatusIndicator";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ActivitySkeleton } from "../../components/skeletons/ActivitySkeleton";
-import { downloadCsv, rowsToCsv } from "../../utils/csv";
+import { rowsToCsv } from "../../utils/csv";
+import { downloadSignedCsv } from "../../utils/statementExport";
+import { StatementVerificationNotice } from "../../components/security/StatementVerificationNotice";
 import { useWindowedList } from "../../hooks/useWindowedList";
+import { TransactionHistory } from "../../components/activity/TransactionHistory";
 
 type FilterType = "all" | "loan" | "remittance";
 
@@ -52,6 +55,8 @@ export default function ActivityPage() {
   const isConnected = useWalletStore(selectIsWalletConnected);
   const [currentPage, setCurrentPage] = useState(1);
   const [filterType, setFilterType] = useState<FilterType>("all");
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const { data: loans = [], isLoading: loansLoading } = useLoans({ enabled: isConnected });
   const { data: remittances = [], isLoading: remittancesLoading } = useRemittances({
@@ -130,7 +135,7 @@ export default function ActivityPage() {
   } = useWindowedList({
     itemCount: allActivity.length,
     itemHeight: ACTIVITY_ROW_HEIGHT,
-    overscan: 100,
+    overscan: 5,
   });
 
   // Preserve scroll position across re-renders, reset it only on filter change.
@@ -144,7 +149,7 @@ export default function ActivityPage() {
 
   const windowedActivity = allActivity.slice(vStart, vEnd + 1);
 
-  function handleExportCsv() {
+  async function handleExportCsv() {
     const today = new Date().toISOString().split("T")[0];
     const rows = allActivity.map((item) => ({
       date: formatDate(item.timestamp),
@@ -156,7 +161,21 @@ export default function ActivityPage() {
         ? `https://stellar.expert/explorer/public/tx/${item.txHash}`
         : "",
     }));
-    downloadCsv(`remitlend-activity-${today}.csv`, rowsToCsv(rows));
+    setExportError(null);
+    setIsExporting(true);
+    try {
+      await downloadSignedCsv({
+        filename: `remitlend-activity-${today}.csv`,
+        csv: rowsToCsv(rows),
+        sourceType: "activity",
+        sourceCheckpoint: `api:${allActivity.length}:${allActivity[0]?.timestamp ?? "empty"}`,
+        rowCount: rows.length,
+      });
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "Statement export failed.");
+    } finally {
+      setIsExporting(false);
+    }
   }
 
   if (!isConnected) {
@@ -192,12 +211,19 @@ export default function ActivityPage() {
         <button
           type="button"
           onClick={handleExportCsv}
-          disabled={allActivity.length === 0 || isLoading}
+          disabled={allActivity.length === 0 || isLoading || isExporting}
           className="inline-flex items-center justify-center rounded-full border border-zinc-300 bg-white px-4 py-2 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
         >
-          Export CSV
+          {isExporting ? "Signing…" : "Export CSV"}
         </button>
       </header>
+
+      {exportError ? (
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+          {exportError}
+        </p>
+      ) : null}
+      <StatementVerificationNotice />
 
       <ErrorBoundary scope="activity filters" variant="section">
         <div className="flex flex-wrap gap-3 pb-4 border-b border-zinc-200 dark:border-zinc-800">
@@ -413,6 +439,10 @@ export default function ActivityPage() {
           </div>
         </ErrorBoundary>
       )}
+
+      <ErrorBoundary scope="on-chain transactions" variant="section">
+        <TransactionHistory />
+      </ErrorBoundary>
     </main>
   );
 }

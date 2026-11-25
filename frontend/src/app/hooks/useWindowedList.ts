@@ -21,8 +21,18 @@ export interface UseWindowedListOptions {
   itemCount: number;
   /** Fixed rendered height of a single row, in pixels. */
   itemHeight: number;
-  /** Rows to render outside the viewport on each side. Defaults to 100. */
+  /** Rows to render outside the viewport on each side. Defaults to 5. */
   overscan?: number;
+  /**
+   * When set, scrollTop is saved to sessionStorage under this key and restored
+   * on mount, so back-navigation from a detail page returns to the same spot.
+   */
+  storageKey?: string;
+}
+
+/** ARIA attributes announcing the full list size and each row's position. */
+export function windowedItemAria(index: number, total: number) {
+  return { "aria-setsize": total, "aria-posinset": index + 1 } as const;
 }
 
 export interface WindowedRange {
@@ -43,7 +53,8 @@ export interface WindowedRange {
 export function useWindowedList({
   itemCount,
   itemHeight,
-  overscan = 100,
+  overscan = 5,
+  storageKey,
 }: UseWindowedListOptions): WindowedRange {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -56,7 +67,28 @@ export function useWindowedList({
     const measure = () => setViewportHeight(node.clientHeight);
     measure();
 
-    const onScroll = () => setScrollTop(node.scrollTop);
+    if (storageKey) {
+      try {
+        const saved = Number(window.sessionStorage.getItem(`windowed:${storageKey}`));
+        if (Number.isFinite(saved) && saved > 0) {
+          node.scrollTop = saved;
+          setScrollTop(saved);
+        }
+      } catch {
+        /* storage unavailable */
+      }
+    }
+
+    const onScroll = () => {
+      setScrollTop(node.scrollTop);
+      if (storageKey) {
+        try {
+          window.sessionStorage.setItem(`windowed:${storageKey}`, String(node.scrollTop));
+        } catch {
+          /* storage unavailable */
+        }
+      }
+    };
     node.addEventListener("scroll", onScroll, { passive: true });
 
     const resizeObserver =
@@ -67,7 +99,7 @@ export function useWindowedList({
       node.removeEventListener("scroll", onScroll);
       resizeObserver?.disconnect();
     };
-  }, []);
+  }, [storageKey]);
 
   const scrollTo = useCallback((next: number) => {
     const node = containerRef.current;

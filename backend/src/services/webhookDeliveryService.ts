@@ -33,6 +33,7 @@ export async function sendWebhook(delivery: WebhookDelivery): Promise<void> {
         'Content-Type': 'application/json',
         'x-remitlend-signature': signature,
         'x-remitlend-timestamp': timestamp,
+        'X-Consumer-Certified': 'false',
         // Continue the caller's trace (indexer pass or API request) into the
         // subscriber's logs (#414). Uses a child span so the delivery hop is
         // distinguishable from the work that triggered it.

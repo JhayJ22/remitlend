@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "terms": [
+    {
+      "id": "net-worth",
+      "source": "Net Worth",
+      "definition": "Assets minus liabilities. A dashboard statistic, not a credit score.",
+      "doNotTranslate": false,
+      "renderings": { "en": "Net Worth", "es": "Valor neto", "tl": "Netong Halaga" }
+    },
+    {
+      "id": "remittance",
+      "source": "Remittance",
+      "definition": "A cross-border transfer of funds sent by a user to a recipient.",
+      "doNotTranslate": false,
+      "renderings": { "en": "Remittance", "es": "Remesa", "tl": "Padala" }
+    },
+    {
+      "id": "apy",
+      "source": "APY",
+      "definition": "Annual percentage yield. The abbreviation is a regulated financial term and stays verbatim in all locales.",
+      "doNotTranslate": true,
+      "renderings": { "en": "APY", "es": "APY", "tl": "APY" }
+    },
+    {
+      "id": "repayment",
+      "source": "Repayment",
+      "definition": "A scheduled payment that reduces an outstanding loan balance.",
+      "doNotTranslate": false,
+      "renderings": { "en": "Repayment", "es": "Pago", "tl": "Pagbabayad" }
+    },
+    {
+      "id": "loan",
+      "source": "Loan",
+      "definition": "A facility identified by a numeric identifier in reminders and notifications.",
+      "doNotTranslate": true,
+      "renderings": { "en": "Loan", "es": "Préstamo", "tl": "Loan" }
+    },
+    {
+      "id": "total-owed",
+      "source": "Total Owed",
+      "definition": "Principal plus accrued interest currently due on a loan.",
+      "doNotTranslate": false,
+      "renderings": { "en": "Total Owed", "es": "Total adeudado", "tl": "Kabuuang Utang" }
+    },
+    {
+      "id": "principal",
+      "source": "Principal",
+      "definition": "Original amount borrowed, excluding interest and fees.",
+      "doNotTranslate": false,
+      "renderings": { "en": "Principal", "es": "Principal", "tl": "Pangunahing Halaga" }
+    },
+    {
+      "id": "interest",
+      "source": "Interest",
+      "definition": "Cost of borrowing. Distinguish the accumulated amount from the rate.",
+      "doNotTranslate": false,
+      "renderings": { "en": "Interest", "es": "Interés", "tl": "Interes" }
+    },
+    {
+      "id": "accrued-interest",
+      "source": "Accrued Interest",
+      "definition": "Interest accumulated on an active loan up to the current ledger.",
+      "doNotTranslate": false,
+      "renderings": {
+        "en": "Accrued Interest",
+        "es": "Interés acumulado",
+        "tl": "Naipon na Interes"
+      }
+    },
+    {
+      "id": "repayment-window",
+      "source": "Repayment Window",
+      "definition": "The period in which a scheduled repayment is expected or was due.",
+      "doNotTranslate": false,
+      "renderings": {
+        "en": "Repayment Window",
+        "es": "Plazo de pago",
+        "tl": "Panahon ng pagbabayad"
+      }
+    },
+    {
+      "id": "overdue",
+      "source": "Overdue",
+      "definition": "Past the repayment deadline. Distinct from 'defaulted'.",
+      "doNotTranslate": false,
+      "renderings": { "en": "Overdue", "es": "Vencido", "tl": "Lintasan" }
+    },
+    {
+      "id": "outstanding-balance",
+      "source": "Outstanding Balance",
+      "definition": "Remaining amount owed across one or more active loans.",
+      "doNotTranslate": false,
+      "renderings": {
+        "en": "Outstanding Balance",
+        "es": "Saldo pendiente",
+        "tl": "Natitirang Balanse"
+      }
+    }
+  ]
+}

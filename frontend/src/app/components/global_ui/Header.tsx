@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 import { Menu, Search, User, Wallet, HelpCircle } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { ThemeToggle } from "../ui/ThemeToggle";
+import { ThemeSwitcher } from "./ThemeSwitcher";
 import { NotificationDropdown } from "./NotificationDropdown";
 import { RecentTransactionsDrawer } from "../transaction/RecentTransactionsDrawer";
 import { useWalletStore } from "../../stores/useWalletStore";
@@ -22,7 +22,13 @@ import { useLoans, useRemittances } from "../../hooks/useApi";
 import { useContractToast } from "../../hooks/useContractToast";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { useTranslations, useLocale } from "next-intl";
-import { useKeyboardShortcuts, createGlobalShortcuts, createNavigationShortcuts, createWalletShortcuts, createSearchShortcut } from "../../hooks/useKeyboardShortcuts";
+import {
+  useKeyboardShortcuts,
+  createGlobalShortcuts,
+  createNavigationShortcuts,
+  createWalletShortcuts,
+  createSearchShortcut,
+} from "../../hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsHelp } from "../ui/KeyboardShortcutsHelp";
 import { DisconnectWalletDialog } from "./DisconnectWalletDialog";
 import { useDisconnectWallet } from "../../hooks/useDisconnectWallet";
@@ -51,8 +57,15 @@ export function Header({ onMenuClick, className }: HeaderProps) {
   const isConnected = useWalletStore((state) => state.status === "connected");
   const walletAddress = useWalletStore((state) => state.address);
   const { connectWallet, disconnectWallet } = useWallet();
-  const { isConfirmOpen, requestDisconnect, cancelDisconnect, confirmDisconnect } =
-    useDisconnectWallet(`/${locale}`);
+  const {
+    isConfirmOpen,
+    isDisconnecting,
+    pendingQueueCount,
+    inFlightMutationCount,
+    requestDisconnect,
+    cancelDisconnect,
+    confirmDisconnect,
+  } = useDisconnectWallet(`/${locale}`);
   const user = useUserStore((state) => state.user);
   const gamificationStore = useGamificationStore();
   const toast = useContractToast();
@@ -409,7 +422,7 @@ export function Header({ onMenuClick, className }: HeaderProps) {
 
         <div className="h-8 w-px bg-zinc-200 dark:bg-zinc-800 hidden sm:block" />
 
-        <ThemeToggle />
+        <ThemeSwitcher />
 
         <RecentTransactionsDrawer />
 
@@ -454,6 +467,9 @@ export function Header({ onMenuClick, className }: HeaderProps) {
         isOpen={isConfirmOpen}
         onCancel={cancelDisconnect}
         onConfirm={handleConfirmDisconnect}
+        pendingQueueCount={pendingQueueCount}
+        inFlightMutationCount={inFlightMutationCount}
+        isDisconnecting={isDisconnecting}
       />
     </header>
   );

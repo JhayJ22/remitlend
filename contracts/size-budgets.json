@@ -44,6 +44,13 @@
     "Budgets are per-function averages based on contract complexity",
     "Total size budget of 256 KiB is enforced by CI",
     "Adjust per-function budgets if optimization requirements change",
-    "Use scripts/analyze-contract-sizes.sh to analyze actual sizes"
-  ]
+    "Use scripts/analyze-contract-sizes.sh to analyze actual sizes",
+    "wasm_budgets_bytes holds the enforced per-WASM byte budgets (scripts/check-wasm-size-budgets.sh); re-baseline with --update (size + 10%)"
+  ],
+  "wasm_budgets_bytes": {
+    "lending_pool": 262144,
+    "loan_manager": 262144,
+    "multisig_governance": 262144,
+    "remittance_nft": 262144
+  }
 }

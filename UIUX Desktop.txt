@@ -1,3 +1,34 @@
 worked on the Desktop veersion omf Mobile UIUX Redesign 
 
 https://www.figma.com/design/3WvDt5wvKog3b85KT09KLX/REMIT-LEND?node-id=8-574&t=XfRD5blXkIb5CUg2-0
+
+---
+
+Transaction Recovery — Accessibility Verification (issue #844)
+
+Scope: verify accessible transaction recovery across 200–400% zoom and narrow viewport reflow.
+
+Supported recovery states (explicit user-visible messaging + safe primary action):
+- pending   — "Your transaction is still processing." Primary: Refresh status (secondary: Cancel if still cancellable).
+- expired   — "This transaction request expired before it was submitted." Primary: Start new transaction (no retry of stale request).
+- rejected  — "This transaction was rejected. No funds were moved." Primary: Dismiss (secondary: Review details).
+- failed    — "This transaction failed. No funds were moved." Primary: Retry (idempotent, same request id) (secondary: Dismiss).
+
+Reflow / zoom requirements (200%, 300%, 400% and narrow widths):
+- Safe primary action stays visible and reachable without horizontal scrolling or clipping.
+- Content reflows to a single column; no fixed-width containers that force horizontal scroll.
+- Text remains readable at 400% zoom (WCAG 1.4.4 / 1.4.10 reflow).
+
+Keyboard focus requirements:
+- Focus is preserved across state transitions and reflow.
+- After a recovery action, focus is restored to a sensible target (status heading or primary action).
+- No focus traps; all actions reachable via keyboard in logical order.
+
+Stale / invalid action handling:
+- Actions that are no longer valid for the current state are disabled or hidden.
+- Stale recovery actions are rejected in the UI without triggering partial financial side effects.
+
+Validation evidence to capture in the implementation PR:
+- Screenshots at 200%, 300%, 400% zoom and narrow viewport for each of the four states.
+- Keyboard-only walkthrough notes (focus order, focus restoration, no traps).
+- Confirmation that stale actions are disabled/hidden and produce no financial side effects.

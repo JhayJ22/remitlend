@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Modal } from "../ui/Modal";
 
 interface Props {
   open: boolean;
@@ -23,16 +24,16 @@ export default function CollateralActionModal({
 
   const exceedsBalance = balance !== undefined && Number(amount) > balance;
 
-  if (!open) return null;
-
+  // Rendered through Modal: centered dialog on desktop, BottomSheet on mobile,
+  // with focus trap + Escape dismissal in both.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-        <h2 className="text-xl font-semibold">{title}</h2>
-
-        <div className="mt-4">
+    <Modal isOpen={open} onClose={onClose} title={title} size="md">
+      <div>
+        <div>
           <input
             type="number"
+            inputMode="decimal"
+            aria-label="Amount"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0.00"
@@ -62,6 +63,6 @@ export default function CollateralActionModal({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

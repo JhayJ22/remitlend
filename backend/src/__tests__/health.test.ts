@@ -66,3 +66,15 @@ describe('GET /health', () => {
     expect(typeof response.body.timestamp).toBe('number');
   });
 });
+
+describe('GET /healthz/ready (#797)', () => {
+  it('returns 200 ready when the database and redis are reachable', async () => {
+    const response = await request(app).get('/healthz/ready');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      status: 'ready',
+      checks: { database: 'ok', redis: 'ok' },
+    });
+  });
+});

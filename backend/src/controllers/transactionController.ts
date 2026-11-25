@@ -1,12 +1,20 @@
 import type { Request, Response } from 'express';
-import { query } from '../db/connection.js';
+import pool, { query } from '../db/connection.js';
 import { AppError } from '../errors/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import {
-  createDiagnosticBundle as createDiagnosticBundleService,
-  getDiagnosticBundle as getDiagnosticBundleService,
-  deleteDiagnosticBundle as deleteDiagnosticBundleService,
+  DiagnosticBundleError,
+  DiagnosticBundleService,
 } from '../services/diagnosticBundleService.js';
+
+const diagnosticBundles = new DiagnosticBundleService(pool);
+
+function translateDiagnosticError(error: unknown): never {
+  if (error instanceof DiagnosticBundleError) {
+    throw new AppError(error.message, error.statusCode, true);
+  }
+  throw error;
+}
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 500;
@@ -94,13 +102,17 @@ export const createDiagnosticBundle = asyncHandler(async (req: Request, res: Res
     throw AppError.badRequest('Transaction reference is required');
   }
 
-  const bundle = await createDiagnosticBundleService(publicKey, transactionRef);
+  let bundle: Awaited<ReturnType<DiagnosticBundleService['createDiagnosticBundle']>>;
+  try {
+    bundle = await diagnosticBundles.createDiagnosticBundle(transactionRef, publicKey);
+  } catch (error) {
+    translateDiagnosticError(error);
+  }
 
-  // Never return bundle contents from the create response; only the handle and expiry.
   res.status(201).json({
     success: true,
     data: {
-      id: bundle.id,
+      id: bundle.bundleId,
       expiresAt: bundle.expiresAt,
     },
   });
@@ -117,21 +129,20 @@ export const getDiagnosticBundle = asyncHandler(async (req: Request, res: Respon
     throw AppError.badRequest('Bundle id is required');
   }
 
-  const bundle = await getDiagnosticBundleService(publicKey, bundleId);
-  if (!bundle) {
-    throw AppError.notFound('Diagnostic bundle not found');
-  }
-  if (bundle.expired) {
-    throw AppError.gone('Diagnostic bundle has expired');
+  let bundle: Awaited<ReturnType<DiagnosticBundleService['getDiagnosticBundle']>>;
+  try {
+    bundle = await diagnosticBundles.getDiagnosticBundle(bundleId, publicKey);
+  } catch (error) {
+    translateDiagnosticError(error);
   }
 
   res.json({
     success: true,
     data: {
-      id: bundle.id,
+      id: bundle.bundleId,
       createdAt: bundle.createdAt,
       expiresAt: bundle.expiresAt,
-      contents: bundle.contents,
+      contents: bundle,
     },
   });
 });
@@ -147,9 +158,10 @@ export const deleteDiagnosticBundle = asyncHandler(async (req: Request, res: Res
     throw AppError.badRequest('Bundle id is required');
   }
 
-  const deleted = await deleteDiagnosticBundleService(publicKey, bundleId);
-  if (!deleted) {
-    throw AppError.notFound('Diagnostic bundle not found');
+  try {
+    await diagnosticBundles.deleteDiagnosticBundle(bundleId, publicKey);
+  } catch (error) {
+    translateDiagnosticError(error);
   }
 
   res.status(204).send();

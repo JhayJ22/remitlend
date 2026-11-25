@@ -17,7 +17,7 @@ export interface QueryBudgetLimits {
 }
 
 export const DEFAULT_QUERY_BUDGET: QueryBudgetLimits = {
-  maxDepth: 6,
+  maxDepth: 7,
   maxAliases: 10,
   maxCost: 1000,
 };
@@ -116,7 +116,10 @@ export const measureOperation = (
   return { depth: maxDepth, aliases, cost };
 };
 
-/** Validation rule: runs before execution, so no resolver or database work happens on rejection. */
+/**
+ * Validation rule: runs before execution, so no resolver or database work happens on rejection.
+ * express-graphql answers validation failures with HTTP 400.
+ */
 export const createQueryBudgetRule =
   (limits: QueryBudgetLimits, correlationId: string): ValidationRule =>
   (context) => ({
@@ -124,13 +127,26 @@ export const createQueryBudgetRule =
       const rootType = context.getSchema().getQueryType();
       if (node.operation !== 'query' || !rootType) return;
       const m = measureOperation(context, node.selectionSet, rootType);
-      if (m.depth > limits.maxDepth || m.aliases > limits.maxAliases || m.cost > limits.maxCost) {
-        // Generic message only: no schema internals or measured values are exposed.
+      const exceeded =
+        m.depth > limits.maxDepth
+          ? { dimension: 'depth', actual: m.depth, limit: limits.maxDepth }
+          : m.aliases > limits.maxAliases
+            ? { dimension: 'aliases', actual: m.aliases, limit: limits.maxAliases }
+            : m.cost > limits.maxCost
+              ? { dimension: 'complexity', actual: m.cost, limit: limits.maxCost }
+              : null;
+      if (exceeded) {
         context.reportError(
           new GraphQLError(
-            `Query exceeds the allowed complexity budget. (code: QUERY_BUDGET_EXCEEDED, correlationId: ${correlationId})`,
+            `Query exceeds the allowed ${exceeded.dimension} budget. (code: QUERY_COMPLEXITY_EXCEEDED, correlationId: ${correlationId})`,
             {
-              extensions: { code: 'QUERY_BUDGET_EXCEEDED', correlationId },
+              extensions: {
+                code: 'QUERY_COMPLEXITY_EXCEEDED',
+                actual: exceeded.actual,
+                limit: exceeded.limit,
+                dimension: exceeded.dimension,
+                correlationId,
+              },
             },
           ),
         );

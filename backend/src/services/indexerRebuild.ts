@@ -163,6 +163,11 @@ export async function validateRebuild(id: number): Promise<{ ok: boolean; reason
   );
   const digest = digestRows(shadow);
   if (shadow.length !== live.length || digest !== digestRows(live)) {
+    logger.error('CRITICAL: shadow index diverged from primary index', {
+      rebuildId: id,
+      shadowCount: shadow.length,
+      liveCount: live.length,
+    });
     const reason = `Comparison failed: shadow=${shadow.length} live=${live.length}`;
     await query(`UPDATE indexer_rebuilds SET status='failed', failure_reason=$2 WHERE id=$1`, [id, reason]);
     return { ok: false, reason };

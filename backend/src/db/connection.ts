@@ -17,9 +17,9 @@ const { Pool } = pg;
 // Parse pool configuration from environment
 const maxPoolSize = process.env.DB_POOL_MAX ? parseInt(process.env.DB_POOL_MAX, 10) : 10;
 const minPoolSize = process.env.DB_POOL_MIN ? parseInt(process.env.DB_POOL_MIN, 10) : 2;
-const idleTimeoutMillis = process.env.DB_IDLE_TIMEOUT_MS
-  ? parseInt(process.env.DB_IDLE_TIMEOUT_MS, 10)
-  : 30000;
+const idleTimeoutMillis = process.env.DB_POOL_IDLE_TIMEOUT_MS
+  ? parseInt(process.env.DB_POOL_IDLE_TIMEOUT_MS, 10)
+  : (process.env.DB_IDLE_TIMEOUT_MS ? parseInt(process.env.DB_IDLE_TIMEOUT_MS, 10) : 30000);
 const connectionTimeoutMillis = process.env.DB_CONN_TIMEOUT_MS
   ? parseInt(process.env.DB_CONN_TIMEOUT_MS, 10)
   : 5000; // bounded pool wait deadline (also the connect timeout)

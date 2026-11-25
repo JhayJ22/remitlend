@@ -3,7 +3,9 @@ import { query } from '../db/connection.js';
 import { AppError } from '../errors/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import logger from '../utils/logger.js';
+import { sanitizeText } from '../utils/sanitize.js';
 import { notificationService } from '../services/notificationService.js';
+import { recordDisputeTransition } from '../services/disputeStateMachine.js';
 import { emitLoanStateEvent } from '../services/loanStateEventStore.js';
 
 /**
@@ -14,11 +16,15 @@ import { emitLoanStateEvent } from '../services/loanStateEventStore.js';
 export const contestDefault = asyncHandler(
   async (req: Request, res: Response, _next: NextFunction) => {
     const loanId = req.params.loanId as string;
-    const { reason } = req.body as { reason: string };
+    const rawReason = (req.body as { reason?: string }).reason;
+    const reason = sanitizeText(rawReason);
     const borrower = req.user?.publicKey;
 
     if (!reason || reason.trim().length < 5) {
       throw AppError.badRequest('A valid reason for contesting is required.');
+    }
+    if (reason.length > 1000) {
+      throw AppError.badRequest('Reason cannot exceed 1000 characters.');
     }
     if (!borrower) {
       throw AppError.unauthorized('Authentication required');
@@ -38,6 +44,14 @@ export const contestDefault = asyncHandler(
       `INSERT INTO loan_disputes (loan_id, borrower, reason, status) VALUES ($1, $2, $3, 'open') RETURNING id`,
       [loanId, borrower, reason],
     );
+
+    await recordDisputeTransition({
+      actor: borrower,
+      disputeId: disputeResult.rows[0].id,
+      from: 'none',
+      to: 'open',
+      note: reason,
+    });
 
     await query(
       `INSERT INTO contract_events (loan_id, address, event_type, amount, ledger, ledger_closed_at) VALUES ($1, $2, 'LoanDisputed', NULL, NULL, NOW())`,

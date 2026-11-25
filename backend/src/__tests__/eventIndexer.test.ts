@@ -37,6 +37,7 @@ const supportedWebhookEventTypes = [
   'ScoreUpdated',
   'NFTSeized',
   'NFTBurned',
+  'NFTTransferred',
   'ProposalCreated',
   'ProposalApproved',
   'ProposalFinalized',
@@ -525,6 +526,71 @@ describe('EventIndexer', () => {
     expect(mockDispatch).toHaveBeenCalledTimes(9);
     expect(mockBroadcast).toHaveBeenCalledTimes(9);
     expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  it('indexes NFT transfer and score_updated events into nft_transfer_events with corridor', async () => {
+    const from = makeAddress();
+    const to = makeAddress();
+    const nftInserts: unknown[][] = [];
+
+    mockQuery.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('INSERT INTO loan_events')) {
+        return { rows: [{ event_id: params[0] }], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO nft_transfer_events')) {
+        nftInserts.push(params);
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    const indexer = new EventIndexer({ rpcUrl: 'https://rpc.test', contractId: 'CINDEXERTEST' });
+    const base = {
+      pagingToken: '1',
+      ledger: 90,
+      ledgerClosedAt: '2026-03-29T00:00:00.000Z',
+      contractId: 'CINDEXERTEST',
+    };
+
+    await indexer.ingestRawEvents([
+      {
+        ...base,
+        id: 'evt-nft-transfer',
+        txHash: 'tx-nft-transfer',
+        topic: [scSymbol('NftTransferred')],
+        value: nativeToScVal({
+          from,
+          to,
+          score: 700,
+          metadata: { source_country: 'us', destination_country: 'ng', amount: 2500 },
+        }),
+      },
+      {
+        ...base,
+        id: 'evt-nft-score',
+        txHash: 'tx-nft-score',
+        topic: [scSymbol('ScoreUpd'), scAddress(to)],
+        value: scI128(710),
+      },
+    ] as never);
+
+    const transfer = nftInserts.find((p) => p[4] === 'transfer');
+    expect(transfer).toBeDefined();
+    expect(transfer?.slice(0, 4)).toEqual([from, to, 700, 90]);
+    expect(transfer?.[5]).toBe('tx-nft-transfer');
+    expect(transfer?.[8]).toBe('US-NG'); // corridor
+    expect(transfer?.[9]).toBe('2500'); // amount
+
+    const scoreEvt = nftInserts.find((p) => p[4] === 'score_updated');
+    expect(scoreEvt?.[0]).toBe(to);
+    expect(scoreEvt?.[2]).toBe(710);
+  });
+
+  it('extractTransferMetadata builds the corridor pair', async () => {
+    const { extractTransferMetadata } = await import('../services/transferHistoryService.js');
+    expect(
+      extractTransferMetadata({ source_country: 'ph', destinationCountry: 'sa', amount: 5 }),
+    ).toEqual({ sourceCountry: 'PH', destinationCountry: 'SA', corridor: 'PH-SA', amount: '5' });
+    expect(extractTransferMetadata({}).corridor).toBeNull();
   });
 
   it('deduplicates repeated events and only triggers side effects for inserted rows', async () => {

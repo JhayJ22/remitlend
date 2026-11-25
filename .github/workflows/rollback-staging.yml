@@ -1,0 +1,64 @@
+name: Rollback Staging
+
+# Manual blue-green rollback (#797). Swaps traffic back to the previous slot
+# kept running by deploy-staging.yml. The previous slot is smoke-tested first;
+# if it fails, traffic is NOT switched.
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why are you rolling back? (recorded in the run summary)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      SSH_TARGET: ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}
+      DEPLOY_DIR: ${{ vars.STAGING_DEPLOY_DIR || '/opt/remitlend' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure SSH
+        run: |
+          set -e
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.STAGING_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          printf 'Host *\n  IdentityFile ~/.ssh/deploy_key\n  StrictHostKeyChecking yes\n' > ~/.ssh/config
+
+      - name: Swap traffic back to the previous slot
+        id: swap
+        run: |
+          set -e
+          bg() { ssh "$SSH_TARGET" "DEPLOY_DIR='$DEPLOY_DIR' bash -s -- $*" < scripts/deploy/blue-green.sh; }
+          before=$(bg active)
+          bg rollback
+          after=$(bg active)
+          echo "before=${before}" >> "$GITHUB_OUTPUT"
+          echo "after=${after}" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always()
+        env:
+          REASON: ${{ inputs.reason }}
+        run: |
+          {
+            echo "## Staging rollback"
+            echo ""
+            echo "- Triggered by: @${GITHUB_ACTOR}"
+            echo "- Reason: ${REASON}"
+            echo "- Live slot: ${{ steps.swap.outputs.before || 'unknown' }} → ${{ steps.swap.outputs.after || 'unchanged' }}"
+            echo "- Outcome: ${{ steps.swap.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"

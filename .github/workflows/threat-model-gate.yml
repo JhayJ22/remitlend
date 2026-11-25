@@ -1,0 +1,82 @@
+# Threat-model refresh gate for changed trust boundaries (issue #856).
+#
+# On every pull request against main, this workflow:
+#   1. Computes the diff of changed files against the base branch.
+#   2. Runs check-trust-boundaries.mjs to classify files against the
+#      wallet / provider / api / contract / infra boundary pattern map.
+#   3. Fails the PR if any touched boundary does not have a current
+#      approved review in docs/THREAT_MODEL_REVIEW_STATUS.json
+#      (i.e. an approved review within the last 365 days).
+#
+# Override: set repository secret THREAT_MODEL_GATE_OVERRIDE=true to
+# bypass the gate for a specific run (creates an audit trail in the logs).
+# This is an emergency escape — it must be followed by a proper review.
+#
+# Review workflow:
+#   1. Admin initiates review: POST /admin/threat-model/reviews
+#   2. Second admin approves: POST /admin/threat-model/reviews/:id/approve
+#   3. Commit the updated docs/THREAT_MODEL_REVIEW_STATUS.json into the PR.
+
+name: Threat-Model Refresh Gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      files:
+        description: 'Comma-separated file paths to check (optional; defaults to PR diff)'
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  threat-model-gate:
+    name: Trust-boundary change inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Compute changed files
+        id: diff
+        run: |
+          if [ -n "${{ github.event.inputs.files }}" ]; then
+            # Manual dispatch: use provided file list.
+            echo "${{ github.event.inputs.files }}" | tr ',' '\n' > /tmp/changed_files.txt
+          else
+            # PR: diff against the merge base.
+            git diff --name-only origin/${{ github.base_ref }}...HEAD > /tmp/changed_files.txt
+          fi
+          echo "Changed files:"
+          cat /tmp/changed_files.txt
+          echo "file_count=$(wc -l < /tmp/changed_files.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Run trust-boundary gate check
+        id: gate
+        env:
+          THREAT_MODEL_GATE_OVERRIDE: ${{ secrets.THREAT_MODEL_GATE_OVERRIDE || 'false' }}
+        run: |
+          cat /tmp/changed_files.txt | node scripts/check-trust-boundaries.mjs > /tmp/gate_result.json
+          EXIT_CODE=$?
+          echo "result=$(cat /tmp/gate_result.json | head -c 4000)" >> "$GITHUB_OUTPUT"
+          exit $EXIT_CODE
+
+      - name: Annotate PR with gate result
+        if: always()
+        run: |
+          echo "### Trust-boundary gate result" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/gate_result.json 2>/dev/null || echo '{}' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "To pass the gate: initiate and approve a threat-model review via the admin API," >> "$GITHUB_STEP_SUMMARY"
+          echo "then commit the updated \`docs/THREAT_MODEL_REVIEW_STATUS.json\`." >> "$GITHUB_STEP_SUMMARY"

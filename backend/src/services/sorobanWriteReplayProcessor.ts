@@ -7,6 +7,8 @@ import {
   type SorobanWriteQueue,
 } from './sorobanWriteQueue.js';
 import { sorobanService } from './sorobanService.js';
+import { evaluateRetryStorm } from './retryStormAlertService.js';
+import { recordDeadLetter } from './networkTelemetryService.js';
 
 const JOB_NAME = 'sorobanWriteReplay';
 
@@ -87,19 +89,52 @@ export async function runSorobanWriteReplayOnce(
         result.applied += 1;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const nextAttemptAt = await queue.markFailed(write.id, message, write.attempts + 1);
-        result.failed += 1;
+        const nextAttempts = write.attempts + 1;
 
-        logger.withContext().warn('Soroban write replay failed; scheduled for retry', {
-          id: write.id,
-          operation: write.operation,
-          nextAttemptAt: nextAttemptAt.toISOString(),
-          error: message,
-        });
+        // Bounded retries (#857): dead-letter once the write exhausts its
+        // configured max-attempts ceiling, so the replay loop can never
+        // retry-storm forever. The signed payload is preserved for re-drive.
+        if (queue.shouldDeadLetter(write, nextAttempts)) {
+          await queue.markDeadLetter(
+            write.id,
+            `exhausted ${write.maxAttempts} bounded attempts: ${message}`,
+          );
+          recordDeadLetter();
+          logger.withContext().error('Soroban write dead-lettered after exhausting bounded retries', {
+            id: write.id,
+            operation: write.operation,
+            attempts: nextAttempts,
+            maxAttempts: write.maxAttempts,
+            error: message,
+          });
+        } else {
+          const nextAttemptAt = await queue.markFailed(write.id, message, nextAttempts);
+          logger.withContext().warn('Soroban write replay failed; scheduled for retry', {
+            id: write.id,
+            operation: write.operation,
+            nextAttemptAt: nextAttemptAt.toISOString(),
+            attempts: nextAttempts,
+            error: message,
+          });
+        }
+
+        result.failed += 1;
 
         // Preserve strict ordering: stop so a later write cannot overtake this one.
         break;
       }
+    }
+
+    // Backpressure may have changed (queue grew or shrank); re-evaluate the
+    // retry-storm alert. Debounced internally so this is cheap per pass.
+    try {
+      await evaluateRetryStorm();
+    } catch (error) {
+      logger
+        .withContext()
+        .warn('Retry-storm evaluation failed during replay pass', {
+          error: error instanceof Error ? error.message : String(error),
+        });
     }
 
     return result;

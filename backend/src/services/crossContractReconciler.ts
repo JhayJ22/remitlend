@@ -2,6 +2,8 @@ import { query } from '../db/connection.js';
 import { setAbsoluteUserScoresBulk } from './scoresService.js';
 import { sorobanService } from './sorobanService.js';
 import { jobMetricsService } from './jobMetricsService.js';
+import cron, { type ScheduledTask } from 'node-cron';
+import { emitCriticalAlert } from './failoverAlertService.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -285,11 +287,116 @@ class CrossContractReconciler {
 
 export const crossContractReconciler = new CrossContractReconciler();
 
-let interval: ReturnType<typeof setInterval> | undefined;
+export const DEFAULT_RECONCILER_CRON = '0 * * * *';
+export const RECONCILIATION_AUDIT_ACTION = 'cross_contract_reconciliation';
+/** A divergence persisting for MORE than this many consecutive runs raises a CRITICAL alert. */
+export const PERSISTENT_DIVERGENCE_RUNS = 2;
+
+export function getReconcilerCronSchedule(): string {
+  return process.env.RECONCILER_CRON_SCHEDULE?.trim() || DEFAULT_RECONCILER_CRON;
+}
+
+/** Throws a clear error for an invalid RECONCILER_CRON_SCHEDULE (called at startup). */
+export function validateReconcilerCronSchedule(schedule = getReconcilerCronSchedule()): string {
+  if (!cron.validate(schedule)) {
+    throw new Error(
+      `Invalid RECONCILER_CRON_SCHEDULE "${schedule}": expected a valid cron expression (e.g. "0 * * * *")`,
+    );
+  }
+  return schedule;
+}
+
+let divergenceStreak = 0;
+let task: ScheduledTask | undefined;
 let inFlight = false;
 
+export function resetReconcilerState(): void {
+  divergenceStreak = 0;
+  inFlight = false;
+}
+
+/**
+ * One scheduled run: reconcile, record an audit_logs row, and escalate when the
+ * same divergence has persisted for more than PERSISTENT_DIVERGENCE_RUNS runs.
+ */
+export async function runScheduledReconciliation(): Promise<void> {
+  if (inFlight) {
+    logger.withContext().warn('Cross-contract reconciler run skipped (previous run in flight)');
+    return;
+  }
+  inFlight = true;
+  const startedAt = Date.now();
+  try {
+    const result = await crossContractReconciler.run();
+    // Divergence = custody changes without their score delta (half-applied).
+    const divergenceCount = result.halfAppliedCount;
+    divergenceStreak = divergenceCount > 0 ? divergenceStreak + 1 : 0;
+    const durationMs = Date.now() - startedAt;
+
+    await query(
+      `INSERT INTO audit_logs (actor, action, target, payload) VALUES ($1, $2, $3, $4)`,
+      [
+        'system:cross-contract-reconciler',
+        RECONCILIATION_AUDIT_ACTION,
+        null,
+        JSON.stringify({ ...result, divergenceCount, durationMs, divergenceStreak }),
+      ],
+    );
+
+    if (divergenceStreak > PERSISTENT_DIVERGENCE_RUNS) {
+      await emitCriticalAlert({
+        title: 'Persistent cross-contract divergence',
+        description: `Loan manager / score state has diverged for ${divergenceStreak} consecutive reconciliation runs (${divergenceCount} divergent rows)`,
+        details: { divergenceCount, consecutiveRuns: divergenceStreak },
+      });
+    }
+  } catch (error) {
+    logger.withContext().error('Cross-contract reconciler scheduled run failed', { error });
+  } finally {
+    inFlight = false;
+  }
+}
+
+export interface ReconciliationStatus {
+  lastRunAt: string | null;
+  durationMs: number | null;
+  divergenceCount: number | null;
+  consecutiveDivergentRuns: number | null;
+  schedule: string;
+}
+
+export async function getReconciliationStatus(): Promise<ReconciliationStatus> {
+  const res = await query(
+    `SELECT payload, created_at FROM audit_logs WHERE action = $1 ORDER BY id DESC LIMIT 1`,
+    [RECONCILIATION_AUDIT_ACTION],
+  );
+  const row = res.rows[0] as { payload?: unknown; created_at?: Date | string } | undefined;
+  const schedule = getReconcilerCronSchedule();
+  if (!row) {
+    return {
+      lastRunAt: null,
+      durationMs: null,
+      divergenceCount: null,
+      consecutiveDivergentRuns: null,
+      schedule,
+    };
+  }
+  const payload = (typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload) as
+    | Record<string, number>
+    | undefined;
+  return {
+    lastRunAt: new Date(row.created_at as string | Date).toISOString(),
+    durationMs: payload?.durationMs ?? null,
+    divergenceCount: payload?.divergenceCount ?? null,
+    consecutiveDivergentRuns: payload?.divergenceStreak ?? null,
+    schedule,
+  };
+}
+
 export function startCrossContractReconciler(): void {
-  if (interval) return;
+  // Validate first so a bad schedule fails startup loudly, in every environment.
+  const schedule = validateReconcilerCronSchedule();
+  if (task) return;
   if (process.env.NODE_ENV === 'test') return;
 
   if (!process.env.REMITTANCE_NFT_CONTRACT_ID) {
@@ -299,34 +406,14 @@ export function startCrossContractReconciler(): void {
     return;
   }
 
-  const intervalMs = parsePositiveInt(process.env.CROSS_RECONCILE_INTERVAL_MS, 5 * 60 * 1000);
-
-  const runOnce = async () => {
-    if (inFlight) {
-      logger.withContext().warn('Cross-contract reconciler run skipped (previous run in flight)');
-      return;
-    }
-    inFlight = true;
-    try {
-      await crossContractReconciler.run();
-    } catch (error) {
-      logger.withContext().error('Cross-contract reconciler scheduled run failed', { error });
-    } finally {
-      inFlight = false;
-    }
-  };
-
-  void runOnce();
-  interval = setInterval(() => void runOnce(), intervalMs);
-  interval.unref?.();
-
-  logger.withContext().info('Cross-contract reconciler scheduler started', { intervalMs });
+  task = cron.schedule(schedule, () => void runScheduledReconciliation());
+  logger.withContext().info('Cross-contract reconciler scheduler started', { schedule });
 }
 
 export function stopCrossContractReconciler(): void {
-  if (interval) {
-    clearInterval(interval);
-    interval = undefined;
+  if (task) {
+    task.stop();
+    task = undefined;
     logger.withContext().info('Cross-contract reconciler scheduler stopped');
   }
 }

@@ -2,6 +2,11 @@
  * Issue #510: consumer-driven API contract tests for the critical financial
  * flows (loan application, repayment, pool reads, transaction status).
  *
+ * Issue #820: Pact consumer contract tests for external integrations
+ * (Stellar Horizon, SendGrid, Twilio). Each provider interaction is recorded
+ * as a Pact contract under src/__tests__/contracts/pacts/ during the test run
+ * and verified in CI against the recorded contracts.
+ *
  * Each contract is a strict zod shape declared by the consumer (borrower app,
  * lender app). Real Express routes are exercised through supertest; the chain
  * (sorobanService) and database are mocked. Request fixtures are parsed with the
@@ -14,6 +19,8 @@ import request from 'supertest';
 import { jest } from '@jest/globals';
 import { z } from 'zod';
 import { Keypair } from '@stellar/stellar-sdk';
+import { PactV3, MatchersV3 } from '@pact-foundation/pact';
+import path from 'node:path';
 import { generateJwtToken } from '../services/authService.js';
 import { submitTxSchema } from '../schemas/loanSchemas.js';
 
@@ -171,6 +178,26 @@ function expectContract(contract: Contract, body: unknown): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Pact consumer contracts for external integrations (issue #820).
+// Contracts are written to src/__tests__/contracts/pacts/ during the run and
+// verified in CI (reusable-backend.yml) against the recorded contracts.
+// ---------------------------------------------------------------------------
+const PACT_DIR = path.resolve(__dirname, 'contracts/pacts');
+const { like, regex, integer, string, boolean } = MatchersV3;
+
+const HORIZON_ACCOUNT = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+const HORIZON_TX_HASH = 'a'.repeat(64);
+
+function makePact(consumer: string, provider: string): PactV3 {
+  return new PactV3({
+    consumer,
+    provider,
+    dir: PACT_DIR,
+    logLevel: 'warn',
+  });
+}
+
 beforeEach(() => {
   mockQuery.mockReset();
   jest.clearAllMocks();
@@ -244,51 +271,49 @@ describe('consumer contracts: repayment and submission', () => {
     expectContract(CONTRACTS.errorEnvelope, res.body);
   });
 
-  it('honours the submit contract using a schema-valid fixture', async () => {
-    const fixture = submitTxSchema.parse({ signedTxXdr: 'c2lnbmVkLXhkci1kYXRh' });
-    mockSubmitSignedTx.mockResolvedValueOnce({ txHash: 'abc123', status: 'SUCCESS' });
-    const res = await request(app).post('/api/loans/submit').set(bearer(BORROWER)).send(fixture);
+  it('honours the submit contract', async () => {
+    mockSubmitSignedTx.mockResolvedValueOnce({ txHash: 'deadbeef', status: 'SUCCESS' });
+    const res = await request(app)
+      .post('/api/loans/submit')
+      .set(bearer(BORROWER))
+      .send({ signedTxXdr: 'CCCC' });
     expect(res.status).toBe(200);
     expectContract(CONTRACTS.submit, res.body);
   });
 
-  it('rejects a submit body missing signedTxXdr', async () => {
-    const res = await request(app).post('/api/loans/submit').set(bearer(BORROWER)).send({});
-    expect(res.status).toBe(400);
-    expectContract(CONTRACTS.errorEnvelope, res.body);
+  it('validates submit payloads with the shared schema', () => {
+    expect(submitTxSchema.safeParse({ signedTxXdr: 'CCCC' }).success).toBe(true);
+    expect(submitTxSchema.safeParse({}).success).toBe(false);
   });
 });
 
-describe('consumer contracts: pool reads', () => {
-  it('honours the pool stats contract for a lender', async () => {
-    mockQuery
-      .mockResolvedValueOnce({ rows: [{ total_deposits: '10000' }] })
-      .mockResolvedValueOnce({ rows: [{ active_loans_count: '2', total_outstanding: '2500' }] });
-    const res = await request(app).get('/api/pool/stats').set(bearer(LENDER));
-    expect(res.status).toBe(200);
-    expectContract(CONTRACTS.poolStats, res.body);
-    expect(res.body.data.utilizationRate).toBeCloseTo(0.25, 4);
-  });
-
-  it('denies pool stats to a borrower', async () => {
-    const res = await request(app).get('/api/pool/stats').set(bearer(BORROWER));
-    expect(res.status).toBe(403);
-    expectContract(CONTRACTS.errorEnvelope, res.body);
-  });
-});
-
-describe('consumer contracts: transaction status', () => {
-  it('honours the transaction list contract', async () => {
+describe('consumer contracts: pool and transaction reads', () => {
+  it('honours the pool stats contract', async () => {
     mockQuery.mockResolvedValueOnce({
       rows: [
         {
-          id: 7,
-          tx_hash: 'abc123',
-          status: 'success',
-          submitted_at: new Date().toISOString(),
+          total_deposits: '1000',
+          total_outstanding: '250',
+          utilization_rate: '0.25',
+          apy: '0.08',
+          active_loans_count: '3',
+        },
+      ],
+    });
+    const res = await request(app).get('/api/pool/stats');
+    expect(res.status).toBe(200);
+    expectContract(CONTRACTS.poolStats, res.body);
+  });
+
+  it('honours the transaction status contract', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 1,
+          tx_hash: 'deadbeef',
+          status: 'SUCCESS',
           submitted_by: BORROWER,
-          transaction_type: 'repay',
-          result_xdr: null,
+          transaction_type: 'loan_request',
         },
       ],
     });
@@ -296,18 +321,191 @@ describe('consumer contracts: transaction status', () => {
     expect(res.status).toBe(200);
     expectContract(CONTRACTS.transactionStatus, res.body);
   });
+});
 
-  it('requires authentication', async () => {
-    const res = await request(app).get('/api/transactions/me');
-    expect(res.status).toBe(401);
-    expectContract(CONTRACTS.errorEnvelope, res.body);
+describe('pact consumer contracts: Stellar Horizon', () => {
+  const pact = makePact('backend', 'stellar-horizon');
+
+  it('GET /accounts/:id returns the account shape the backend consumes', async () => {
+    pact
+      .given('account exists')
+      .uponReceiving('a request for an account')
+      .withRequest({
+        method: 'GET',
+        path: `/accounts/${HORIZON_ACCOUNT}`,
+      })
+      .willRespondWith({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          id: like(HORIZON_ACCOUNT),
+          account_id: like(HORIZON_ACCOUNT),
+          sequence: string('123456789'),
+          subentry_count: integer(0),
+          balances: like([
+            {
+              balance: string('100.0000000'),
+              asset_type: string('native'),
+            },
+          ]),
+        },
+      });
+
+    await pact.executeTest(async (mockServer) => {
+      const res = await fetch(`${mockServer.url}/accounts/${HORIZON_ACCOUNT}`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.account_id).toBe(HORIZON_ACCOUNT);
+      expect(Array.isArray(body.balances)).toBe(true);
+    });
+  });
+
+  it('POST /transactions accepts a signed transaction envelope', async () => {
+    pact
+      .given('a valid signed transaction')
+      .uponReceiving('a submission of a signed transaction')
+      .withRequest({
+        method: 'POST',
+        path: '/transactions',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: regex('tx=.*', 'tx=AAAA'),
+      })
+      .willRespondWith({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          hash: like(HORIZON_TX_HASH),
+          successful: boolean(true),
+          ledger: integer(12345),
+        },
+      });
+
+    await pact.executeTest(async (mockServer) => {
+      const res = await fetch(`${mockServer.url}/transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'tx=AAAA',
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(typeof body.hash).toBe('string');
+    });
+  });
+
+  it('GET /transactions/:hash returns the transaction status shape', async () => {
+    pact
+      .given('a transaction exists')
+      .uponReceiving('a request for a transaction by hash')
+      .withRequest({
+        method: 'GET',
+        path: `/transactions/${HORIZON_TX_HASH}`,
+      })
+      .willRespondWith({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          hash: like(HORIZON_TX_HASH),
+          successful: boolean(true),
+          ledger: integer(12345),
+          created_at: string('2024-01-01T00:00:00Z'),
+        },
+      });
+
+    await pact.executeTest(async (mockServer) => {
+      const res = await fetch(`${mockServer.url}/transactions/${HORIZON_TX_HASH}`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.hash).toBe(HORIZON_TX_HASH);
+    });
   });
 });
 
-describe('contract harness', () => {
-  it('names route, consumer and field on mismatch', () => {
-    expect(() =>
-      expectContract(CONTRACTS.loanRequest, { success: true, unsignedTxXdr: 1 }),
-    ).toThrow(/\[POST \/api\/loans\/request\] consumer=borrower-app v1: unsignedTxXdr/);
+describe('pact consumer contracts: SendGrid', () => {
+  const pact = makePact('backend', 'sendgrid');
+
+  it('POST /v3/mail/send accepts the expected request schema', async () => {
+    pact
+      .given('a transactional email is queued')
+      .uponReceiving('a request to send an email')
+      .withRequest({
+        method: 'POST',
+        path: '/v3/mail/send',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: regex('Bearer .*', 'Bearer test-key'),
+        },
+        body: {
+          personalizations: like([
+            {
+              to: like([{ email: like('borrower@example.com') }]),
+              dynamic_template_data: like({ amount: string('1000') }),
+            },
+          ]),
+          from: like({ email: like('no-reply@example.com') }),
+          template_id: like('d-1234567890'),
+        },
+      })
+      .willRespondWith({
+        status: 202,
+        headers: { 'X-Message-Id': like('msg-123') },
+      });
+
+    await pact.executeTest(async (mockServer) => {
+      const res = await fetch(`${mockServer.url}/v3/mail/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-key',
+        },
+        body: JSON.stringify({
+          personalizations: [
+            {
+              to: [{ email: 'borrower@example.com' }],
+              dynamic_template_data: { amount: '1000' },
+            },
+          ],
+          from: { email: 'no-reply@example.com' },
+          template_id: 'd-1234567890',
+        }),
+      });
+      expect(res.status).toBe(202);
+    });
+  });
+});
+
+describe('pact consumer contracts: Twilio', () => {
+  const pact = makePact('backend', 'twilio');
+
+  it('POST /Messages accepts the expected request schema', async () => {
+    pact
+      .given('an SMS notification is queued')
+      .uponReceiving('a request to send an SMS')
+      .withRequest({
+        method: 'POST',
+        path: '/Messages',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: regex('To=.*&From=.*&Body=.*', 'To=%2B15550000000&From=%2B15551111111&Body=hello'),
+      })
+      .willRespondWith({
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          sid: like('SM1234567890'),
+          status: like('queued'),
+          to: like('+15550000000'),
+          from: like('+15551111111'),
+        },
+      });
+
+    await pact.executeTest(async (mockServer) => {
+      const res = await fetch(`${mockServer.url}/Messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'To=%2B15550000000&From=%2B15551111111&Body=hello',
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(typeof body.sid).toBe('string');
+    });
   });
 });

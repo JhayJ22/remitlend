@@ -22,6 +22,60 @@ The following CSP directives are enforced:
 | `form-action` | `'self'` | `'self'` |
 | `report-uri` | `/api/v1/csp-report` | (none) |
 
+## Low-Bandwidth Rendering and CSP
+
+Core account journeys (transaction details, security/authorization checks, and
+stale-data warnings) must remain functional on constrained connections. The
+frontend reduces nonessential assets and defers optional content when it detects
+a constrained or offline/stale state. This section documents how that behavior
+interacts with the CSP so the policy stays auditable.
+
+### Supported rendering states
+
+| State | Detection | Rendering behavior |
+|-------|-----------|--------------------|
+| `normal` | `navigator.connection` reports `4g`/unknown and `saveData` is false | Full assets and optional widgets load |
+| `constrained` | `effectiveType` is `slow-2g`/`2g`/`3g`, `saveData` is true, or `downlink` is below the low-bandwidth threshold | Nonessential images and optional widgets are deferred; core journey content still renders |
+| `offline` / `stale` | `navigator.onLine` is false or a cached response is served | Cached core content renders with an explicit user-visible stale-data warning |
+
+### What is preserved in every state
+
+- Transaction details (amounts in exact money units, counterparties, status)
+- Security and authorization checks (consent, re-auth, and access-control gates)
+- Explicit user-visible stale-data warnings when cached or offline data is shown
+
+### What is deferred when constrained
+
+- Nonessential images and decorative media
+- Optional secondary widgets and noncritical data fetches
+
+Deferred assets are loaded lazily once the connection recovers; they are never
+required to complete a core journey.
+
+### CSP implications
+
+- Deferring assets does **not** relax the policy. `script-src` still requires the
+  per-request nonce in production; no `'unsafe-inline'` is added for constrained
+  mode.
+- Lazy-loaded optional assets must be served from origins already allowed by
+  `img-src`/`script-src`/`connect-src`. Adding a new CDN for deferred assets
+  requires a CSP exception (see below) and a review of the low-bandwidth path.
+- Stale-data warnings are rendered from first-party markup and do not require
+  inline scripts; if a nonce-bearing script is used, it follows the standard
+  nonce flow.
+- CSP violation reports continue to be sent via `report-uri` and the frontend
+  `securitypolicyviolation` listener regardless of rendering state.
+
+### Failure behavior
+
+- If a deferred asset fails to load, the core journey continues; the optional
+  content is simply omitted.
+- If a stale action is attempted (e.g., submitting against cached data), the
+  action is rejected without partial financial side effects and the user is
+  prompted to refresh.
+- If the connection state cannot be determined, the frontend defaults to
+  `normal` and does not block core journeys.
+
 ## Nonce-Based Script Allowlisting
 
 ### How It Works
@@ -276,26 +330,49 @@ CSP does NOT prevent:
 
 ```html
 <!-- ❌ BLOCKED -->
-<script>console.log('hello')</script>
+<script>console.log('no nonce')</script>
 
 <!-- ✅ ALLOWED -->
-<script nonce="<%= nonce %>">console.log('hello')</script>
+<script nonce="abc123xyz">console.log('has nonce')</script>
 ```
 
-### Problem: External CDN Scripts Not Loading
+### Problem: Style Not Applied
 
-**Error**: `Refused to load script from external-cdn.com`
+**Error**: `Refused to apply inline style ... because it violates Content Security Policy directive`
 
-**Solution**: Add the CDN to `script-src` exceptions in `cspNonce.ts`
+**Solution**: Inline styles are allowed via `'unsafe-inline'` in `style-src`. If you need stricter control, move styles to external stylesheets.
 
+### Problem: Image Not Loading
+
+**Error**: `Refused to load the image ... because it violates Content Security Policy directive`
+
+**Solution**: Add the image origin to `img-src`:
+
+```typescript
+'img-src': "'self' data: https: https://images.example.com",
+```
 ### Problem: Styles Not Applied
 
-**Error**: `Refused to apply inline style ... because it violates Content Security Policy`
+**Error**: `Refused to apply inline style ... because it violates Content Security Policy directive`
 
-**Solution**: Move styles to external stylesheet or add `'unsafe-inline'` to `style-src` (already included)
+**Solution**: `style-src` includes `'unsafe-inline'` in both production and development, so inline styles are permitted. If you tighten `style-src` in the future, move inline styles to external stylesheets or add a nonce/hash.
 
-## References
+### Problem: API Calls Blocked
 
-- [MDN Content Security Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP)
-- [CSP Nonces](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/script-src#nonce-_-base64-value)
-- [CSP Evaluator](https://csp-evaluator.withgoogle.com/)
+**Error**: `Refused to connect to 'https://api.example.com' because it violates Content Security Policy directive: "connect-src 'self'"`
+
+**Solution**: Add the API origin to `connect-src` in `getCSPHeaders()`.
+
+## Accessibility and Reflow Considerations
+
+CSP diagnostics and recovery UI must remain usable at 200–400% zoom and narrow viewport widths. The following constraints apply to any CSP-related user-facing surface (e.g., violation notices, recovery prompts):
+
+- **Reflow**: Content must reflow into a single column without horizontal scrolling at 320 CSS px width (equivalent to 400% zoom on a 1280 px viewport).
+- **Safe primary action**: The safe primary action (retry, cancel, or dismiss) must remain visible and reachable without clipping or being pushed off-screen.
+- **Keyboard focus**: Focus must be preserved across state transitions and reflow; no focus traps, and focus is restored to a sensible element after recovery actions.
+- **No partial side effects**: Invalid or stale recovery actions are rejected in the UI (disabled or hidden) without triggering partial financial side effects.
+
+- [MDN: Content Security Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP)
+- [W3C CSP Level 3](https://www.w3.org/TR/CSP3/)
+- [Google CSP Evaluator](https://csp-evaluator.withgoogle.com/)
+These constraints are verified by the frontend accessibility test suite; CSP changes must not introduce inline handlers or styles that break them.

@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { CalendarDays } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
 import type { LoanAmortization, LoanAmortizationScheduleRow } from "../../hooks/useApi";
 import { EmptyState } from "../ui/EmptyState";
+import { PrintButton } from "../ui/PrintButton";
 import {
   computeLoanCostDisclosure,
   formatBps,
@@ -31,20 +33,36 @@ function formatDate(date: Date): string {
 
 interface RepaymentRow {
   period: number;
+  timestamp: number;
   dueDate: string;
-  principal: number;
-  interest: number;
   total: number;
+  interest: number;
+  principal: number;
+  fee: number;
   balance: number;
 }
+
+type SortKey = "timestamp" | "total" | "interest" | "principal" | "fee" | "balance";
+type SortDir = "ascending" | "descending";
+
+const COLUMNS: Array<{ key: SortKey; label: string; align: "left" | "right" }> = [
+  { key: "timestamp", label: "Payment Date", align: "left" },
+  { key: "total", label: "Total Amount", align: "right" },
+  { key: "interest", label: "Interest", align: "right" },
+  { key: "principal", label: "Principal", align: "right" },
+  { key: "fee", label: "Fees", align: "right" },
+  { key: "balance", label: "Remaining Balance", align: "right" },
+];
 
 function mapScheduleRows(rows: LoanAmortizationScheduleRow[]): RepaymentRow[] {
   return rows.map((row, index) => ({
     period: index + 1,
+    timestamp: new Date(row.date).getTime(),
     dueDate: formatDate(new Date(row.date)),
-    principal: row.principalPortion,
-    interest: row.interestPortion,
     total: row.totalDue,
+    interest: row.interestPortion,
+    principal: row.principalPortion,
+    fee: row.feePortion ?? 0,
     balance: row.runningBalance,
   }));
 }
@@ -64,7 +82,33 @@ export function RepaymentScheduleTable({
   compact = false,
   showSummaryCards = true,
 }: RepaymentScheduleTableProps) {
-  const schedule = mapScheduleRows(amortization.schedule);
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
+  const baseSchedule = useMemo(() => mapScheduleRows(amortization.schedule), [amortization.schedule]);
+  const schedule = useMemo(() => {
+    if (!sort) return baseSchedule;
+    const factor = sort.dir === "ascending" ? 1 : -1;
+    return [...baseSchedule].sort((a, b) => (a[sort.key] - b[sort.key]) * factor);
+  }, [baseSchedule, sort]);
+  const totals = useMemo(
+    () =>
+      baseSchedule.reduce(
+        (acc, row) => ({
+          total: acc.total + row.total,
+          interest: acc.interest + row.interest,
+          principal: acc.principal + row.principal,
+          fee: acc.fee + row.fee,
+        }),
+        { total: 0, interest: 0, principal: 0, fee: 0 },
+      ),
+    [baseSchedule],
+  );
+
+  const toggleSort = (key: SortKey) =>
+    setSort((prev) =>
+      prev?.key === key
+        ? { key, dir: prev.dir === "ascending" ? "descending" : "ascending" }
+        : { key, dir: "ascending" },
+    );
 
   /**
    * The cost of credit is derived from the *authoritative* schedule totals via
@@ -96,6 +140,11 @@ export function RepaymentScheduleTable({
           {title}
         </CardTitle>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">{description}</p>
+        {schedule.length > 0 && (
+          <div>
+            <PrintButton label="Print schedule" documentTitle="RemitLend - Repayment Schedule" />
+          </div>
+        )}
       </CardHeader>
       <CardContent className={compact ? "space-y-4" : "space-y-6"}>
         {showSummaryCards && (
@@ -150,41 +199,57 @@ export function RepaymentScheduleTable({
         ) : (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
             <table className="w-full text-sm">
+              <caption className="sr-only">
+                Repayment schedule with interest, principal and fee breakdown for each payment
+              </caption>
               <thead>
                 <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
-                  <th className="px-4 py-3 text-left font-medium text-zinc-600 dark:text-zinc-400">
-                    Period
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-zinc-600 dark:text-zinc-400">
-                    Due Date
-                  </th>
-                  <th className="px-4 py-3 text-right font-medium text-zinc-600 dark:text-zinc-400">
-                    Principal
-                  </th>
-                  <th className="px-4 py-3 text-right font-medium text-zinc-600 dark:text-zinc-400">
-                    Interest
-                  </th>
-                  <th className="px-4 py-3 text-right font-medium text-zinc-600 dark:text-zinc-400">
-                    Total
-                  </th>
-                  <th className="px-4 py-3 text-right font-medium text-zinc-600 dark:text-zinc-400">
-                    Balance
-                  </th>
+                  {COLUMNS.map((col) => {
+                    const active = sort?.key === col.key ? sort.dir : "none";
+                    const Icon =
+                      active === "ascending" ? ArrowUp : active === "descending" ? ArrowDown : ArrowUpDown;
+                    return (
+                      <th
+                        key={col.key}
+                        scope="col"
+                        aria-sort={active}
+                        className={`px-4 py-3 font-medium text-zinc-600 dark:text-zinc-400 ${
+                          col.align === "right" ? "text-right" : "text-left"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleSort(col.key)}
+                          className="inline-flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                        >
+                          {col.label}
+                          <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
                 {schedule.map((row) => (
                   <tr key={row.period} className="border-b border-zinc-100 dark:border-zinc-800/50">
-                    <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400">{row.period}</td>
-                    <td className="px-4 py-3 text-zinc-900 dark:text-zinc-50">{row.dueDate}</td>
-                    <td className="px-4 py-3 text-right text-zinc-900 dark:text-zinc-50">
-                      {formatMoney(row.principal)}
+                    <th
+                      scope="row"
+                      className="px-4 py-3 text-left font-normal text-zinc-900 dark:text-zinc-50"
+                    >
+                      {row.dueDate}
+                    </th>
+                    <td className="px-4 py-3 text-right font-semibold text-zinc-900 dark:text-zinc-50">
+                      {formatMoney(row.total)}
                     </td>
                     <td className="px-4 py-3 text-right text-amber-600 dark:text-amber-400">
                       {formatMoney(row.interest)}
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold text-zinc-900 dark:text-zinc-50">
-                      {formatMoney(row.total)}
+                    <td className="px-4 py-3 text-right text-zinc-900 dark:text-zinc-50">
+                      {formatMoney(row.principal)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-zinc-900 dark:text-zinc-50">
+                      {formatMoney(row.fee)}
                     </td>
                     <td className="px-4 py-3 text-right text-zinc-500 dark:text-zinc-400">
                       {formatMoney(row.balance)}
@@ -193,17 +258,20 @@ export function RepaymentScheduleTable({
                 ))}
               </tbody>
               <tfoot>
-                <tr className="bg-zinc-50 dark:bg-zinc-900">
-                  <td
-                    colSpan={4}
-                    className="px-4 py-3 text-right font-semibold text-zinc-700 dark:text-zinc-300"
-                  >
-                    Total Cost of Loan
+                <tr
+                  data-testid="repayment-schedule-totals"
+                  className="bg-zinc-50 font-semibold dark:bg-zinc-900"
+                >
+                  <th scope="row" className="px-4 py-3 text-left text-zinc-700 dark:text-zinc-300">
+                    Totals
+                  </th>
+                  <td className="px-4 py-3 text-right text-indigo-600 dark:text-indigo-400">
+                    {formatMoney(totals.total)}
                   </td>
-                  <td className="px-4 py-3 text-right font-semibold text-indigo-600 dark:text-indigo-400">
-                    {formatMoney(amortization.totalDue)}
-                  </td>
-                  <td />
+                  <td className="px-4 py-3 text-right">{formatMoney(totals.interest)}</td>
+                  <td className="px-4 py-3 text-right">{formatMoney(totals.principal)}</td>
+                  <td className="px-4 py-3 text-right">{formatMoney(totals.fee)}</td>
+                  <td className="px-4 py-3" />
                 </tr>
               </tfoot>
             </table>

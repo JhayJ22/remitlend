@@ -6,6 +6,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Card, CardHeader, CardTitle, CardContent } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
+import { RecipientManager } from "./RecipientManager";
+import { MyAddressQr } from "./MyAddressQr";
 import { TransactionPreviewModal } from "../transaction/TransactionPreviewModal";
 import { useTransactionPreview } from "../../hooks/useTransactionPreview";
 import { formatRemittanceSend } from "../../utils/transactionFormatter";
@@ -54,7 +56,7 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
     formState: { errors, isSubmitting },
   } = useForm<RemittanceFormValues>({
     resolver: zodResolver(remittanceSchema),
-    mode: "onBlur",
+    mode: "onChange",
     defaultValues: REMITTANCE_FORM_DEFAULTS,
   });
 
@@ -169,6 +171,13 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
               </div>
             )}
 
+            <RecipientManager
+              currentAddress={recipientAddress}
+              onSelect={(address) =>
+                setValue("recipientAddress", address, { shouldValidate: true, shouldDirty: true })
+              }
+            />
+
             <Input
               id="recipientAddress"
               label="Recipient Address"
@@ -179,6 +188,8 @@ export function RemittanceForm({ onSuccess }: RemittanceFormProps) {
               helperText={`Enter a checksummed Stellar public key. This remittance uses ${STELLAR_NETWORK_LABEL}; confirm the recipient can receive funds on that network.`}
               {...register("recipientAddress")}
             />
+
+            <MyAddressQr />
 
             {/* Token Selection */}
             <div className="space-y-2">

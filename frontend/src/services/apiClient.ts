@@ -166,3 +166,31 @@ if (typeof window !== 'undefined') {
     void flushQueuedActions();
   });
 }
+
+/**
+ * Evict entries from the in-memory READ_CACHE whose key contains `token`.
+ *
+ * Called by the projection cache eviction module after the backend responds
+ * with a `Cache-Invalidation-Token` header so a stale offline-fallback entry
+ * can never be served for a subject whose projections were securely deleted.
+ *
+ * The match is a substring check against the full cache-key string
+ * (`"GET /api/v1/score/{userId}"`), which reliably targets all GET requests
+ * that encoded the invalidated userId.
+ */
+export function evictReadCacheByToken(token: string): void {
+  for (const key of READ_CACHE.keys()) {
+    if (key.includes(token)) {
+      READ_CACHE.delete(key);
+    }
+  }
+}
+
+/**
+ * Completely flush the entire in-memory read cache.
+ * Use as a defensive measure after a suspected cache poisoning incident or
+ * a full-scope revocation where the subject set is unknown.
+ */
+export function flushReadCache(): void {
+  READ_CACHE.clear();
+}

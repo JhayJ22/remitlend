@@ -1,16 +1,18 @@
 import { Router } from 'express';
-import { listMyTransactions } from '../controllers/transactionController.js';
 import {
+  listMyTransactions,
   createDiagnosticBundle,
   getDiagnosticBundle,
   deleteDiagnosticBundle,
-} from '../controllers/diagnosticBundleController.js';
+} from '../controllers/transactionController.js';
 import { requireJwtAuth } from '../middleware/jwtAuth.js';
-import { requireTransactionAccess } from '../middleware/requireTransactionAccess.js';
+import { requireTransactionAccess } from '../middleware/loanAccess.js';
 
 const router = Router();
 
 router.get('/me', requireJwtAuth, listMyTransactions);
+// Paginated list filtered by the authenticated wallet address.
+router.get('/', requireJwtAuth, listMyTransactions);
 
 router.post(
   '/:txHash/diagnostic-bundle',

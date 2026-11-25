@@ -4,9 +4,11 @@ import { useState } from "react";
 import { FinancialPerformanceDashboard } from "../../components/dashboards/FinancialPerformanceDashboard";
 import { ErrorBoundary } from "../../components/global_ui/ErrorBoundary";
 import { useWalletStore, selectWalletAddress } from "../../stores/useWalletStore";
+import { ProtocolAnalytics } from "../../components/analytics/ProtocolAnalytics";
 import { PrintButton } from "../../components/ui/PrintButton";
+import { SettlementExceptions } from "../../../components/SettlementExceptions";
 
-type ViewType = "borrower" | "lender";
+type ViewType = "borrower" | "lender" | "protocol";
 
 export default function AnalyticsPage() {
   const [view, setView] = useState<ViewType>("borrower");
@@ -28,7 +30,7 @@ export default function AnalyticsPage() {
       </header>
 
       <div className="flex gap-2" role="group" aria-label="Analytics view selector">
-        {(["borrower", "lender"] as const).map((v) => (
+        {(["borrower", "lender", "protocol"] as const).map((v) => (
           <button
             key={v}
             onClick={() => setView(v)}
@@ -45,12 +47,18 @@ export default function AnalyticsPage() {
       </div>
 
       <ErrorBoundary scope="analytics dashboard" variant="section">
-        <FinancialPerformanceDashboard
-          userId={userId}
-          userType={view}
-          walletAddress={address ?? undefined}
-        />
+        {view === "protocol" ? (
+          <ProtocolAnalytics />
+        ) : (
+          <FinancialPerformanceDashboard
+            userId={userId}
+            userType={view}
+            walletAddress={address ?? undefined}
+          />
+        )}
       </ErrorBoundary>
+
+      <SettlementExceptions />
     </main>
   );
 }

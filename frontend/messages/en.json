@@ -86,7 +86,8 @@
     "wallet": "Wallet",
     "walletStatus": "Wallet Status",
     "disconnected": "Disconnected",
-    "connected": "Connected"
+    "connected": "Connected",
+    "glossary": "Glossary"
   },
   "Loans": {
     "title": "Loans",
@@ -204,7 +205,8 @@
     "details": "Details"
   },
   "AdminLayout": {
-    "adminArea": "Admin Area"
+    "adminArea": "Admin Area",
+    "translationsReview": "Financial translations"
   },
   "AdminDisputes": {
     "eyebrow": "Admin Review",
@@ -265,6 +267,16 @@
   "Settings": {
     "language": "Language",
     "selectLanguage": "Select Language"
+  },
+  "Breadcrumbs": {
+    "dashboard": "Dashboard",
+    "loans": "Loans",
+    "repay": "Repayment",
+    "admin": "Admin",
+    "disputes": "Disputes",
+    "loanItem": "Loan #{id}",
+    "currentPage": "Current page",
+    "itemId": "Item"
   },
   "LoanDetails": {
     "actions": {
@@ -376,5 +388,275 @@
     "notScheduled": "Not scheduled",
     "unknown": "Unknown",
     "executableNow": "Executable now"
+  },
+  "Glossary": {
+    "pageTitle": "Financial Glossary",
+    "pageDescription": "Plain-language explanations of the terms used throughout RemitLend.",
+    "searchPlaceholder": "Search terms…",
+    "noResults": "No terms match \"{query}\". Try a broader search.",
+    "tooltipLabel": "What is {term}?",
+    "terms": {
+      "apr": {
+        "term": "APR",
+        "definition": "Annual Percentage Rate — the yearly cost of a loan expressed as a percentage, including interest but not compounding. The APR lets you compare the true cost of different loans on an equal footing."
+      },
+      "apy": {
+        "term": "APY",
+        "definition": "Annual Percentage Yield — the yearly return on a deposit, taking compounding into account. A higher APY means your money grows faster. APY is always slightly higher than the stated interest rate when compounding occurs."
+      },
+      "principal": {
+        "term": "Principal",
+        "definition": "The original amount of money you borrowed or deposited, before any interest or fees are added. Your repayments reduce the outstanding principal over time."
+      },
+      "interest": {
+        "term": "Interest",
+        "definition": "The cost you pay for borrowing money, calculated as a percentage of the outstanding principal. Interest accrues (builds up) every day your loan is open and is added to your total amount owed."
+      },
+      "accruedInterest": {
+        "term": "Accrued interest",
+        "definition": "Interest that has built up on your loan since the last payment but has not yet been paid. Accrued interest is part of the total amount you owe right now."
+      },
+      "originationFee": {
+        "term": "Origination fee",
+        "definition": "A one-time fee charged when your loan is created to cover the cost of processing the application. It is deducted from the amount disbursed to you, so the amount you receive is slightly less than the amount you requested."
+      },
+      "effectiveApr": {
+        "term": "Effective APR",
+        "definition": "The all-in annual cost of your loan once fees such as the origination fee are included alongside interest. The effective APR is always higher than the nominal rate and is the most accurate way to compare the full cost of different loans."
+      },
+      "collateral": {
+        "term": "Collateral",
+        "definition": "An asset (such as a cryptocurrency) that you lock up to secure a loan. If you cannot repay the loan, the collateral can be liquidated (sold) to recover the amount owed. More collateral relative to your debt means a healthier, safer position."
+      },
+      "collateralRatio": {
+        "term": "Collateral ratio",
+        "definition": "The ratio of your locked collateral value to your total debt. A ratio of 1.5 means you have $1.50 of collateral for every $1.00 of debt. Higher is safer; falling below the liquidation threshold triggers liquidation."
+      },
+      "healthFactor": {
+        "term": "Health factor",
+        "definition": "A number that shows how close your loan is to being liquidated. A health factor above 1.0 means your position is safe; at or below 1.0 it can be liquidated. Add more collateral to increase your health factor."
+      },
+      "liquidationThreshold": {
+        "term": "Liquidation threshold",
+        "definition": "The minimum collateral ratio your loan must maintain. If your collateral value falls so that the ratio drops to or below this level, your collateral can be automatically sold to repay the loan."
+      },
+      "liquidation": {
+        "term": "Liquidation",
+        "definition": "The automatic process of selling some or all of your collateral to repay a loan when the health factor drops too low. Liquidation protects lenders but can result in a financial loss for the borrower. Keeping your health factor well above 1.0 reduces this risk."
+      },
+      "utilizationRate": {
+        "term": "Utilization rate",
+        "definition": "The percentage of a lending pool that is currently loaned out. For example, a 60% utilization rate means 60% of deposited funds are actively earning interest through loans. Higher utilization typically raises the APY for lenders but may limit instant withdrawals."
+      },
+      "creditScore": {
+        "term": "Credit score",
+        "definition": "An on-chain measure of your repayment reliability, calculated from your borrowing and repayment history. A higher score can unlock better loan terms, lower fees, and increased borrowing limits over time."
+      },
+      "remittance": {
+        "term": "Remittance",
+        "definition": "A transfer of money sent across borders, typically to family or friends. On RemitLend, remittances are recorded on-chain to build your credit history, which can improve your score and unlock better loan terms."
+      },
+      "amortization": {
+        "term": "Amortization",
+        "definition": "The process of repaying a loan through regular scheduled payments. Each payment covers the interest accrued since the last payment plus a portion of the principal, so the amount owed decreases steadily over the loan term."
+      },
+      "lateFee": {
+        "term": "Late fee",
+        "definition": "An additional charge applied to your outstanding balance when a payment is overdue. Late fees accumulate while the payment remains unpaid, increasing your total amount owed."
+      },
+      "withdrawal": {
+        "term": "Withdrawal",
+        "definition": "Taking your deposited funds out of the lending pool. Withdrawals may be subject to a cooldown period — a waiting window after a deposit — to protect the pool from rapid in-and-out movements that could disrupt liquidity."
+      },
+      "cooldown": {
+        "term": "Withdrawal cooldown",
+        "definition": "A waiting period after you make a deposit before you can withdraw those funds. The cooldown protects the pool from rapid cycling of deposits and withdrawals, keeping it stable for all participants."
+      },
+      "yield": {
+        "term": "Yield",
+        "definition": "The earnings generated from depositing funds into the lending pool. Yield is paid out of the interest borrowers pay on their loans and distributed proportionally to depositors based on their share of the pool."
+      },
+      "shareOfPool": {
+        "term": "Share of pool",
+        "definition": "The percentage of the total lending pool that your deposits represent. Your share determines how much of the pool's interest earnings are distributed to you. If the pool is 10,000 USDC and you have deposited 1,000 USDC, your share is 10%."
+      },
+      "default": {
+        "term": "Loan default",
+        "definition": "A loan is in default when the borrower has not made the required repayment by the due date and the missed payment threshold has been reached. Defaulted loans may trigger liquidation of the borrower's collateral."
+      }
+    }
+  "TranslationReview": {
+    "eyebrow": "Localization QA",
+    "title": "Financial translation review",
+    "description": "Review money and loan terms against the glossary before release. Approvals are bound to the source revision shown.",
+    "forbidden": "You need the admin role to review financial strings.",
+    "releaseReady": "Release gate: ready",
+    "releaseBlocked": "Release gate: blocked",
+    "reviewed": "{approved} of {checked} current reviews",
+    "issues": "Blocking issues",
+    "noIssues": "No blocking issues.",
+    "source": "Source",
+    "translation": "Translation",
+    "context": "Context",
+    "glossary": "Glossary",
+    "status": "Status",
+    "approve": "Approve",
+    "reject": "Request changes",
+    "approved": "Approved",
+    "rejected": "Changes requested",
+    "pending": "Pending",
+    "reviewer": "Reviewer",
+    "reviewedAt": "Reviewed",
+    "none": "-",
+    "stale": "Source changed since review",
+    "update": "Approve current source",
+    "updated": "Review recorded.",
+    "error": "Review could not be recorded.",
+    "locale": "Locale",
+    "key": "Key",
+    "actions": "Actions"
+  "Errors": {
+    "referenceLabel": "Reference ID",
+    "actions": {
+      "retry": "Try again",
+      "reauthenticate": "Sign in again",
+      "contact_support": "Contact support",
+      "refresh": "Refresh",
+      "none": "Dismiss"
+    },
+    "guidance": {
+      "invalidAmount": {
+        "title": "Check the amount",
+        "message": "Enter an amount greater than zero.",
+        "guidance": "Use the currency shown on this screen. Amounts are never converted automatically."
+      },
+      "invalidCredentials": {
+        "title": "Check your sign-in details",
+        "message": "We could not verify your wallet signature or account identifier.",
+        "guidance": "Reconnect your wallet, approve the new request, and try again. Wallet addresses are never translated."
+      },
+      "invalidInput": {
+        "title": "Review the details",
+        "message": "One or more values could not be accepted.",
+        "guidance": "Check the highlighted fields and keep identifiers exactly as provided."
+      },
+      "sessionExpired": {
+        "title": "Session needs attention",
+        "message": "Your secure session is no longer active.",
+        "guidance": "Sign in again to continue. Do not repeat a payment until you see its final status."
+      },
+      "accessDenied": {
+        "title": "Access restricted",
+        "message": "You do not have permission for this action.",
+        "guidance": "Switch to an account with the required access or contact support with the reference below."
+      },
+      "notFound": {
+        "title": "Not available",
+        "message": "We could not find the requested item.",
+        "guidance": "Refresh the list and check the identifier before trying again."
+      },
+      "conflict": {
+        "title": "State changed",
+        "message": "Something changed while your request was being processed.",
+        "guidance": "Refresh to see the latest state, then retry only if the action is still needed."
+      },
+      "duplicateRequest": {
+        "title": "Already submitted",
+        "message": "This request was already accepted.",
+        "guidance": "Check the current status instead of submitting it again; repeating it will not change the result."
+      },
+      "rateLimited": {
+        "title": "Please slow down",
+        "message": "Too many requests were sent in a short time.",
+        "guidance": "Wait for the suggested delay, then try again once."
+      },
+      "unavailable": {
+        "title": "Temporarily unavailable",
+        "message": "A required service is not responding.",
+        "guidance": "Wait a moment and retry. No money has moved unless you see a confirmed transaction."
+      },
+      "invalidLoan": {
+        "title": "Check the loan",
+        "message": "The loan identifier or reference is not valid.",
+        "guidance": "Copy the identifier exactly as shown in your loan details and try again."
+      },
+      "loanState": {
+        "title": "Loan state changed",
+        "message": "This action is not available for the current loan state.",
+        "guidance": "Refresh the loan details. Already-repaid loans never need another payment."
+      },
+      "insufficientFunds": {
+        "title": "Balance too low",
+        "message": "The account does not have enough available balance.",
+        "guidance": "Add funds or reduce the amount. The exact asset and units are shown in the form."
+      },
+      "blockchain": {
+        "title": "Network issue",
+        "message": "The network did not confirm the operation.",
+        "guidance": "Check the transaction status before retrying. Do not submit the same signed transaction twice."
+      },
+      "internal": {
+        "title": "Something went wrong",
+        "message": "We could not complete the request.",
+        "guidance": "Try again shortly. If it keeps happening, contact support with the reference below."
+      },
+      "fallback": {
+        "title": "Unexpected error",
+        "message": "An unexpected error occurred.",
+        "guidance": "Retry once, then contact support with the reference below if it persists."
+      }
+    }
+  "Offers": {
+    "title": "Compare loan and pool offers",
+    "description": "Sort columns with the keyboard or compare the card layout on small screens. Amounts keep their source currency.",
+    "caption": "Loan and pool offer comparison. Column headers sort the table; each row name is a row header.",
+    "summary": "Showing {visible} of {total} offers. Sorted by {column} {direction}. Filters: {filters}.",
+    "sortAction": "Activate to sort by this column",
+    "sortAscending": "ascending",
+    "sortDescending": "descending",
+    "loanName": "Loan {id}",
+    "poolName": "Lending pool",
+    "rate": "{value}%",
+    "termNone": "Flexible",
+    "filters": {
+      "searchLabel": "Search offers",
+      "searchPlaceholder": "Search by name or ID",
+      "currencyLabel": "Currency",
+      "kindLabel": "Offer type",
+      "statusLabel": "Status",
+      "all": "All",
+      "loan": "Loan",
+      "pool": "Pool"
+    },
+    "columns": {
+      "name": "Offer",
+      "kind": "Type",
+      "amount": "Amount available",
+      "ratePercent": "Rate / APY",
+      "termDays": "Term (days)",
+      "status": "Status"
+    },
+    "states": {
+      "loading": "Loading offers…",
+      "error": "Offers could not be loaded. Retry from the lender portal.",
+      "empty": "No offers match the current filters.",
+      "invalid": "That sort or filter action was invalid and was ignored."
+    }
+  "Privacy": {
+    "title": "Privacy",
+    "description": "Control how sensitive account data is displayed on this device.",
+    "reducedDataMode": "Reduced Data Mode",
+    "reducedDataModeDesc": "Mask account identifiers and balances on sensitive screens. Hidden values are absent from copied text, screenshots, and accessible names.",
+    "whenEnabled": "When enabled",
+    "addressesMasked": "Wallet addresses show as a mask instead of the real address",
+    "balancesMasked": "Balances and amounts show as a mask instead of the real value",
+    "scoresMasked": "Credit scores show as a mask instead of the real number",
+    "copyDisabled": "Copy buttons on masked values are disabled",
+    "revealHint": "Use the eye toggle on any masked value to temporarily reveal it",
+    "localOnly": "This preference is stored locally on this device only. It does not affect your account data on the blockchain or backend.",
+    "reveal": "Reveal",
+    "hide": "Hide",
+    "hidden": "hidden",
+    "copyDisabledHint": "Copy disabled (hidden)"
   }
 }

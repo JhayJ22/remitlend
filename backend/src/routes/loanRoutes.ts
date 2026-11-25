@@ -38,6 +38,7 @@ import {
 } from '../schemas/loanSchemas.js';
 
 import { buildCancelLoanTx } from '../controllers/loanController.js';
+import { abuseTelemetryGuard } from '../middleware/abuseTelemetry.js';
 
 const router = Router();
 
@@ -362,6 +363,7 @@ router.post(
   requireScopes('write:loans'),
   validateBody(requestLoanSchema),
   idempotencyMiddleware,
+  abuseTelemetryGuard('loan_request'),
   requestLoan,
 );
 
@@ -417,6 +419,7 @@ router.post(
   validateParams(repayLoanParamsSchema),
   validateBody(depositCollateralSchema),
   idempotencyMiddleware,
+  abuseTelemetryGuard('loan_deposit_collateral'),
   depositCollateral,
 );
 
@@ -468,6 +471,7 @@ router.post(
   validateParams(repayLoanParamsSchema),
   validateBody(releaseCollateralSchema),
   idempotencyMiddleware,
+  abuseTelemetryGuard('loan_release_collateral'),
   releaseCollateral,
 );
 
@@ -527,6 +531,7 @@ router.post(
   validateParams(repayLoanParamsSchema),
   validateBody(refinanceLoanSchema),
   idempotencyMiddleware,
+  abuseTelemetryGuard('loan_refinance'),
   refinanceLoan,
 );
 
@@ -582,6 +587,7 @@ router.post(
   validateParams(repayLoanParamsSchema),
   validateBody(extendLoanSchema),
   idempotencyMiddleware,
+  abuseTelemetryGuard('loan_extend'),
   extendLoan,
 );
 
@@ -632,6 +638,7 @@ router.post(
   validateParams(repayLoanParamsSchema),
   validateBody(liquidateLoanSchema),
   idempotencyMiddleware,
+  abuseTelemetryGuard('loan_liquidate'),
   buildLiquidateLoan,
 );
 
@@ -675,6 +682,7 @@ router.post(
   requireScopes('write:loans'),
   validateBody(submitTxSchema),
   idempotencyMiddleware,
+  abuseTelemetryGuard('loan_submit'),
   submitTransaction,
 );
 
@@ -738,6 +746,7 @@ router.post(
   validateParams(repayLoanParamsSchema),
   validateBody(repayLoanSchema),
   idempotencyMiddleware,
+  abuseTelemetryGuard('loan_repay'),
   repayLoan,
 );
 
@@ -794,6 +803,7 @@ router.post(
   validateParams(repayLoanParamsSchema),
   validateBody(submitTxSchema),
   idempotencyMiddleware,
+  abuseTelemetryGuard('loan_submit'),
   submitTransaction,
 );
 

@@ -58,16 +58,16 @@ export const requireTransactionAccess = asyncHandler(async (req, _res, next) => 
     throw AppError.badRequest('Transaction reference is required');
   }
 
-  const r = await query(`SELECT submitted_by FROM transaction_submissions WHERE tx_hash = $1 LIMIT 1`, [
-    txHash,
-  ]);
+  const r = await query(
+    `SELECT submitted_by
+       FROM transaction_submissions
+      WHERE (tx_hash = $1 OR id::text = $1) AND submitted_by = $2
+      LIMIT 1`,
+    [txHash, pk],
+  );
 
   const row = r?.rows?.[0] as { submitted_by: string } | undefined;
   if (!row) {
-    throw AppError.notFound('Transaction not found');
-  }
-  if (row.submitted_by !== pk) {
-    // Same response as a missing transaction so callers cannot probe for existence (#519).
     throw AppError.notFound('Transaction not found');
   }
 

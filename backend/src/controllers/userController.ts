@@ -2,7 +2,13 @@ import type { Request, Response } from 'express';
 import { query } from '../db/connection.js';
 import { AppError } from '../errors/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { getTransferHistoryPage } from '../services/transferHistoryService.js';
+import { CacheKeys, invalidateOnProfileUpdate } from '../utils/cacheKeys.js';
+import { readThrough } from '../utils/cacheContracts.js';
 import type { UpdateUserProfileInput } from '../schemas/userSchemas.js';
+
+/** Profile reads are cached briefly; PATCH /user/profile busts the entry. */
+const USER_PROFILE_CACHE_TTL_SECONDS = 120;
 
 interface UserProfileRow {
   id: number;
@@ -78,8 +84,13 @@ export const getUserProfile = asyncHandler(async (req: Request, res: Response) =
     throw AppError.unauthorized('Authentication required');
   }
 
-  const profile = await getOrCreateProfile(publicKey);
-  res.json(serializeProfile(profile));
+  const profile = await readThrough(
+    'user_profile',
+    CacheKeys.userProfile(publicKey),
+    USER_PROFILE_CACHE_TTL_SECONDS,
+    async () => serializeProfile(await getOrCreateProfile(publicKey)),
+  );
+  res.json(profile);
 });
 
 export const updateUserProfile = asyncHandler(async (req: Request, res: Response) => {
@@ -151,5 +162,105 @@ export const updateUserProfile = asyncHandler(async (req: Request, res: Response
     throw AppError.notFound('User profile not found');
   }
 
+  await invalidateOnProfileUpdate(publicKey);
+
   res.json(serializeProfile(updated));
+});
+
+/**
+ * GET /users/:id/transfer-history — paginated NFT transfer events with corridor,
+ * amount and timestamp. `:id` is the user's Stellar address; callers may only read
+ * their own history unless they are an admin.
+ */
+export const getTransferHistory = asyncHandler(async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const caller = req.user?.publicKey;
+  if (!caller) throw AppError.unauthorized('Authentication required');
+  if (caller !== id && req.user?.role !== 'admin') {
+    throw AppError.forbidden("Cannot read another user's transfer history");
+  }
+  const limit = Math.min(
+    Math.max(Number.parseInt(String(req.query.limit ?? '20'), 10) || 20, 1),
+    100,
+  );
+  const offset = Math.max(Number.parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+
+  const { items, total } = await getTransferHistoryPage(id, limit, offset);
+  res.json({ success: true, data: { items }, page: { limit, offset, total } });
+});
+
+// ─── Saved recipients (stored in user_profiles.metadata.recipients) ─────────────
+
+interface SavedRecipient {
+  id: string;
+  name: string;
+  address: string;
+}
+
+const STELLAR_G_ADDRESS = /^G[A-Z2-7]{55}$/;
+
+function recipientsFrom(row: UserProfileRow): SavedRecipient[] {
+  const list = metadataFrom(row).recipients;
+  return Array.isArray(list) ? (list as SavedRecipient[]) : [];
+}
+
+async function saveRecipients(
+  publicKey: string,
+  row: UserProfileRow,
+  recipients: SavedRecipient[],
+) {
+  const metadata = { ...metadataFrom(row), recipients };
+  await query(
+    `UPDATE user_profiles SET metadata = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE public_key = $2`,
+    [JSON.stringify(metadata), publicKey],
+  );
+}
+
+export const listRecipients = asyncHandler(async (req: Request, res: Response) => {
+  const publicKey = req.user?.publicKey;
+  if (!publicKey) throw AppError.unauthorized('Authentication required');
+  const profile = await getOrCreateProfile(publicKey);
+  res.json({ success: true, data: recipientsFrom(profile) });
+});
+
+export const addRecipient = asyncHandler(async (req: Request, res: Response) => {
+  const publicKey = req.user?.publicKey;
+  if (!publicKey) throw AppError.unauthorized('Authentication required');
+
+  const { name, address } = (req.body ?? {}) as { name?: string; address?: string };
+  const trimmedName = typeof name === 'string' ? name.trim() : '';
+  const trimmedAddress = typeof address === 'string' ? address.trim() : '';
+  if (!trimmedName || trimmedName.length > 100) {
+    throw AppError.badRequest('A recipient name (max 100 characters) is required');
+  }
+  if (!STELLAR_G_ADDRESS.test(trimmedAddress)) {
+    throw AppError.badRequest('Recipient address must be a valid Stellar public key');
+  }
+
+  const profile = await getOrCreateProfile(publicKey);
+  const recipients = recipientsFrom(profile);
+  if (recipients.length >= 100) throw AppError.badRequest('Recipient limit reached');
+  if (recipients.some((r) => r.address === trimmedAddress)) {
+    throw AppError.badRequest('Recipient already saved');
+  }
+
+  const recipient: SavedRecipient = {
+    id: crypto.randomUUID(),
+    name: trimmedName,
+    address: trimmedAddress,
+  };
+  await saveRecipients(publicKey, profile, [...recipients, recipient]);
+  res.status(201).json({ success: true, data: recipient });
+});
+
+export const deleteRecipient = asyncHandler(async (req: Request, res: Response) => {
+  const publicKey = req.user?.publicKey;
+  if (!publicKey) throw AppError.unauthorized('Authentication required');
+
+  const profile = await getOrCreateProfile(publicKey);
+  const recipients = recipientsFrom(profile);
+  const next = recipients.filter((r) => r.id !== req.params.id);
+  if (next.length === recipients.length) throw AppError.notFound('Recipient not found');
+  await saveRecipients(publicKey, profile, next);
+  res.json({ success: true });
 });

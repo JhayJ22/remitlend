@@ -18,7 +18,9 @@ import { PaginationControls } from "../../components/ui/PaginationControls";
 import { Spinner } from "../../components/global_ui/Spinner";
 import { TransactionsSkeleton } from "../../components/skeletons/TransactionsSkeleton";
 import { ErrorBoundary } from "../../components/global_ui/ErrorBoundary";
-import { downloadCsv, rowsToCsv } from "../../utils/csv";
+import { rowsToCsv } from "../../utils/csv";
+import { downloadSignedCsv } from "../../utils/statementExport";
+import { StatementVerificationNotice } from "../../components/security/StatementVerificationNotice";
 import {
   useWalletStore,
   selectWalletAddress,
@@ -277,6 +279,8 @@ function TransactionHistoryCard({
 }) {
   const [page, setPage] = useState(1);
   const [pageCursors, setPageCursors] = useState<Record<number, string | null>>({ 1: null });
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const { data, isLoading, isError } = useHorizonPayments(
     address,
     horizonUrl,
@@ -318,7 +322,7 @@ function TransactionHistoryCard({
     return `${parseFloat(p.amount).toLocaleString("en-US", { maximumFractionDigits: 7 })} ${asset}`;
   }
 
-  function exportCsv() {
+  async function exportCsv() {
     const today = new Date().toISOString().split("T")[0];
     const rows = payments.map((p) => {
       const asset = p.asset_type === "native" ? "XLM" : (p.asset_code ?? "");
@@ -333,7 +337,21 @@ function TransactionHistoryCard({
       };
     });
 
-    downloadCsv(`remitlend-activity-${today}.csv`, rowsToCsv(rows));
+    setExportError(null);
+    setIsExporting(true);
+    try {
+      await downloadSignedCsv({
+        filename: `remitlend-activity-${today}.csv`,
+        csv: rowsToCsv(rows),
+        sourceType: "wallet_payments",
+        sourceCheckpoint: `horizon:${payments[0]?.paging_token ?? "empty"}`,
+        rowCount: rows.length,
+      });
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "Statement export failed.");
+    } finally {
+      setIsExporting(false);
+    }
   }
 
   return (
@@ -349,14 +367,20 @@ function TransactionHistoryCard({
           <button
             type="button"
             onClick={exportCsv}
-            disabled={payments.length === 0 || isLoading || isError}
+            disabled={payments.length === 0 || isLoading || isError || isExporting}
             className="inline-flex items-center justify-center rounded-full border border-zinc-300 bg-white px-4 py-2 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
           >
-            Export CSV
+            {isExporting ? "Signing…" : "Export CSV"}
           </button>
         </div>
+        {exportError ? (
+          <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
+            {exportError}
+          </p>
+        ) : null}
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        <StatementVerificationNotice />
         {isLoading ? (
           <TransactionsSkeleton />
         ) : isError ? (

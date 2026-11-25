@@ -1,0 +1,60 @@
+# One deployment slot (blue or green) of the staging stack (#797).
+#
+# Both slots run side by side, sharing the long-lived db/redis services from
+# docker-compose.staging.yml (project "remitlend") over the external network
+# "remitlend_default". Only the reverse proxy decides which slot is live.
+#
+# Launched by scripts/deploy/blue-green.sh as:
+#   SLOT=green BACKEND_PORT=3101 FRONTEND_PORT=3100 TAG=staging-<sha> \
+#     docker compose -p remitlend-green -f docker-compose.slot.yml up -d
+version: "3.8"
+
+services:
+  backend:
+    image: ghcr.io/${OWNER}/remitlend-backend:${TAG}
+    env_file:
+      - ../../backend/.env.staging
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/remitlend
+      - REDIS_URL=redis://redis:6379
+      - PII_KEK_ID=${PII_KEK_ID}
+      - PII_KMS_ENDPOINT=${PII_KMS_ENDPOINT}
+      - PII_KEK_REGION=${PII_KEK_REGION}
+      - LOG_REDACTION=strict
+      - DEPLOY_SLOT=${SLOT}
+    ports:
+      - "127.0.0.1:${BACKEND_PORT}:3001"
+    networks: [shared]
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run
+
+  frontend:
+    image: ghcr.io/${OWNER}/remitlend-frontend:${TAG}
+    environment:
+      - API_URL=http://backend:3001
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT}:3000"
+    depends_on:
+      - backend
+    networks: [shared]
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run
+
+networks:
+  shared:
+    external: true
+    name: ${SHARED_NETWORK:-remitlend_default}

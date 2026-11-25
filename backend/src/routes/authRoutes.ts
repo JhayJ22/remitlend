@@ -1,5 +1,7 @@
 import { registerTestUser } from '../controllers/authController.js';
 import { Router } from 'express';
+import { asyncHandler } from '../utils/asyncHandler.js';
+import { createKey, rotateKey } from '../controllers/apiKeyController.js';
 import { z } from 'zod';
 import { requestChallenge, login, verify, logout, introspect, refreshAccessToken } from '../controllers/authController.js';
 import {
@@ -195,5 +197,61 @@ router.post('/introspect', validateBody(z.object({ token: z.string().min(1) })),
  *         description: Invalid or expired refresh token
  */
 router.post('/refresh', validateBody(z.object({ refreshToken: z.string().min(1) })), refreshAccessToken);
+
+/**
+ * @swagger
+ * /auth/api-keys:
+ *   post:
+ *     summary: Create a scoped API key with an expiry (max 1 year)
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [scopes, expiresAt]
+ *             properties:
+ *               scopes: { type: array, items: { type: string } }
+ *               expiresAt: { type: string, format: date-time }
+ *     responses:
+ *       201:
+ *         description: Key created; the secret is only returned once
+ *       400:
+ *         description: Invalid or too-distant expiresAt
+ *       403:
+ *         description: Requested scope not held by the caller
+ */
+router.post(
+  '/api-keys',
+  requireJwtAuth,
+  validateBody(
+    z.object({ scopes: z.array(z.string().min(1)).min(1), expiresAt: z.string().min(1) }),
+  ),
+  asyncHandler(createKey),
+);
+
+/**
+ * @swagger
+ * /auth/api-keys/{id}/rotate:
+ *   post:
+ *     summary: Atomically revoke an API key and issue a replacement with the same scopes
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer }
+ *     responses:
+ *       201:
+ *         description: New key issued; old key is revoked
+ *       404:
+ *         description: Key not found or already revoked
+ */
+router.post('/api-keys/:id/rotate', requireJwtAuth, asyncHandler(rotateKey));
 
 export default router;

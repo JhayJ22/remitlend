@@ -1,32 +1,57 @@
 /**
- * Schema-driven error presentation for API error codes.
+ * Schema-driven, localized error presentation for API error codes.
  *
- * Maps backend error codes to user-facing presentation metadata
- * (message, severity, retryability, action). Unknown or malformed
- * payloads fall back to a safe generic presentation so the UI never
- * renders raw/untrusted server text.
+ * Stable backend codes map to a guidance category. The category selects a
+ * localized title/message/action from the `Errors` message namespace. Raw
+ * server text is never rendered; machine codes and technical reference IDs
+ * are displayed verbatim and are never translated.
  */
 
-export type ErrorSeverity = 'info' | 'warning' | 'error' | 'critical';
+export type ErrorSeverity = "info" | "warning" | "error" | "critical";
 
-export type ErrorAction =
-  | 'retry'
-  | 'reauthenticate'
-  | 'contact_support'
-  | 'refresh'
-  | 'none';
+export type ErrorAction = "retry" | "reauthenticate" | "contact_support" | "refresh" | "none";
+
+export const ERROR_GUIDANCE_KEYS = [
+  "invalidAmount",
+  "invalidCredentials",
+  "invalidInput",
+  "sessionExpired",
+  "accessDenied",
+  "notFound",
+  "conflict",
+  "duplicateRequest",
+  "rateLimited",
+  "unavailable",
+  "invalidLoan",
+  "loanState",
+  "insufficientFunds",
+  "blockchain",
+  "internal",
+  "fallback",
+] as const;
+
+export type ErrorGuidanceKey = (typeof ERROR_GUIDANCE_KEYS)[number];
 
 export interface ErrorPresentation {
   /** Stable machine code, or 'UNKNOWN' when the payload is unrecognized. */
   code: string;
-  /** Safe, user-facing message. Never derived from raw server text. */
+  /** Legacy English message retained for non-localized consumers. */
   message: string;
   severity: ErrorSeverity;
-  /** Whether the caller may safely retry the failed operation. */
   retryable: boolean;
   action: ErrorAction;
-  /** Optional suggested backoff in milliseconds for retryable errors. */
   retryAfterMs?: number;
+  /** Localized-copy selector. Never derived from untrusted server text. */
+  guidanceKey: ErrorGuidanceKey;
+  /** Technical correlation ID shown verbatim so support can trace the request. */
+  referenceId?: string;
+}
+
+export interface LocalizedErrorPresentation extends ErrorPresentation {
+  title: string;
+  guidance: string;
+  actionLabel: string;
+  referenceLabel: string;
 }
 
 interface ErrorSchemaEntry {
@@ -34,126 +59,351 @@ interface ErrorSchemaEntry {
   severity: ErrorSeverity;
   retryable: boolean;
   action: ErrorAction;
+  guidanceKey: ErrorGuidanceKey;
   retryAfterMs?: number;
 }
 
-/**
- * Schema of known API error codes. Extend here as the backend contract grows;
- * unknown codes degrade gracefully via the fallback below.
- */
 const ERROR_SCHEMA: Record<string, ErrorSchemaEntry> = {
-  UNAUTHORIZED: {
-    message: 'Your session has expired. Please sign in again.',
-    severity: 'warning',
+  INVALID_AMOUNT: {
+    message: "Amount must be a positive number.",
+    severity: "warning",
     retryable: false,
-    action: 'reauthenticate',
+    action: "none",
+    guidanceKey: "invalidAmount",
   },
-  FORBIDDEN: {
-    message: 'You do not have permission to perform this action.',
-    severity: 'error',
+  INVALID_PUBLIC_KEY: {
+    message: "Invalid account identifier.",
+    severity: "warning",
     retryable: false,
-    action: 'contact_support',
+    action: "none",
+    guidanceKey: "invalidCredentials",
   },
-  NOT_FOUND: {
-    message: 'The requested resource could not be found.',
-    severity: 'warning',
-    retryable: false,
-    action: 'refresh',
-  },
-  VALIDATION_ERROR: {
-    message: 'Some of the provided information is invalid. Please review and try again.',
-    severity: 'warning',
-    retryable: false,
-    action: 'none',
-  },
-  RATE_LIMITED: {
-    message: 'Too many requests. Please wait a moment and try again.',
-    severity: 'warning',
+  INVALID_SIGNATURE: {
+    message: "The wallet signature could not be verified.",
+    severity: "warning",
     retryable: true,
-    action: 'retry',
-    retryAfterMs: 5000,
-  },
-  CONFLICT: {
-    message: 'This action conflicts with the current state. Refresh and try again.',
-    severity: 'warning',
-    retryable: true,
-    action: 'refresh',
+    action: "retry",
+    guidanceKey: "invalidCredentials",
     retryAfterMs: 1000,
   },
-  STALE_DATA: {
-    message: 'The data you are viewing is out of date. Refresh to see the latest.',
-    severity: 'info',
+  INVALID_CHALLENGE: {
+    message: "The sign-in challenge is not valid.",
+    severity: "warning",
     retryable: true,
-    action: 'refresh',
-    retryAfterMs: 0,
+    action: "refresh",
+    guidanceKey: "invalidCredentials",
   },
-  DEPENDENCY_UNAVAILABLE: {
-    message: 'A required service is temporarily unavailable. Please try again shortly.',
-    severity: 'error',
-    retryable: true,
-    action: 'retry',
-    retryAfterMs: 10000,
+  INVALID_TX_XDR: {
+    message: "The transaction payload could not be read.",
+    severity: "warning",
+    retryable: false,
+    action: "none",
+    guidanceKey: "invalidInput",
   },
-  TIMEOUT: {
-    message: 'The request timed out. Please try again.',
-    severity: 'error',
+  MISSING_FIELD: {
+    message: "A required value is missing.",
+    severity: "warning",
+    retryable: false,
+    action: "none",
+    guidanceKey: "invalidInput",
+  },
+  VALIDATION_ERROR: {
+    message: "Some of the provided information is invalid.",
+    severity: "warning",
+    retryable: false,
+    action: "none",
+    guidanceKey: "invalidInput",
+  },
+  UNAUTHORIZED: {
+    message: "Sign in to continue.",
+    severity: "warning",
+    retryable: false,
+    action: "reauthenticate",
+    guidanceKey: "sessionExpired",
+  },
+  TOKEN_EXPIRED: {
+    message: "Your session has expired.",
+    severity: "warning",
+    retryable: false,
+    action: "reauthenticate",
+    guidanceKey: "sessionExpired",
+  },
+  TOKEN_INVALID: {
+    message: "Your session is no longer valid.",
+    severity: "warning",
+    retryable: false,
+    action: "reauthenticate",
+    guidanceKey: "sessionExpired",
+  },
+  CHALLENGE_EXPIRED: {
+    message: "The sign-in challenge expired.",
+    severity: "warning",
     retryable: true,
-    action: 'retry',
-    retryAfterMs: 2000,
+    action: "refresh",
+    guidanceKey: "sessionExpired",
+  },
+  CHALLENGE_REPLAYED: {
+    message: "The sign-in challenge was already used.",
+    severity: "warning",
+    retryable: true,
+    action: "refresh",
+    guidanceKey: "sessionExpired",
+  },
+  FORBIDDEN: {
+    message: "You do not have access to this action.",
+    severity: "error",
+    retryable: false,
+    action: "contact_support",
+    guidanceKey: "accessDenied",
+  },
+  ACCESS_DENIED: {
+    message: "Access to this resource was denied.",
+    severity: "error",
+    retryable: false,
+    action: "contact_support",
+    guidanceKey: "accessDenied",
+  },
+  NOT_FOUND: {
+    message: "The requested resource could not be found.",
+    severity: "warning",
+    retryable: false,
+    action: "refresh",
+    guidanceKey: "notFound",
+  },
+  LOAN_NOT_FOUND: {
+    message: "The requested loan could not be found.",
+    severity: "warning",
+    retryable: false,
+    action: "refresh",
+    guidanceKey: "invalidLoan",
+  },
+  USER_NOT_FOUND: {
+    message: "The requested account could not be found.",
+    severity: "warning",
+    retryable: false,
+    action: "refresh",
+    guidanceKey: "notFound",
+  },
+  POOL_NOT_FOUND: {
+    message: "The requested lending pool could not be found.",
+    severity: "warning",
+    retryable: false,
+    action: "refresh",
+    guidanceKey: "notFound",
+  },
+  CONFLICT: {
+    message: "The current state changed before this action completed.",
+    severity: "warning",
+    retryable: true,
+    action: "refresh",
+    guidanceKey: "conflict",
+    retryAfterMs: 1000,
+  },
+  DUPLICATE_REQUEST: {
+    message: "This request was already accepted.",
+    severity: "info",
+    retryable: false,
+    action: "refresh",
+    guidanceKey: "duplicateRequest",
+  },
+  RATE_LIMIT_EXCEEDED: {
+    message: "Too many requests were sent.",
+    severity: "warning",
+    retryable: true,
+    action: "retry",
+    guidanceKey: "rateLimited",
+    retryAfterMs: 5000,
   },
   INTERNAL_ERROR: {
-    message: 'Something went wrong on our end. Please try again later.',
-    severity: 'critical',
+    message: "The request could not be completed.",
+    severity: "critical",
     retryable: true,
-    action: 'contact_support',
+    action: "contact_support",
+    guidanceKey: "internal",
     retryAfterMs: 15000,
+  },
+  DATABASE_ERROR: {
+    message: "Data could not be read right now.",
+    severity: "error",
+    retryable: true,
+    action: "retry",
+    guidanceKey: "unavailable",
+    retryAfterMs: 10000,
+  },
+  EXTERNAL_SERVICE_ERROR: {
+    message: "A connected service is unavailable.",
+    severity: "error",
+    retryable: true,
+    action: "retry",
+    guidanceKey: "unavailable",
+    retryAfterMs: 10000,
+  },
+  BLOCKCHAIN_ERROR: {
+    message: "The network operation could not be completed.",
+    severity: "error",
+    retryable: true,
+    action: "retry",
+    guidanceKey: "blockchain",
+    retryAfterMs: 5000,
+  },
+  SERVICE_UNAVAILABLE: {
+    message: "The service is temporarily unavailable.",
+    severity: "error",
+    retryable: true,
+    action: "retry",
+    guidanceKey: "unavailable",
+    retryAfterMs: 10000,
+  },
+  SERVICE_OVERLOADED: {
+    message: "The service is busy right now.",
+    severity: "warning",
+    retryable: true,
+    action: "retry",
+    guidanceKey: "rateLimited",
+    retryAfterMs: 5000,
+  },
+  BORROWER_MISMATCH: {
+    message: "This loan belongs to a different wallet.",
+    severity: "error",
+    retryable: false,
+    action: "none",
+    guidanceKey: "loanState",
+  },
+  INSUFFICIENT_BALANCE: {
+    message: "The account balance is too low.",
+    severity: "warning",
+    retryable: true,
+    action: "refresh",
+    guidanceKey: "insufficientFunds",
+  },
+  LOAN_ALREADY_REPAID: {
+    message: "This loan has already been repaid.",
+    severity: "info",
+    retryable: false,
+    action: "refresh",
+    guidanceKey: "loanState",
+  },
+  LOAN_NOT_ACTIVE: {
+    message: "This loan is not active.",
+    severity: "warning",
+    retryable: false,
+    action: "refresh",
+    guidanceKey: "loanState",
+  },
+  INVALID_LOAN_ID: {
+    message: "The loan identifier is not valid.",
+    severity: "warning",
+    retryable: false,
+    action: "none",
+    guidanceKey: "invalidLoan",
   },
 };
 
+/** Stable backend codes with an explicit presentation mapping. */
+export const SUPPORTED_ERROR_CODES = Object.keys(ERROR_SCHEMA).sort();
+
+/** Guidance category used by a stable backend code, or null when unmapped. */
+export function guidanceKeyForCode(code: string): ErrorGuidanceKey | null {
+  return ERROR_SCHEMA[code]?.guidanceKey ?? null;
+}
+
 const FALLBACK: ErrorPresentation = {
-  code: 'UNKNOWN',
-  message: 'An unexpected error occurred. Please try again.',
-  severity: 'error',
+  code: "UNKNOWN",
+  message: "An unexpected error occurred. Please try again.",
+  severity: "error",
   retryable: false,
-  action: 'none',
+  action: "none",
+  guidanceKey: "fallback",
 };
 
 const MAX_CODE_LENGTH = 64;
 const CODE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+const MAX_REFERENCE_LENGTH = 64;
+const REFERENCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 
-/**
- * Extract a candidate error code from an unknown API payload.
- * Accepts a bare string code or an object with a `code` field.
- * Returns null when the payload is malformed or the code is unsafe.
- */
-export function extractErrorCode(payload: unknown): string | null {
-  let raw: unknown;
-  if (typeof payload === 'string') {
-    raw = payload;
-  } else if (payload && typeof payload === 'object') {
-    raw = (payload as { code?: unknown }).code;
-  } else {
-    return null;
-  }
-
-  if (typeof raw !== 'string') return null;
+function normalizeCode(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
   const code = raw.trim();
   if (code.length === 0 || code.length > MAX_CODE_LENGTH) return null;
-  if (!CODE_PATTERN.test(code)) return null;
-  return code;
+  return CODE_PATTERN.test(code) ? code : null;
+}
+
+function normalizeReference(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const reference = raw.trim();
+  if (reference.length === 0 || reference.length > MAX_REFERENCE_LENGTH) return null;
+  return REFERENCE_PATTERN.test(reference) ? reference : null;
+}
+
+function payloadObjects(payload: unknown): Record<string, unknown>[] {
+  if (!payload || typeof payload !== "object") return [];
+  const root = payload as Record<string, unknown>;
+  const objects = [root];
+  for (const key of ["error", "details", "response"]) {
+    const value = root[key];
+    if (value && typeof value === "object") objects.push(value as Record<string, unknown>);
+  }
+  const data = root.response;
+  if (data && typeof data === "object") {
+    const dataObject = data as Record<string, unknown>;
+    objects.push(dataObject);
+    if (dataObject.data && typeof dataObject.data === "object") {
+      const inner = dataObject.data as Record<string, unknown>;
+      objects.push(inner);
+      if (inner.error && typeof inner.error === "object")
+        objects.push(inner.error as Record<string, unknown>);
+      if (inner.details && typeof inner.details === "object")
+        objects.push(inner.details as Record<string, unknown>);
+    }
+    if (dataObject.error && typeof dataObject.error === "object") {
+      objects.push(dataObject.error as Record<string, unknown>);
+    }
+    if (dataObject.headers && typeof dataObject.headers === "object") {
+      objects.push(dataObject.headers as Record<string, unknown>);
+    }
+  }
+  return objects;
 }
 
 /**
- * Resolve an API error payload into a safe presentation object.
- * Unknown or malformed payloads return the fallback presentation.
+ * Extract a safe machine code from the legacy and structured API payloads.
+ * Only uppercase snake_case identifiers are accepted.
+ */
+export function extractErrorCode(payload: unknown): string | null {
+  if (typeof payload === "string") return normalizeCode(payload);
+  for (const candidate of payloadObjects(payload)) {
+    const code = normalizeCode(candidate.code);
+    if (code) return code;
+  }
+  return null;
+}
+
+/**
+ * Extract a technical reference ID without ever reading server messages.
+ * The value is displayed verbatim and is not translated.
+ */
+export function extractReferenceId(payload: unknown): string | null {
+  for (const candidate of payloadObjects(payload)) {
+    for (const key of ["referenceId", "requestId", "x-request-id", "X-Request-Id"]) {
+      const reference = normalizeReference(candidate[key]);
+      if (reference) return reference;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve an API payload into a safe presentation object. Unknown codes keep
+ * their stable identifier but use fallback copy, never the raw server text.
  */
 export function presentError(payload: unknown): ErrorPresentation {
   const code = extractErrorCode(payload);
-  if (!code) return { ...FALLBACK };
+  const referenceId = extractReferenceId(payload) ?? undefined;
+  if (!code) return { ...FALLBACK, ...(referenceId ? { referenceId } : {}) };
 
   const entry = ERROR_SCHEMA[code];
   if (!entry) {
-    return { ...FALLBACK, code };
+    return { ...FALLBACK, code, ...(referenceId ? { referenceId } : {}) };
   }
 
   return {
@@ -162,15 +412,32 @@ export function presentError(payload: unknown): ErrorPresentation {
     severity: entry.severity,
     retryable: entry.retryable,
     action: entry.action,
+    guidanceKey: entry.guidanceKey,
     ...(entry.retryAfterMs !== undefined ? { retryAfterMs: entry.retryAfterMs } : {}),
+    ...(referenceId ? { referenceId } : {}),
   };
 }
 
 /**
- * Compute the next retry delay for a presentation, honoring the schema's
- * suggested backoff and applying bounded exponential growth per attempt.
- * Returns null when the error is not retryable.
+ * Produce localized user-facing copy. The stable code and reference ID are
+ * copied unchanged; only guidance-category copy is translated.
  */
+export function localizeError(
+  presentation: ErrorPresentation,
+  translate: (key: string, values?: Record<string, string | number>) => string,
+): LocalizedErrorPresentation {
+  const key = presentation.guidanceKey;
+  return {
+    ...presentation,
+    title: translate(`Errors.guidance.${key}.title`),
+    message: translate(`Errors.guidance.${key}.message`),
+    guidance: translate(`Errors.guidance.${key}.guidance`),
+    actionLabel: translate(`Errors.actions.${presentation.action}`),
+    referenceLabel: translate("Errors.referenceLabel"),
+  };
+}
+
+/** Compute a bounded retry delay, or null when the error must not be retried. */
 export function nextRetryDelayMs(
   presentation: ErrorPresentation,
   attempt: number,
@@ -183,10 +450,7 @@ export function nextRetryDelayMs(
   return Math.min(delay, maxDelayMs);
 }
 
-/**
- * Whether a presentation indicates the caller must re-authenticate before
- * any further requests will succeed.
- */
+/** Whether the presentation requires re-authentication before retrying. */
 export function requiresReauthentication(presentation: ErrorPresentation): boolean {
-  return presentation.action === 'reauthenticate';
+  return presentation.action === "reauthenticate";
 }
