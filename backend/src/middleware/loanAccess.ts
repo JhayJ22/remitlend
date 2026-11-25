@@ -7,6 +7,10 @@ import { asyncHandler } from '../utils/asyncHandler.js';
  * borrower matches the JWT `publicKey`.
  * Returns 404 both when the loan is missing and when it belongs to a different
  * borrower, so existence is not revealed.
+ *
+ * Mutation-testing note (#871): the ownership predicate below
+ * (`row.address !== pk`) is a critical-path mutation target. Tests must fail if
+ * the comparison is removed or inverted (see `loanAccess.mutation.test.ts`).
  */
 export const requireLoanBorrowerAccess = asyncHandler(async (req, _res, next) => {
   const loanId = req.params.loanId;
@@ -46,6 +50,10 @@ export const requireLoanBorrowerAccess = asyncHandler(async (req, _res, next) =>
  * Returns 404 both when the transaction is missing and when it belongs to a
  * different user, so existence is not revealed (mirrors `requireLoanBorrowerAccess`).
  * Owner-only by default; admins are not granted implicit access.
+ *
+ * Mutation-testing note (#871): the ownership predicate below
+ * (`row.submitted_by !== pk`) is a critical-path mutation target. Tests must
+ * fail if the comparison is removed or inverted.
  */
 export const requireTransactionAccess = asyncHandler(async (req, _res, next) => {
   const txHash = req.params.txHash || req.params.id;
@@ -81,6 +89,10 @@ export const requireTransactionAccess = asyncHandler(async (req, _res, next) => 
  *
  * Ownership check (#1365): compare the loan's stored owner (`row.address`) to the
  * caller's JWT public key (`pk`). Never compare the caller key to itself.
+ *
+ * Mutation-testing note (#871): the ownership predicate below
+ * (`loanOwner !== pk`) is a critical-path mutation target. Tests must fail if
+ * the comparison is removed or inverted.
  */
 export const requireLoanOwner = asyncHandler(async (req, _res, next) => {
   const loanId = req.params.loanId || req.params.id;

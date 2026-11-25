@@ -110,3 +110,80 @@ If a migration fails or needs to be rolled back:
   - Added rate bounds (MIN_RATE_BPS, MAX_RATE_BPS)
   - Added liquidation bonus cap (MAX_LIQUIDATION_BONUS_BPS = 2000)
   - Migration guard prevents double-execution
+
+## Release Bundle and Compatibility Implications
+
+Every contract release is published as an immutable release bundle. The bundle is the
+authoritative record of what was deployed and is the only accepted evidence for a
+migration claim.
+
+### Bundle contents
+
+A release bundle contains, at minimum:
+
+- **Source revision** - the exact commit SHA the WASM was built from.
+- **Lockfile digests** - SHA-256 of `Cargo.lock` (and any other pinned dependency
+  manifests) used for the build.
+- **Test results** - machine-readable output of the contract test suite, including
+  migration tests and mutation-testing results.
+- **Generated API schemas** - the exported contract spec / ABI for the released
+  version, so clients can diff against the previous release.
+- **WASM hashes** - SHA-256 of each produced `.wasm` artifact.
+- **Deployment manifest** - network, contract ID, `CURRENT_VERSION`, and the
+  `MigratedVersion` expected after `migrate()` runs.
+
+Every artifact in the bundle must trace back to the single immutable build identified
+by the source revision and lockfile digests. Artifacts that cannot be traced to that
+build are rejected and must not be deployed.
+
+### Schema change compatibility
+
+Public or stored schema changes (new `DataKey`s, struct field changes, storage key
+renames) are compatibility-relevant and must be documented in this file and in the
+bundle's generated API schema diff. The rules are:
+
+1. **Additive changes** (new `DataKey` initialized in `migrate()` with a default) are
+   backward compatible. The previous release's getters must continue to return valid
+   values after `migrate()`.
+2. **Transformative changes** (renamed keys, changed types) require a documented
+   migration path and a test proving old data is readable through the new getters.
+3. **Removals** are only permitted after a release in which the old key is no longer
+   read; the removal is recorded in the bundle's schema diff.
+4. `CURRENT_VERSION` must be incremented for any stored schema change, and the
+   deployment manifest must record the expected post-migration `MigratedVersion`.
+
+### Hermetic migration matrix
+
+Migrations are validated in a hermetic matrix before release:
+
+- Supported PostgreSQL versions are exercised from an empty database and from
+  prior-schema fixtures.
+- Migrations and seeds are applied, then rollback and retry behavior is verified.
+- The matrix runs without production data and without external network access.
+
+The matrix results are attached to the release bundle as test evidence. A release
+whose migration matrix has not passed is not eligible for deployment.
+
+### Mutation testing
+
+Mutation testing runs against the contract sources identified by the bundle's source
+revision. Surviving mutants in migration, guard, or money-handling code are treated as
+unresolved risk evidence and block release until addressed or explicitly waived with a
+recorded justification in the traceability workflow.
+
+### Traceability workflow
+
+Accepted requirements are linked to implementation PRs, required risk evidence,
+release notes, and deployment checks. Each link references the immutable build
+(source revision + lockfile digests) so that every artifact is traceable to one build.
+Release is blocked when high-risk acceptance criteria are unresolved or silently
+waived; waivers must be explicit, recorded, and visible in the bundle.
+
+### Rollback and retry
+
+Rollback and retry are validated as part of the hermetic migration matrix. The
+migration guard (`DataKey::MigratedVersion`) ensures retries are idempotent: a
+re-run of `migrate()` at the same version is a no-op and must not produce partial
+state changes. If a migration fails mid-way, the previous contract version is
+redeployed per the Emergency Rollback section above and the failure is recorded in
+the release bundle.
