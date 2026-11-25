@@ -9,6 +9,7 @@ import { requireApiKey } from '../middleware/auth.js';
 import { requireJwtAuth, requireRoles, requireScopes } from '../middleware/jwtAuth.js';
 import { strictRateLimiter } from '../middleware/rateLimiter.js';
 import { validateBody } from '../middleware/validation.js';
+import { submitTxSchema } from '../schemas/loanSchemas.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { auditLog } from '../middleware/auditLog.js';
 import { defaultChecker } from '../services/defaultChecker.js';
@@ -42,6 +43,7 @@ import { getReconciliationStatus } from '../services/crossContractReconciler.js'
 import { createSupportedAsset } from '../services/assetAllowlistService.js';
 
 import { buildRejectLoanTx } from '../controllers/loanController.js';
+import { disburseLoan } from '../controllers/loanDisbursementController.js';
 import { listAuditLogs } from '../controllers/authController.js';
 import { exportAuditLogs, verifyAuditLogs } from '../controllers/auditLogExportController.js';
 import {
@@ -286,6 +288,47 @@ router.post(
   requireRoles('admin'),
   auditLog,
   buildRejectLoanTx,
+);
+
+/**
+ * @swagger
+ * /admin/loans/{loanId}/disburse:
+ *   post:
+ *     summary: Submit a signed approve_loan (disbursement) transaction
+ *     description: >
+ *       Durably idempotent loan disbursement. A retry with the same
+ *       Idempotency-Key polls the original chain transaction instead of
+ *       submitting a second Soroban transaction.
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: loanId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [signedTxXdr]
+ *             properties:
+ *               signedTxXdr:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Transaction submitted (or replayed) successfully
+ */
+router.post(
+  '/loans/:loanId/disburse',
+  requireJwtAuth,
+  requireRoles('admin'),
+  validateBody(submitTxSchema),
+  auditLog,
+  disburseLoan,
 );
 /**
  * @swagger

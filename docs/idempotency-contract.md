@@ -166,11 +166,46 @@ if (success) {
 }
 ```
 
+## Soroban Transaction Idempotency (Loan Disbursement)
+
+The HTTP cache described above only stores a response **after** the request
+completes. A chain submission can be accepted by the network before the HTTP
+response is written, so a timeout between those events would otherwise cause a
+retry to submit a second Soroban transaction. `approve_loan` (loan
+disbursement) uses a durable, database-backed guard in addition to the HTTP
+cache.
+
+### `POST /api/admin/loans/:loanId/disburse`
+
+- Requires `Idempotency-Key` exactly like other write operations.
+- The backend derives the transaction hash from the signed XDR and writes
+  `(idempotency_key, tx_hash, submitted_at)` to `transaction_submissions`
+  **before** calling Soroban. `tx_hash` is the XDR hash used for chain replay.
+- `transaction_submissions.idempotency_key` is protected by a unique database
+  constraint, so a cold Redis cache cannot produce a second submission.
+- A replay with a known idempotency key **polls the chain** for the recorded
+  XDR hash via `sorobanService.pollTransactionByHash()` instead of calling
+  `submitSignedTx()` again.
+- If the network reports `tx_already_applied` (Horizon) or an equivalent
+  duplicate outcome, the original success response is returned with HTTP 200
+  rather than a 500.
+- Responses include `X-Idempotent-Replayed: true` on replayed submissions.
+
+```text
+First request:
+  INSERT transaction_submissions(idempotency_key, tx_hash, PENDING)
+  → submitSignedTx() → UPDATE status=SUCCESS → 200
+
+Retry after timeout (cache miss):
+  SELECT by idempotency_key → pollTransactionByHash(tx_hash)
+  → 200 original success, zero additional Soroban calls
+```
+
 ## Enforcement Across All Write Operations
 
 All routes implementing write operations **must** respect the idempotency contract:
 
-- ✅ Loan requests, repayments, collateral operations
+- ✅ Loan requests, repayments, collateral operations, disbursements (`approve_loan`)
 - ✅ Pool operations (deposits, withdrawals)
 - ✅ Score transactions
 - ✅ Remittance operations

@@ -1065,6 +1065,38 @@ class SorobanService {
   }
 
   /**
+   * Polls the chain for an already-submitted transaction by its XDR hash.
+   * Used for idempotent replay: the caller never re-submits, it only asks
+   * whether the original transaction was applied.
+   */
+  async pollTransactionByHash(
+    txHash: string,
+  ): Promise<{ status: string; resultXdr?: string; alreadyApplied?: boolean }> {
+    const server = this.getRpcServer();
+    try {
+      const polled = await server.pollTransaction(txHash, {
+        attempts: 5,
+        sleepStrategy: () => 500,
+      });
+      const resultXdr =
+        polled.status === 'SUCCESS' && polled.resultXdr
+          ? polled.resultXdr.toXDR('base64')
+          : undefined;
+      return {
+        status: polled.status,
+        ...(resultXdr ? { resultXdr } : {}),
+        alreadyApplied: polled.status === 'SUCCESS',
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('tx_already_applied') || message.includes('already applied')) {
+        return { status: 'SUCCESS', alreadyApplied: true };
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Records a chain-confirmation outcome with bounded label cardinality
    * (success | failed | not_found | unknown | error) plus its duration.
    */
