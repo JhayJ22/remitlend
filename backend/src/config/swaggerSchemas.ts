@@ -845,4 +845,337 @@ export const swaggerSchemas = {
     },
     required: ['success', 'error'],
   },
+  // ---------------------------------------------------------------------------
+  // Operations schemas (Issues #863, #867, #868)
+  //
+  // All operations endpoints are admin-only (RBAC: `admin` role, scope
+  // `operations:read` for GETs and `operations:write` for mutations). Every
+  // mutation is idempotent via an `Idempotency-Key` header; replays return the
+  // original response with `idempotentReplay: true`. Timestamps are always
+  // ISO-8601 UTC strings and are never derived from client-supplied clocks.
+  // ---------------------------------------------------------------------------
+  AlertSeverity: {
+    type: 'string',
+    enum: ['critical', 'high', 'warning'],
+    description: 'Severity of an SLO alert. Only `critical` alerts page on-call.',
+  },
+  AlertOwner: {
+    type: 'object',
+    properties: {
+      team: { type: 'string', example: 'payments-oncall' },
+      primary: { type: 'string', example: 'alice@example.com' },
+      secondary: { type: 'string', nullable: true, example: 'bob@example.com' },
+      escalationPolicyId: { type: 'string', example: 'pol_fin_slo_v1' },
+    },
+    required: ['team', 'primary', 'escalationPolicyId'],
+  },
+  AlertOwnership: {
+    type: 'object',
+    properties: {
+      alertId: { type: 'string', example: 'slo.financial.settlement_latency' },
+      sloId: { type: 'string', example: 'slo.settlement_latency_p99' },
+      severity: { $ref: '#/components/schemas/AlertSeverity' },
+      owner: { $ref: '#/components/schemas/AlertOwner' },
+      runbookUrl: { type: 'string', format: 'uri' },
+      escalationRoute: {
+        type: 'array',
+        description: 'Ordered escalation steps; index 0 is the first responder.',
+        items: {
+          type: 'object',
+          properties: {
+            afterMinutes: { type: 'integer', minimum: 0 },
+            notify: { type: 'string', example: 'pagerduty:payments-oncall' },
+          },
+          required: ['afterMinutes', 'notify'],
+        },
+      },
+      updatedAt: { type: 'string', format: 'date-time' },
+      updatedBy: { type: 'string' },
+    },
+    required: [
+      'alertId',
+      'sloId',
+      'severity',
+      'owner',
+      'runbookUrl',
+      'escalationRoute',
+      'updatedAt',
+      'updatedBy',
+    ],
+  },
+  AlertOwnershipListResponse: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean', example: true },
+      data: {
+        type: 'object',
+        properties: {
+          alerts: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/AlertOwnership' },
+          },
+        },
+        required: ['alerts'],
+      },
+    },
+    required: ['success', 'data'],
+  },
+  AlertOwnershipUpsertRequest: {
+    type: 'object',
+    properties: {
+      severity: { $ref: '#/components/schemas/AlertSeverity' },
+      owner: { $ref: '#/components/schemas/AlertOwner' },
+      runbookUrl: { type: 'string', format: 'uri' },
+      escalationRoute: {
+        type: 'array',
+        minItems: 1,
+        items: {
+          type: 'object',
+          properties: {
+            afterMinutes: { type: 'integer', minimum: 0 },
+            notify: { type: 'string' },
+          },
+          required: ['afterMinutes', 'notify'],
+        },
+      },
+      expectedVersion: {
+        type: 'integer',
+        minimum: 1,
+        description:
+          'Optimistic concurrency guard. Stale versions are rejected with 409 CONFLICT and no partial write.',
+      },
+    },
+    required: ['severity', 'owner', 'runbookUrl', 'escalationRoute', 'expectedVersion'],
+  },
+  AlertOwnershipResponse: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean', example: true },
+      data: { $ref: '#/components/schemas/AlertOwnership' },
+      idempotentReplay: { type: 'boolean', example: false },
+    },
+    required: ['success', 'data'],
+  },
+  NotificationDeliveryTestRequest: {
+    type: 'object',
+    properties: {
+      alertId: { type: 'string' },
+      channel: { type: 'string', enum: ['pagerduty', 'slack', 'email', 'webhook'] },
+      dryRun: {
+        type: 'boolean',
+        default: true,
+        description: 'When true no external notification is sent; delivery is simulated.',
+      },
+    },
+    required: ['alertId', 'channel'],
+  },
+  NotificationDeliveryTestResult: {
+    type: 'object',
+    properties: {
+      alertId: { type: 'string' },
+      channel: { type: 'string' },
+      delivered: { type: 'boolean' },
+      providerStatusCode: { type: 'integer', nullable: true },
+      latencyMs: { type: 'integer' },
+      attemptedAt: { type: 'string', format: 'date-time' },
+      error: { type: 'string', nullable: true },
+    },
+    required: ['alertId', 'channel', 'delivered', 'latencyMs', 'attemptedAt'],
+  },
+  NotificationDeliveryTestResponse: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean', example: true },
+      data: { $ref: '#/components/schemas/NotificationDeliveryTestResult' },
+    },
+    required: ['success', 'data'],
+  },
+  AlertDrillRequest: {
+    type: 'object',
+    properties: {
+      alertIds: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 50,
+        items: { type: 'string' },
+      },
+      scheduledFor: {
+        type: 'string',
+        format: 'date-time',
+        description: 'Must be in the future; past timestamps are rejected with 422.',
+      },
+      acknowledgeWithinMinutes: { type: 'integer', minimum: 1, maximum: 120, default: 15 },
+    },
+    required: ['alertIds', 'scheduledFor'],
+  },
+  AlertDrillResult: {
+    type: 'object',
+    properties: {
+      drillId: { type: 'string' },
+      status: {
+        type: 'string',
+        enum: ['scheduled', 'running', 'completed', 'failed', 'cancelled'],
+      },
+      scheduledFor: { type: 'string', format: 'date-time' },
+      startedAt: { type: 'string', format: 'date-time', nullable: true },
+      completedAt: { type: 'string', format: 'date-time', nullable: true },
+      alerts: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            alertId: { type: 'string' },
+            notified: { type: 'boolean' },
+            acknowledgedAt: { type: 'string', format: 'date-time', nullable: true },
+            acknowledgedBy: { type: 'string', nullable: true },
+            recoveredAt: { type: 'string', format: 'date-time', nullable: true },
+            timeToAcknowledgeSeconds: { type: 'integer', nullable: true },
+            timeToRecoverSeconds: { type: 'integer', nullable: true },
+          },
+          required: ['alertId', 'notified'],
+        },
+      },
+    },
+    required: ['drillId', 'status', 'scheduledFor', 'alerts'],
+  },
+  AlertDrillResponse: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean', example: true },
+      data: { $ref: '#/components/schemas/AlertDrillResult' },
+      idempotentReplay: { type: 'boolean', example: false },
+    },
+    required: ['success', 'data'],
+  },
+  IncidentEvidenceBundleRequest: {
+    type: 'object',
+    properties: {
+      incidentId: { type: 'string', example: 'inc_2024_06_01_001' },
+      from: { type: 'string', format: 'date-time' },
+      to: { type: 'string', format: 'date-time' },
+      include: {
+        type: 'array',
+        items: {
+          type: 'string',
+          enum: ['requests', 'traces', 'checkpoints', 'stateRefs'],
+        },
+        default: ['requests', 'traces', 'checkpoints', 'stateRefs'],
+      },
+      redactionMode: {
+        type: 'string',
+        enum: ['default', 'strict'],
+        default: 'default',
+        description:
+          'Redaction is applied by default. `strict` additionally removes all free-text fields.',
+      },
+      ttlSeconds: {
+        type: 'integer',
+        minimum: 60,
+        maximum: 86400,
+        default: 3600,
+        description: 'Bundle lifetime. Expired bundles return 410 Gone.',
+      },
+    },
+    required: ['incidentId', 'from', 'to'],
+  },
+  IncidentEvidenceBundle: {
+    type: 'object',
+    properties: {
+      bundleId: { type: 'string' },
+      incidentId: { type: 'string' },
+      createdAt: { type: 'string', format: 'date-time' },
+      expiresAt: { type: 'string', format: 'date-time' },
+      redactionMode: { type: 'string', enum: ['default', 'strict'] },
+      redactedFields: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      entries: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            kind: {
+              type: 'string',
+              enum: ['request', 'trace', 'checkpoint', 'stateRef'],
+            },
+            ref: { type: 'string' },
+            occurredAt: { type: 'string', format: 'date-time' },
+            payload: {
+              type: 'object',
+              description: 'Redacted payload; never contains secrets or PII.',
+            },
+          },
+          required: ['kind', 'ref', 'occurredAt'],
+        },
+      },
+      reproducible: {
+        type: 'boolean',
+        description: 'True when the bundle can be regenerated from the incident ID alone.',
+      },
+    },
+    required: [
+      'bundleId',
+      'incidentId',
+      'createdAt',
+      'expiresAt',
+      'redactionMode',
+      'entries',
+      'reproducible',
+    ],
+  },
+  IncidentEvidenceBundleResponse: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean', example: true },
+      data: { $ref: '#/components/schemas/IncidentEvidenceBundle' },
+      idempotentReplay: { type: 'boolean', example: false },
+    },
+    required: ['success', 'data'],
+  },
+  ClockSkewSample: {
+    type: 'object',
+    properties: {
+      service: { type: 'string', example: 'backend' },
+      provider: { type: 'string', example: 'stellar-horizon' },
+      observedAt: { type: 'string', format: 'date-time' },
+      offsetMs: { type: 'integer', example: 42 },
+      roundTripMs: { type: 'integer', example: 18 },
+      thresholdMs: { type: 'integer', example: 500 },
+      breached: { type: 'boolean' },
+    },
+    required: ['service', 'provider', 'observedAt', 'offsetMs', 'roundTripMs', 'thresholdMs', 'breached'],
+  },
+  ClockSkewReport: {
+    type: 'object',
+    properties: {
+      generatedAt: { type: 'string', format: 'date-time' },
+      samples: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/ClockSkewSample' },
+      },
+      authoritativeTimestamps: {
+        type: 'array',
+        description: 'Authoritative timestamp source per workflow.',
+        items: {
+          type: 'object',
+          properties: {
+            workflow: { type: 'string', example: 'quote' },
+            source: { type: 'string', example: 'backend.server_clock' },
+            maxSkewMs: { type: 'integer', example: 500 },
+          },
+          required: ['workflow', 'source', 'maxSkewMs'],
+        },
+      },
+    },
+    required: ['generatedAt', 'samples', 'authoritativeTimestamps'],
+  },
+  ClockSkewReportResponse: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean', example: true },
+      data: { $ref: '#/components/schemas/ClockSkewReport' },
+    },
+    required: ['success', 'data'],
+  },
 } as const;

@@ -69,6 +69,20 @@ import {
   resolveOrphanedTransaction,
 } from '../controllers/orphanedTxController.js';
 import {
+  getAlertOwnership,
+  updateAlertOwnership,
+  startAlertDrill,
+  createIncidentEvidenceBundle,
+  getIncidentEvidenceBundle,
+  getClockSkewReport,
+} from '../controllers/operationsController.js';
+import {
+  alertOwnershipUpdateSchema,
+  alertDrillSchema,
+  incidentBundleCreateSchema,
+} from '../schemas/operationsSchemas.js';
+import { idempotency } from '../middleware/idempotency.js';
+import {
   createRequest as createPrivilegedRequest,
   approveRequest as approvePrivilegedRequest,
   revokeRequest as revokePrivilegedRequest,
@@ -1014,6 +1028,28 @@ router.post(
   }),
 );
 
+/**
+ * @swagger
+ * /admin/alerts/ownership:
+ *   get:
+ *     summary: List SLO alert ownership and escalation mappings
+ *     description: >
+ *       Returns the owner, severity, runbook, and escalation route for every
+ *       critical SLO alert. Read-only; requires the admin role.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Alert ownership mappings
+ *       403:
+ *         description: Caller is not an admin
+ */
+router.get(
+  '/alerts/ownership',
+  requireJwtAuth,
+  requireRoles('admin'),
+  asyncHandler(getAlertOwnership),
 // ---------------------------------------------------------------------------
 // Signed evidence provenance (#848) — admin read-only endpoints.
 // Writes are performed internally by ingestion jobs; no public POST endpoint
@@ -1222,6 +1258,26 @@ router.delete(
 
 /**
  * @swagger
+ * /admin/alerts/ownership:
+ *   put:
+ *     summary: Replace SLO alert ownership and escalation mappings
+ *     description: >
+ *       Validates the full mapping set (unique alert keys, known severities,
+ *       non-empty owner/runbook/escalation route) and persists it atomically.
+ *       Invalid input is rejected with 400 and no partial write occurs.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Updated alert ownership mappings
+ *       400:
+ *         description: Validation error
+ *       403:
+ *         description: Caller is not an admin
+ */
+router.put(
+  '/alerts/ownership',
  * /admin/evidence-provenance:
  *   get:
  *     summary: List evidence provenance records
@@ -1280,11 +1336,43 @@ router.delete(
   requireRoles('admin'),
   strictRateLimiter,
   auditLog,
+  validateBody(alertOwnershipUpdateSchema),
+  asyncHandler(updateAlertOwnership),
   bulkDeleteUserProjectionCache,
 );
 
 /**
  * @swagger
+ * /admin/alerts/drills:
+ *   post:
+ *     summary: Start a scheduled alert notification drill
+ *     description: >
+ *       Sends test notifications for the selected alerts and records the drill
+ *       so acknowledgement and recovery can be measured. Requires an
+ *       Idempotency-Key header; replaying the same key returns the original
+ *       drill. A duplicate drill for the same alert set returns 409.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       202:
+ *         description: Drill started
+ *       400:
+ *         description: Validation error
+ *       403:
+ *         description: Caller is not an admin
+ *       409:
+ *         description: Duplicate drill for the same alert set
+ */
+router.post(
+  '/alerts/drills',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  idempotency,
+  auditLog,
+  validateBody(alertDrillSchema),
+  asyncHandler(startAlertDrill),
  * /admin/network-failover/dead-letters:
  *   get:
  *     summary: List dead-lettered signed writes (metadata only)
@@ -1388,6 +1476,13 @@ router.get(
 
 /**
  * @swagger
+ * /admin/incidents/{incidentId}/bundle:
+ *   post:
+ *     summary: Create a time-limited incident evidence bundle
+ *     description: >
+ *       Collects bounded request, trace, checkpoint, and state references with
+ *       redaction by default. Requires an Idempotency-Key header; replaying the
+ *       same key returns the original bundle.
  * /admin/evidence-provenance/{id}/verify:
  *   get:
  *     summary: Verify the HMAC integrity of a stored evidence record
@@ -1434,11 +1529,30 @@ router.get(
  *       - BearerAuth: []
  *     parameters:
  *       - in: path
+ *         name: incidentId
  *         name: userId
  *         required: true
  *         schema:
  *           type: string
  *     responses:
+ *       201:
+ *         description: Bundle created
+ *       400:
+ *         description: Validation error
+ *       403:
+ *         description: Caller is not an admin
+ *       404:
+ *         description: Unknown incident
+ */
+router.post(
+  '/incidents/:incidentId/bundle',
+  requireJwtAuth,
+  requireRoles('admin'),
+  strictRateLimiter,
+  idempotency,
+  auditLog,
+  validateBody(incidentBundleCreateSchema),
+  asyncHandler(createIncidentEvidenceBundle),
  *       200:
  *         description: Verification result
  *         content:
@@ -1677,6 +1791,36 @@ router.post(
 
 /**
  * @swagger
+ * /admin/incidents/{incidentId}/bundle:
+ *   get:
+ *     summary: Retrieve an incident evidence bundle
+ *     description: >
+ *       Access-controlled and time-limited. Returns 404 for an unknown
+ *       incident and 410 once the bundle has expired.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: incidentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Bundle contents
+ *       403:
+ *         description: Caller is not an admin
+ *       404:
+ *         description: Unknown incident or bundle
+ *       410:
+ *         description: Bundle has expired
+ */
+router.get(
+  '/incidents/:incidentId/bundle',
+  requireJwtAuth,
+  requireRoles('admin'),
+  asyncHandler(getIncidentEvidenceBundle),
  * /admin/recovery-actions/{id}:
  *   get:
  *     summary: Get a single recovery action record
@@ -1751,6 +1895,30 @@ router.get(
 
 /**
  * @swagger
+ * /admin/clock-skew:
+ *   get:
+ *     summary: Report measured service and provider clock drift
+ *     description: >
+ *       Returns the authoritative timestamp per workflow plus measured drift
+ *       for each service and provider, and flags any that exceed the alert
+ *       threshold.
+ *     tags: [Admin]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Clock skew report
+ *       403:
+ *         description: Caller is not an admin
+ */
+router.get(
+  '/clock-skew',
+  requireJwtAuth,
+  requireRoles('admin'),
+  asyncHandler(getClockSkewReport),
+);
+
+export default router;
  * /admin/recovery-actions/{id}/execute:
  *   post:
  *     summary: Execute an approved recovery action

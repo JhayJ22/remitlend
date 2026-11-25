@@ -5,6 +5,11 @@ import { challengeNonceCounter } from '../middleware/metrics.js';
 import { query } from '../db/connection.js';
 import logger from '../utils/logger.js';
 import { generateChallenge, type ChallengeMessage } from './authService.js';
+import {
+  assertAuthoritativeTimestamp,
+  getAuthoritativeNowMs,
+  getMaxObservedSkewMs,
+} from './clockSkewService.js';
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const EXPIRED_ROW_CLEANUP_BATCH_SIZE = 500;
@@ -28,11 +33,53 @@ function recordDependencyFailure(operation: 'issue' | 'consume', error: unknown)
   });
 }
 
+function recordSkewRejection(
+  operation: 'issue' | 'consume',
+  reason: 'timestamp_in_future' | 'timestamp_too_old' | 'skew_extends_validity',
+  details: Record<string, unknown>,
+): void {
+  recordOutcome('rejected_skew');
+  logger.warn('Authentication challenge rejected due to clock skew', {
+    event: 'auth.challenge_nonce.skew_rejected',
+    operation,
+    reason,
+    ...details,
+  });
+}
+
 export async function issueChallenge(publicKey: string): Promise<ChallengeMessage> {
   const challenge = generateChallenge(publicKey);
   const nonceHash = sha256(challenge.nonce);
   const messageHash = sha256(challenge.message);
-  const expiresAt = new Date(challenge.timestamp + CHALLENGE_TTL_MS);
+
+  // The nonce validity window is anchored to the authoritative clock, never to
+  // the local wall clock used to render the challenge message. If the local
+  // clock is ahead of the authoritative clock, the message timestamp would
+  // otherwise grant the nonce a longer-than-intended validity window.
+  let authoritativeNowMs: number;
+  try {
+    authoritativeNowMs = await getAuthoritativeNowMs();
+  } catch (error) {
+    recordDependencyFailure('issue', error);
+    throw AppError.serviceUnavailable(
+      'Authentication challenge service is temporarily unavailable',
+      ErrorCode.SERVICE_UNAVAILABLE,
+    );
+  }
+
+  const skewMs = Math.abs(challenge.timestamp - authoritativeNowMs);
+  if (skewMs > getMaxObservedSkewMs()) {
+    recordSkewRejection('issue', 'skew_extends_validity', {
+      skewMs,
+      maxObservedSkewMs: getMaxObservedSkewMs(),
+    });
+    throw AppError.badRequest(
+      'Authentication challenge could not be issued: local clock is out of sync with the authoritative clock',
+      ErrorCode.INVALID_REQUEST,
+    );
+  }
+
+  const expiresAt = new Date(authoritativeNowMs + CHALLENGE_TTL_MS);
 
   try {
     await query(
@@ -79,6 +126,47 @@ export async function consumeChallenge(publicKey: string, message: string): Prom
   }
 
   const [, nonce, issuedAtMs] = match;
+  const claimedIssuedAtMs = Number(issuedAtMs);
+
+  let authoritativeNowMs: number;
+  try {
+    authoritativeNowMs = await getAuthoritativeNowMs();
+  } catch (error) {
+    recordDependencyFailure('consume', error);
+    throw AppError.serviceUnavailable(
+      'Authentication challenge service is temporarily unavailable',
+      ErrorCode.SERVICE_UNAVAILABLE,
+    );
+  }
+
+  // Reject nonces whose claimed timestamp is not consistent with the
+  // authoritative clock. A future-dated timestamp would extend the validity
+  // window; a timestamp older than the TTL (plus tolerated skew) is stale.
+  const skewMs = authoritativeNowMs - claimedIssuedAtMs;
+  if (skewMs < -getMaxObservedSkewMs()) {
+    recordSkewRejection('consume', 'timestamp_in_future', {
+      skewMs,
+      maxObservedSkewMs: getMaxObservedSkewMs(),
+    });
+    return false;
+  }
+  if (skewMs > CHALLENGE_TTL_MS + getMaxObservedSkewMs()) {
+    recordSkewRejection('consume', 'timestamp_too_old', {
+      skewMs,
+      maxObservedSkewMs: getMaxObservedSkewMs(),
+    });
+    return false;
+  }
+
+  try {
+    assertAuthoritativeTimestamp(claimedIssuedAtMs, authoritativeNowMs);
+  } catch (error) {
+    recordSkewRejection('consume', 'skew_extends_validity', {
+      skewMs,
+      maxObservedSkewMs: getMaxObservedSkewMs(),
+    });
+    return false;
+  }
 
   try {
     const consumed = await query(
@@ -91,7 +179,7 @@ export async function consumeChallenge(publicKey: string, message: string): Prom
          AND expires_at > NOW()
          AND consumed_at IS NULL
        RETURNING nonce_hash`,
-      [sha256(nonce!), sha256(message), publicKey, Number(issuedAtMs)],
+      [sha256(nonce!), sha256(message), publicKey, claimedIssuedAtMs],
     );
 
     if (consumed.rowCount === 1) {

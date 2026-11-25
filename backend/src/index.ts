@@ -56,6 +56,13 @@ import {
   stopSorobanWriteReplayProcessor,
 } from './services/sorobanWriteReplayProcessor.js';
 import {
+  startAlertDrillScheduler,
+  stopAlertDrillScheduler,
+} from './services/alertDrillScheduler.js';
+import {
+  startClockSkewSampler,
+  stopClockSkewSampler,
+} from './services/clockSkewSampler.js';
   startAbuseTelemetryRetentionScheduler,
   stopAbuseTelemetryRetentionScheduler,
 } from './services/abuseTelemetryService.js';
@@ -156,6 +163,11 @@ const server = app.listen(port, () => {
   // Wire up and activate the score decay daily scheduler loop
   scoreDecaySchedulerHandle = startScoreDecayScheduler() || null;
 
+  // Start scheduled SLO alert ownership drill (#863), guarded by env flag
+  startAlertDrillScheduler();
+
+  // Start periodic service/provider clock-skew sampling (#868), guarded by env flag
+  startClockSkewSampler();
   // Auto-revoke break-glass grants past their expiry (#849)
   startBreakGlassExpirySweep();
   // Start capacity snapshot scheduler (#865)
@@ -216,6 +228,8 @@ const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
     stopCrossContractReconciler();
     stopCapacitySnapshotScheduler();
     stopNotificationCleanupScheduler();
+    stopAlertDrillScheduler();
+    stopClockSkewSampler();
     stopAbuseTelemetryRetentionScheduler();
     logger.info('All schedulers stopped.');
 

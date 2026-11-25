@@ -197,6 +197,48 @@ export const envSchema = z.object({
    */
   DIAGNOSTIC_BUNDLE_MAX_BYTES: positiveInt(1).default(65536 as unknown as never),
 
+  // ── Operations: SLO alert drills ─────────────────────────────────────────
+  /** Enable the scheduled SLO alert notification drill. */
+  ALERT_DRILL_ENABLED: booleanString().default('false' as unknown as never),
+
+  /**
+   * Interval (ms) between scheduled SLO alert drills. Minimum 1 hour to
+   * avoid notification storms; default 7 days.
+   */
+  ALERT_DRILL_INTERVAL_MS: positiveInt(3_600_000).default(
+    604_800_000 as unknown as never,
+  ),
+
+  // ── Operations: incident evidence bundles ────────────────────────────────
+  /**
+   * How long (in seconds) an incident evidence bundle remains accessible
+   * before it expires. Bundles are time-limited by design; default 24h,
+   * max 7 days.
+   */
+  INCIDENT_BUNDLE_TTL_SECONDS: positiveInt(60, 604_800).default(
+    86_400 as unknown as never,
+  ),
+
+  /**
+   * Hard upper bound (in bytes) on a serialized incident evidence bundle.
+   * Generation fails rather than emitting an unbounded artifact.
+   */
+  INCIDENT_BUNDLE_MAX_BYTES: positiveInt(1).default(262_144 as unknown as never),
+
+  // ── Operations: clock skew ───────────────────────────────────────────────
+  /** Absolute clock drift (ms) above which a warning is logged. */
+  CLOCK_SKEW_WARN_MS: positiveInt(1).default(500 as unknown as never),
+
+  /**
+   * Absolute clock drift (ms) above which an alert is raised. Must be
+   * greater than CLOCK_SKEW_WARN_MS; enforced in validateEnvSchema().
+   */
+  CLOCK_SKEW_ALERT_MS: positiveInt(1).default(2000 as unknown as never),
+
+  /** Interval (ms) between clock-skew samples. */
+  CLOCK_SKEW_SAMPLE_INTERVAL_MS: positiveInt(1000).default(
+    60_000 as unknown as never,
+  ),
   STATEMENT_SIGNING_PRIVATE_KEY_PEM: optionalString(),
   STATEMENT_SIGNING_KEY_ID: optionalString().default('statement-signing-default'),
   STATEMENT_SUBJECT_PEPPER: optionalString(),
@@ -281,7 +323,16 @@ export function validateEnvSchema(): Env {
     process.exit(1);
   }
 
-  _env = result.data;
+  if (_env.CLOCK_SKEW_ALERT_MS <= _env.CLOCK_SKEW_WARN_MS) {
+    const msg =
+      'FATAL ERROR: CLOCK_SKEW_ALERT_MS must be greater than CLOCK_SKEW_WARN_MS';
+    console.error(`\n\x1b[1;31m${msg}\x1b[0m\n`);
+    logger.error(msg, {
+      clock_skew_warn_ms: _env.CLOCK_SKEW_WARN_MS,
+      clock_skew_alert_ms: _env.CLOCK_SKEW_ALERT_MS,
+    });
+    process.exit(1);
+  }
 
   logger.info('Environment schema validated successfully.', {
     node_env: _env.NODE_ENV,
